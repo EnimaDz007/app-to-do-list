@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e1b4b" />
+      <stop offset="50%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#020617" />
+    </linearGradient>
+    <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6366f1" />
+      <stop offset="100%" stop-color="#3b82f6" />
+    </linearGradient>
+    <linearGradient id="emeraldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#10b981" />
+      <stop offset="100%" stop-color="#059669" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bgGrad)" />
+  <!-- Quadrant Grid Background subtle lines -->
+  <line x1="256" y1="80" x2="256" y2="432" stroke="#334155" stroke-width="6" stroke-dasharray="8 8" opacity="0.4" />
+  <line x1="80" y1="256" x2="432" y2="256" stroke="#334155" stroke-width="6" stroke-dasharray="8 8" opacity="0.4" />
+  <!-- Focus Badge / Target in Q1 -->
+  <rect x="110" y="110" width="120" height="120" rx="24" fill="url(#accentGrad)" opacity="0.9" />
+  <!-- Checkmark icon inside Q1 -->
+  <path d="M142 170 L164 192 L198 146" fill="none" stroke="#ffffff" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" />
+  <!-- Dots / mini cards in other quadrants -->
+  <rect x="282" y="110" width="120" height="120" rx="24" fill="#1e293b" stroke="#334155" stroke-width="4" />
+  <circle cx="342" cy="170" r="16" fill="#38bdf8" />
+  <rect x="110" y="282" width="120" height="120" rx="24" fill="#1e293b" stroke="#334155" stroke-width="4" />
+  <circle cx="170" cy="342" r="16" fill="#f59e0b" />
+  <rect x="282" y="282" width="120" height="120" rx="24" fill="url(#emeraldGrad)" opacity="0.8" />
+  <path d="M322 342 L338 358 L362 326" fill="none" stroke="#ffffff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" />
+</svg>

@@ -1,0 +1,7 @@
+{
+  "name": "Task Priority Mobile App",
+  "description": "Mobile-first iOS and Android productivity dashboard with Eisenhower matrix, daily timeline, PWA installability, and native app export package.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
