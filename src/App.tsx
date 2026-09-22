@@ -401,7 +401,7 @@ export default function App() {
         isOpen={isVoiceModalOpen}
         onClose={() => setIsVoiceModalOpen(false)}
         quadrant={defaultQuadrant}
-        onAddTask={(text, quad) => {
+              onAddTask={(text, quad, detectedDue) => {
          handleSaveTask({
   title: text,
   description: '',
@@ -410,7 +410,7 @@ export default function App() {
   priority: 'urgent',
   category: 'Engineering',
   estimatedMinutes: 30,
-  dueDate: new Date(Date.now() + 3600000).toISOString(),
+            dueDate: detectedDue || new Date(Date.now() + 3600000).toISOString(),
   impactScore: 3,
   effortScore: 3,
 } as any);

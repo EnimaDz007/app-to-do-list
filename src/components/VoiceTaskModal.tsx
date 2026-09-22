@@ -3,12 +3,13 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Mic, Check, X, Flame, Calendar, Users, Trash2, Eraser } from 'lucide-react';
 import { QuadrantId } from '../types';
 import { useLanguage } from '../context/LanguageContext';
+import { parseSpokenTask } from '../utils/voiceParser';
 
 interface VoiceTaskModalProps {
   isOpen: boolean;
   onClose: () => void;
   quadrant?: QuadrantId;
-  onAddTask: (taskText: string, quadrant: QuadrantId) => void;
+  onAddTask: (taskText: string, quadrant: QuadrantId, dueDate?: string) => void;
 }
 
 const QUADRANTS = [
@@ -18,11 +19,10 @@ const QUADRANTS = [
   { id: 'eliminate' as QuadrantId, name: 'Eliminate', icon: Trash2,   gradient: 'from-slate-500 to-slate-700',      bg: 'bg-slate-50',   border: 'border-slate-200',   text: 'text-slate-700' },
 ];
 
-// ✅ Map app language to speech recognition language code
 const SPEECH_LANG: Record<string, string> = {
   en: 'en-US',
   fr: 'fr-FR',
-  ar: 'ar-SA', // Standard Arabic
+  ar: 'ar-SA',
 };
 
 export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
@@ -88,7 +88,6 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
     const recog = new SR();
     recog.continuous = true;
     recog.interimResults = false;
-    // ✅ Auto-select language based on app language
     recog.lang = SPEECH_LANG[language] || 'en-US';
     recog.maxAlternatives = 1;
 
@@ -148,8 +147,9 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
       alert('Please speak or type something first.');
       return;
     }
+    const parsed = parseSpokenTask(text);
     const capitalized = text.charAt(0).toUpperCase() + text.slice(1);
-    onAddTask(capitalized, selectedQuadrant);
+    onAddTask(capitalized, selectedQuadrant, parsed.dueDate);
     killRecognition();
     setTranscript('');
     onClose();
@@ -298,7 +298,7 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
                     </div>
                   )}
 
-                  <div className="relative mb-4">
+                  <div className="relative mb-3">
                     <textarea
                       value={transcript}
                       onChange={(e) => setTranscript(e.target.value)}
@@ -317,6 +317,19 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
                       </button>
                     )}
                   </div>
+
+                  {/* 🆕 Auto-detected due date preview */}
+                  {transcript && (
+                    <div className="mb-3 flex items-center justify-center gap-1.5 rounded-full bg-slate-100 dark:bg-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-600 dark:text-slate-200">
+                      <Calendar size={12} />
+                      {new Date(parseSpokenTask(transcript).dueDate).toLocaleString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                        hour: 'numeric',
+                        minute: '2-digit',
+                      })}
+                    </div>
+                  )}
 
                   <p className="mb-3 text-center text-[11px] font-medium text-slate-500 dark:text-slate-300">
                     {t('ptt_release_tip')}
