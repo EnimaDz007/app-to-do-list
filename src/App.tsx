@@ -230,6 +230,43 @@ export default function App() {
 
   const completedCount = tasks.filter((t) => t.status === 'completed').length;
   const urgentCount = tasks.filter((t) => t.quadrant === 'do_first' && t.status !== 'completed').length;
+  // --- LOCAL REMINDER NOTIFICATIONS ---
+  const notifiedTasksRef = React.useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    const checkDueTasks = () => {
+      if (typeof window === 'undefined' || !('Notification' in window)) return;
+      if (Notification.permission !== 'granted') return;
+
+      const now = Date.now();
+
+      tasks.forEach((task) => {
+        if (task.quadrant !== 'do_first' || task.status === 'completed') return;
+        if (!task.dueDate) return;
+        if (notifiedTasksRef.current.has(task.id)) return;
+
+        const dueTime = new Date(task.dueDate).getTime();
+        if (isNaN(dueTime)) return;
+
+        const diffInMinutes = (dueTime - now) / (1000 * 60);
+
+        if (diffInMinutes > 0 && diffInMinutes <= 15) {
+          new Notification('⏰ Task Reminder', {
+            body: `"${task.title}" is due in ${Math.round(diffInMinutes)} minute${Math.round(diffInMinutes) === 1 ? '' : 's'}!`,
+            icon: '/pwa-192x192.png',
+            tag: task.id,
+          });
+          notifiedTasksRef.current.add(task.id);
+        }
+      });
+    };
+
+    const interval = setInterval(checkDueTasks, 60000);
+    checkDueTasks();
+
+    return () => clearInterval(interval);
+  }, [tasks]);
+  // ------------------------------------
 
   return (
     <div className="min-h-screen bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col transition-colors duration-200 overflow-x-hidden w-full">
@@ -303,11 +340,7 @@ export default function App() {
                   tasks={activeTasks}
                   onToggleStatus={handleToggleStatus}
                   onQuadrantSelect={setDefaultQuadrant}
-                  onEditTask={handleEditTask}
-                  onDeleteTask={handleDeleteTask}
-                  onQuickAddQuadrant={handleOpenNewTask}
-                  onMoveTaskQuadrant={handleMoveTaskQuadrant}
-                  onStartFocus={handleStartFocus}
+
                 />
               )
             )}
@@ -369,14 +402,20 @@ export default function App() {
         onClose={() => setIsVoiceModalOpen(false)}
         quadrant={defaultQuadrant}
         onAddTask={(text, quad) => {
-          handleSaveTask({
-            title: text,
-            description: '',
-            quadrant: quad,
-            status: 'active',
-          });
-        }}
-      />
+         handleSaveTask({
+  title: text,
+  description: '',
+  quadrant: quad,
+  status: 'todo',
+  priority: 'urgent',
+  category: 'Engineering',
+  estimatedMinutes: 30,
+  dueDate: new Date(Date.now() + 3600000).toISOString(),
+  impactScore: 3,
+  effortScore: 3,
+} as any);
+          }}
+        />
 
       <TaskModal
         isOpen={isTaskModalOpen}
