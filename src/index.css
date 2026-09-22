@@ -1,0 +1,302 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+}
+
+html, body {
+  overflow-x: hidden;
+  max-width: 100%;
+  width: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html {
+  font-size: 16px;
+}
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+/* 🚀 Performance: GPU acceleration for blur effects */
+.backdrop-blur-md,
+.backdrop-blur-sm {
+  will-change: backdrop-filter;
+  transform: translateZ(0);
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+}
+
+/* Smooth scrolling */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Reduce heavy transitions */
+.transition-all {
+  transition-property: background-color, border-color, color, fill, stroke, opacity, box-shadow, transform !important;
+}
+
+/* Disable expensive hover animations on small screens */
+@media (max-width: 480px) {
+  .hover\:scale-105:hover,
+  .hover\:scale-110:hover {
+    transform: none !important;
+  }
+}
+/* ⚡ Smart Adaptive Performance */
+
+/* Low-tier devices: disable heavy effects */
+html.perf-low #app-header,
+html.perf-low nav#bottom-tab-bar {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  background-color: #ffffff !important;
+}
+
+html.perf-low.dark #app-header,
+html.perf-low.dark nav#bottom-tab-bar {
+  background-color: #0f172a !important;
+}
+
+html.perf-low .backdrop-blur-xl,
+html.perf-low .backdrop-blur-lg,
+html.perf-low .backdrop-blur-md,
+html.perf-low .backdrop-blur-sm {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+html.perf-low .animate-pulse,
+html.perf-low .animate-ping,
+html.perf-low .animate-bounce,
+html.perf-low .animate-spin {
+  animation: none !important;
+}
+
+html.perf-low .transition-all,
+html.perf-low .transition-colors,
+html.perf-low .transition-transform {
+  transition-duration: 0.05s !important;
+}
+
+html.perf-low .shadow-2xl,
+html.perf-low .shadow-xl,
+html.perf-low .shadow-lg {
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08) !important;
+}
+/* ⚡ AGGRESSIVE: kill ALL motion on low-tier */
+html.perf-low *,
+html.perf-low *::before,
+html.perf-low *::after {
+  animation-duration: 0s !important;
+  animation-delay: 0s !important;
+  transition-duration: 0s !important;
+  transition-delay: 0s !important;
+}
+
+/* ⚡ Remove gradient backgrounds (very expensive) */
+html.perf-low body,
+html.perf-low .min-h-screen {
+  background-image: none !important;
+  background-color: #f8fafc !important;
+}
+
+html.perf-low.dark body,
+html.perf-low.dark .min-h-screen {
+  background-color: #0f172a !important;
+}
+/* 🎨 UI THEME SYSTEM — user-selectable design themes */
+
+:root,
+[data-ui-theme="default"] {
+  --ui-accent: #7C3AED;
+  --ui-accent-light: #A78BFA;
+  --ui-accent-dark: #5B21B6;
+  --ui-accent-soft: rgba(124, 58, 237, 0.12);
+  --ui-bg: #FFFFFF;
+  --ui-card-bg: #FFFFFF;
+  --ui-card-border: #E2E8F0;
+  --ui-text: #0F172A;
+  --ui-text-muted: #94A3B8;
+  --ui-nav-bg: #FFFFFF;
+}
+
+[data-ui-theme="gold"] {
+  --ui-accent: #F59E0B;
+  --ui-accent-light: #FBBF24;
+  --ui-accent-dark: #B45309;
+  --ui-accent-soft: rgba(245, 158, 11, 0.12);
+  --ui-bg: #FFFFFF;
+  --ui-card-bg: #FFFFFF;
+  --ui-card-border: #E2E8F0;
+  --ui-text: #0F172A;
+  --ui-text-muted: #94A3B8;
+  --ui-nav-bg: #FFFFFF;
+}
+
+[data-ui-theme="orange"] {
+  --ui-accent: #EA580C;
+  --ui-accent-light: #FB923C;
+  --ui-accent-dark: #C2410C;
+  --ui-accent-soft: rgba(234, 88, 12, 0.12);
+  --ui-bg: #FBF8F3;
+  --ui-card-bg: #FFFFFF;
+  --ui-card-border: #F0E8DC;
+  --ui-text: #292524;
+  --ui-text-muted: #A8A29E;
+  --ui-nav-bg: #FBF8F3;
+}
+
+[data-ui-theme="emerald"] {
+  --ui-accent: #059669;
+  --ui-accent-light: #34D399;
+  --ui-accent-dark: #047857;
+  --ui-accent-soft: rgba(5, 150, 105, 0.12);
+  --ui-bg: #F0FDF9;
+  --ui-card-bg: #FFFFFF;
+  --ui-card-border: #D1FAE5;
+  --ui-text: #064E3B;
+  --ui-text-muted: #6EE7B7;
+  --ui-nav-bg: #F0FDF9;
+}
+
+[data-ui-theme="sky"] {
+  --ui-accent: #0284C7;
+  --ui-accent-light: #38BDF8;
+  --ui-accent-dark: #075985;
+  --ui-accent-soft: rgba(2, 132, 199, 0.12);
+  --ui-bg: #F0F9FF;
+  --ui-card-bg: #FFFFFF;
+  --ui-card-border: #BAE6FD;
+  --ui-text: #0C4A6E;
+  --ui-text-muted: #7DD3FC;
+  --ui-nav-bg: #F0F9FF;
+}
+
+[data-ui-theme="rose"] {
+  --ui-accent: #E11D48;
+  --ui-accent-light: #FB7185;
+  --ui-accent-dark: #9F1239;
+  --ui-accent-soft: rgba(225, 29, 72, 0.12);
+  --ui-bg: #FFF1F2;
+  --ui-card-bg: #FFFFFF;
+  --ui-card-border: #FECDD3;
+  --ui-text: #881337;
+  --ui-text-muted: #FDA4AF;
+  --ui-nav-bg: #FFF1F2;
+}
+
+.dark[data-ui-theme="default"],
+.dark[data-ui-theme="gold"],
+.dark[data-ui-theme="orange"],
+.dark[data-ui-theme="emerald"],
+.dark[data-ui-theme="sky"],
+.dark[data-ui-theme="rose"] {
+  --ui-bg: #0F172A;
+  --ui-card-bg: #1E293B;
+  --ui-card-border: #334155;
+  --ui-text: #F1F5F9;
+  --ui-text-muted: #94A3B8;
+  --ui-nav-bg: #0F172A;
+}
+
+/* 🎨 Test indicator: colored stripe on left edge */
+html::before {
+  content: '';
+  position: fixed;
+  top: 0; left: 0;
+  width: 6px;
+  height: 100%;
+  background: var(--ui-accent);
+  z-index: 99999;
+  pointer-events: none;
+  opacity: 0.8;
+}
+
+/* Mid-tier: moderate optimizations */
+html.perf-mid .backdrop-blur-xl {
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+}
+/* 🚀 Reduce animations on low-tier devices */
+html.perf-low * {
+  animation-duration: 0.001s !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.05s !important;
+}
+
+html.perf-low .animate-pulse,
+html.perf-low .animate-spin,
+html.perf-low .animate-bounce,
+html.perf-low .animate-ping {
+  animation: none !important;
+}
+
+html.perf-low .backdrop-blur-xl,
+html.perf-low .backdrop-blur-lg,
+html.perf-low .backdrop-blur-md,
+html.perf-low .backdrop-blur-sm {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+/* 🐝 Bee animations for Honeycomb Hive */
+@keyframes beeFly1 {
+  0%   { transform: translate(0, 0) rotate(0deg); }
+  25%  { transform: translate(120px, -40px) rotate(8deg); }
+  50%  { transform: translate(240px, 30px) rotate(-6deg); }
+  75%  { transform: translate(140px, 90px) rotate(5deg); }
+  100% { transform: translate(0, 0) rotate(0deg); }
+}
+@keyframes beeFly2 {
+  0%   { transform: translate(0, 0) rotate(-5deg); }
+  25%  { transform: translate(80px, 60px) rotate(6deg); }
+  50%  { transform: translate(180px, -20px) rotate(-8deg); }
+  75%  { transform: translate(100px, -80px) rotate(4deg); }
+  100% { transform: translate(0, 0) rotate(-5deg); }
+}
+@keyframes beeFly3 {
+  0%   { transform: translate(0, 0) rotate(0deg) scaleX(-1); }
+  33%  { transform: translate(-180px, 40px) rotate(-10deg) scaleX(-1); }
+  66%  { transform: translate(-100px, -60px) rotate(8deg) scaleX(-1); }
+  100% { transform: translate(0, 0) rotate(0deg) scaleX(-1); }
+}
+/* ============ DETECTIVE BOARD ANIMATIONS ============ */
+@keyframes detScanLine {
+  0%   { top: -5%; opacity: 0; }
+  5%   { opacity: 1; }
+  95%  { opacity: 1; }
+  100% { top: 105%; opacity: 0; }
+}
+@keyframes detVignettePulse {
+  0%, 100% { opacity: 0.4; }
+  50%      { opacity: 1; }
+}
+@keyframes detFlashBang {
+  0%, 43%, 100% { opacity: 0; }
+  44%           { opacity: 0.2; }
+  45%           { opacity: 0; }
+  47%           { opacity: 0.1; }
+  48%           { opacity: 0; }
+}
+@keyframes detSuspenseFlicker {
+  0%, 100% { opacity: 0.4; }
+  50%      { opacity: 1; text-shadow: 0 0 20px #FCD34D; }
+}
+@keyframes detRecBlink {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.15; }
+}
+@keyframes detStringPulse {
+  0%, 100% { opacity: 0.9; }
+  50%      { opacity: 0.6; }
+}
