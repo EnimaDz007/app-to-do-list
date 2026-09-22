@@ -30,7 +30,12 @@ export const TaskModal: React.FC<TaskModalProps> = ({
   const [quadrant, setQuadrant] = useState<QuadrantId>(defaultQuadrant);
   const [category, setCategory] = useState<TaskCategory>('Engineering');
   const [estimatedMinutes, setEstimatedMinutes] = useState<number>(30);
-  const [dueDate, setDueDate] = useState(new Date().toISOString().split('T')[0]);
+ const [dueDate, setDueDate] = useState(() => {
+  const d = new Date();
+  d.setHours(d.getHours() + 1, 0, 0, 0);
+  const tzOffset = d.getTimezoneOffset() * 60000;
+  return new Date(d.getTime() - tzOffset).toISOString().slice(0, 16);
+});
   const [impactScore, setImpactScore] = useState<number>(4);
   const [effortScore, setEffortScore] = useState<number>(2);
 
@@ -76,7 +81,11 @@ export const TaskModal: React.FC<TaskModalProps> = ({
       setQuadrant(editingTask.quadrant);
       setCategory(editingTask.category);
       setEstimatedMinutes(editingTask.estimatedMinutes);
-      setDueDate(editingTask.dueDate || new Date().toISOString().split('T')[0]);
+setDueDate(() => {
+  const d = editingTask.dueDate ? new Date(editingTask.dueDate) : new Date(Date.now() + 3600000);
+  if (isNaN(d.getTime())) return new Date(Date.now() + 3600000 - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+});
       setImpactScore(editingTask.impactScore || 3);
       setEffortScore(editingTask.effortScore || 2);
     } else {
@@ -85,7 +94,12 @@ export const TaskModal: React.FC<TaskModalProps> = ({
       setQuadrant(defaultQuadrant);
       setCategory('Engineering');
       setEstimatedMinutes(30);
-      setDueDate(new Date().toISOString().split('T')[0]);
+setDueDate(() => {
+  const d = new Date();
+  d.setHours(d.getHours() + 1, 0, 0, 0);
+  const tz = d.getTimezoneOffset() * 60000;
+  return new Date(d.getTime() - tz).toISOString().slice(0, 16);
+});
       setImpactScore(4);
       setEffortScore(2);
     }
@@ -129,7 +143,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
       category,
       status: editingTask ? editingTask.status : 'todo',
       estimatedMinutes,
-      dueDate,
+ dueDate: dueDate ? new Date(dueDate).toISOString() : new Date().toISOString(),
       impactScore,
       effortScore,
     });
@@ -269,6 +283,25 @@ export const TaskModal: React.FC<TaskModalProps> = ({
           </div>
 
           {/* Category & Minutes */}
+                    {/* 🆕 Due Date & Time Picker */}
+          <div>
+            <label className="block font-medium text-slate-700 dark:text-slate-300 mb-1">
+              <span className="flex items-center gap-1">
+                <Clock className="w-3.5 h-3.5 text-rose-500" />
+                <span>Due Date & Time</span>
+              </span>
+            </label>
+            <input
+              id="input-task-duedate"
+              type="datetime-local"
+              value={dueDate}
+              onChange={(e) => setDueDate(e.target.value)}
+              className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500 cursor-pointer"
+            />
+            <p className="text-[10px] text-slate-400 mt-1">
+              You will be notified 15 minutes before this task is due.
+            </p>
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block font-medium text-slate-700 dark:text-slate-300 mb-1">
