@@ -104,7 +104,7 @@ export default function App() {
             id: hashTaskId(task.id),
             title: '⏰ Task Reminder',
             body: `"${task.title}" is due soon!`,
-            schedule: { at: new Date(fireAt) },
+            schedule: { at: new Date(fireAt), allowWhileIdle: true },
             sound: undefined,
             smallIcon: 'ic_stat_onesignal_default',
             largeIcon: undefined,
