@@ -4,6 +4,8 @@ import { Mic, Check, X, Flame, Calendar, Users, Trash2, Eraser } from 'lucide-re
 import { QuadrantId } from '../types';
 import { useLanguage } from '../context/LanguageContext';
 import { parseSpokenTask } from '../utils/voiceParser';
+import { SpeechRecognition } from '@capacitor-community/speech-recognition';
+import { Capacitor } from '@capacitor/core';
 
 interface VoiceTaskModalProps {
   isOpen: boolean;
@@ -40,12 +42,19 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
   const recognitionRef = useRef<any>(null);
   const isMountedRef = useRef(true);
   const sessionActiveRef = useRef(false);
+  const nativePartialListenerRef = useRef<any>(null);
 
   const theme = QUADRANTS.find((q) => q.id === selectedQuadrant)!;
+  const isNative = Capacitor.isNativePlatform();
 
   useEffect(() => {
     isMountedRef.current = true;
-    return () => { isMountedRef.current = false; };
+    return () => {
+      isMountedRef.current = false;
+      if (nativePartialListenerRef.current) {
+        try { nativePartialListenerRef.current.remove(); } catch (e) {}
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -60,8 +69,19 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
     // eslint-disable-next-line
   }, [isOpen]);
 
-  const killRecognition = () => {
+  const killRecognition = async () => {
     sessionActiveRef.current = false;
+
+    // Stop native speech recognition
+    if (isNative) {
+      try { await SpeechRecognition.stop(); } catch (e) {}
+      if (nativePartialListenerRef.current) {
+        try { nativePartialListenerRef.current.remove(); } catch (e) {}
+        nativePartialListenerRef.current = null;
+      }
+    }
+
+    // Stop web speech recognition
     const recog = recognitionRef.current;
     recognitionRef.current = null;
     if (recog) {
@@ -71,10 +91,53 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
       try { recog.abort(); } catch (e) {}
       try { recog.stop(); } catch (e) {}
     }
+
     if (isMountedRef.current) setIsListening(false);
   };
 
-  const startRecognition = () => {
+  const startRecognitionNative = async () => {
+    try {
+      const available = await SpeechRecognition.available();
+      if (!available.available) {
+        alert('Voice not supported on this device.');
+        return;
+      }
+
+      const perm = await SpeechRecognition.requestPermissions();
+      if (perm.speechRecognition !== 'granted') {
+        alert('Microphone permission denied. Please enable it in phone settings.');
+        return;
+      }
+
+      sessionActiveRef.current = true;
+
+      nativePartialListenerRef.current = await SpeechRecognition.addListener(
+        'partialResults',
+        (data: any) => {
+          if (!isMountedRef.current || !sessionActiveRef.current) return;
+          if (data.matches && data.matches.length > 0) {
+            const text = data.matches[0];
+            if (text) setTranscript(text);
+          }
+        }
+      );
+
+      await SpeechRecognition.start({
+        language: SPEECH_LANG[language] || 'en-US',
+        maxResults: 1,
+        prompt: t('ptt_listening'),
+        partialResults: true,
+        popup: false,
+      });
+
+      if (isMountedRef.current) setIsListening(true);
+    } catch (err) {
+      console.error('Native speech error:', err);
+      if (isMountedRef.current) setIsListening(false);
+    }
+  };
+
+  const startRecognitionWeb = () => {
     if (typeof window === 'undefined') return;
     const SR = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
     if (!SR) {
@@ -131,6 +194,14 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
       if (isMountedRef.current) setIsListening(true);
     } catch (e) {
       console.warn('Failed to start:', e);
+    }
+  };
+
+  const startRecognition = () => {
+    if (isNative) {
+      startRecognitionNative();
+    } else {
+      startRecognitionWeb();
     }
   };
 
@@ -318,7 +389,6 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
                     )}
                   </div>
 
-                  {/* 🆕 Auto-detected due date preview */}
                   {transcript && (
                     <div className="mb-3 flex items-center justify-center gap-1.5 rounded-full bg-slate-100 dark:bg-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-600 dark:text-slate-200">
                       <Calendar size={12} />

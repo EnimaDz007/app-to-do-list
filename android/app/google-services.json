@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "894817532785",
+    "project_id": "task-priority-3c9a1",
+    "storage_bucket": "task-priority-3c9a1.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:894817532785:android:e581095c55d0a6c7dd94d0",
+        "android_client_info": {
+          "package_name": "com.taskpriority.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAb0CpHemCErxwbpiZZO4Wi0SXAGroJ16o"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

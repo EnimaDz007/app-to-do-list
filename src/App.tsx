@@ -4,6 +4,8 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { Capacitor } from '@capacitor/core';
+import { LocalNotifications } from '@capacitor/local-notifications';
 import { useDevicePerformance } from './hooks/useDevicePerformance';
 import { Task, TabView, DeviceFrameMode, QuadrantId } from './types';
 import { INITIAL_TASKS } from './data/initialTasks';
@@ -38,11 +40,20 @@ import { triggerHaptic } from './utils/haptics';
 
 const STORAGE_KEY = 'taskflow_tasks_list';
 
+// Convert taskId string to a stable 32-bit int for LocalNotifications
+const hashTaskId = (taskId: string): number => {
+  let hash = 0;
+  for (let i = 0; i < taskId.length; i++) {
+    hash = ((hash << 5) - hash) + taskId.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash);
+};
+
 export default function App() {
   useDevicePerformance();
   const { uiDesign } = useUIDesign();
 
-  // Load tasks from localStorage or initialize with website defaults
   const [tasks, setTasks] = useState<Task[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
@@ -50,16 +61,98 @@ export default function App() {
         return JSON.parse(saved);
       }
     } catch {
-      // ignore JSON parse errors
+      // ignore
     }
     return [];
   });
 
   const streakData = useStreak(tasks.filter((t) => t.status === 'completed').length);
 
-  // Split tasks into active and archived
   const activeTasks = tasks.filter((t) => !t.archivedAt);
   const archivedTasks = tasks.filter((t) => t.archivedAt);
+
+  // --- SCHEDULE LOCAL NOTIFICATION (native) ---
+  const scheduleTaskReminder = async (task: Task) => {
+    if (!Capacitor.isNativePlatform()) return;
+    if (task.quadrant !== 'do_first') return;
+    if (task.status === 'completed') return;
+    if (!task.dueDate) return;
+
+    const dueTime = new Date(task.dueDate).getTime();
+    if (isNaN(dueTime)) return;
+
+    const now = Date.now();
+    const reminderTime = dueTime - 15 * 60 * 1000; // 15 min before due
+
+    let fireAt: number;
+    if (reminderTime > now) {
+      // Schedule for the 15-min mark
+      fireAt = reminderTime;
+    } else if (dueTime > now) {
+      // Reminder window already passed but task still upcoming → fire in 5 seconds
+      fireAt = now + 5000;
+    } else {
+      // Task already overdue → skip
+      console.log('⏭️ Skipping overdue task:', task.title);
+      return;
+    }
+
+    try {
+      await LocalNotifications.schedule({
+        notifications: [
+          {
+            id: hashTaskId(task.id),
+            title: '⏰ Task Reminder',
+            body: `"${task.title}" is due soon!`,
+            schedule: { at: new Date(fireAt) },
+            sound: undefined,
+            smallIcon: 'ic_stat_onesignal_default',
+            largeIcon: undefined,
+            group: task.id,
+            extra: { taskId: task.id },
+          },
+        ],
+      });
+      console.log('✅ Scheduled reminder for:', task.title, 'at', new Date(fireAt).toLocaleString());
+    } catch (err) {
+      console.error('❌ Failed to schedule:', err);
+    }
+  };
+
+  const cancelTaskReminder = async (taskId: string) => {
+    if (!Capacitor.isNativePlatform()) return;
+    try {
+      await LocalNotifications.cancel({
+        notifications: [{ id: hashTaskId(taskId) }],
+      });
+      console.log('🗑️ Cancelled reminder for:', taskId);
+    } catch (err) {
+      // ignore
+    }
+  };
+  // ----------------------------------------
+
+  // Request notification permission on startup
+  useEffect(() => {
+    if (Capacitor.isNativePlatform()) {
+      LocalNotifications.requestPermissions()
+        .then((res) => console.log('LocalNotifications permission:', res))
+        .catch((err) => console.warn('LocalNotifications error:', err));
+    } else if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }, []);
+
+  // On startup (native), reschedule reminders for all future Do First tasks
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    tasks.forEach((task) => {
+      if (task.quadrant === 'do_first' && task.status !== 'completed' && task.dueDate) {
+        scheduleTaskReminder(task);
+      }
+    });
+    // eslint-disable-next-line
+  }, []); // only on mount
 
   // Auto-archive completed tasks after 2 seconds
   useEffect(() => {
@@ -82,7 +175,7 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [tasks]);
 
-  // Listen for updates from PriorityMatrixView (pin, subtask changes)
+  // Listen for updates from views (pin, subtask changes)
   useEffect(() => {
     const handleTasksUpdated = () => {
       const saved = localStorage.getItem(STORAGE_KEY);
@@ -99,7 +192,6 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<TabView>('matrix');
   const [deviceMode, setDeviceMode] = useState<DeviceFrameMode>('iphone');
 
-  // Modals state
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [isVoiceModalOpen, setIsVoiceModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
@@ -114,12 +206,13 @@ export default function App() {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
     } catch {
-      // ignore storage quota errors
+      // ignore
     }
   }, [tasks]);
 
-  // Check for due tasks and notify if permission granted
+  // Browser-only: check for due tasks on web
   useEffect(() => {
+    if (Capacitor.isNativePlatform()) return;
     if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
       const due = getDueTasks(tasks);
       if (due.length > 0) {
@@ -130,8 +223,9 @@ export default function App() {
     }
   }, []);
 
-  // Task manipulation handlers
   const handleToggleStatus = (taskId: string) => {
+    // Cancel reminder when completing
+    cancelTaskReminder(taskId);
     setTasks((prev) =>
       prev.map((task) => {
         if (task.id === taskId) {
@@ -172,31 +266,37 @@ export default function App() {
 
   const handleSaveTask = (taskData: Omit<Task, 'id' | 'createdAt'> & { id?: string }) => {
     if (taskData.id) {
-      // Editing existing task
+      // Editing: cancel old reminder, save, schedule new
+      cancelTaskReminder(taskData.id);
+      const updatedTask = { ...taskData, id: taskData.id } as Task;
       setTasks((prev) =>
         prev.map((t) =>
           t.id === taskData.id
-            ? {
-                ...t,
-                ...taskData,
-              }
+            ? { ...t, ...taskData }
             : t
         )
       );
+      // Reschedule with new due time
+      scheduleTaskReminder({
+        ...updatedTask,
+        createdAt: new Date().toISOString(),
+      } as Task);
       playAudioChime('beep');
     } else {
-      // Creating new task
       const newTask: Task = {
         ...taskData,
         id: `task-${Date.now()}`,
         createdAt: new Date().toISOString(),
       };
       setTasks((prev) => [newTask, ...prev]);
+      // Schedule native reminder
+      scheduleTaskReminder(newTask);
       playAudioChime('beep');
     }
   };
 
   const handleDeleteTask = (taskId: string) => {
+    cancelTaskReminder(taskId);
     setTasks((prev) => prev.filter((t) => t.id !== taskId));
     playAudioChime('beep');
   };
@@ -207,7 +307,6 @@ export default function App() {
     setIsTaskModalOpen(true);
   };
 
-  // ✅ RESTORE from archive → back to active
   const handleRestoreFromArchive = (taskId: string) => {
     setTasks((prev) =>
       prev.map((t) =>
@@ -218,8 +317,8 @@ export default function App() {
     );
   };
 
-  // ✅ PERMANENTLY DELETE archived task
   const handlePermanentDelete = (taskId: string) => {
+    cancelTaskReminder(taskId);
     setTasks((prev) => prev.filter((t) => t.id !== taskId));
   };
 
@@ -230,43 +329,6 @@ export default function App() {
 
   const completedCount = tasks.filter((t) => t.status === 'completed').length;
   const urgentCount = tasks.filter((t) => t.quadrant === 'do_first' && t.status !== 'completed').length;
-  // --- LOCAL REMINDER NOTIFICATIONS ---
-  const notifiedTasksRef = React.useRef<Set<string>>(new Set());
-
-  useEffect(() => {
-    const checkDueTasks = () => {
-      if (typeof window === 'undefined' || !('Notification' in window)) return;
-      if (Notification.permission !== 'granted') return;
-
-      const now = Date.now();
-
-      tasks.forEach((task) => {
-        if (task.quadrant !== 'do_first' || task.status === 'completed') return;
-        if (!task.dueDate) return;
-        if (notifiedTasksRef.current.has(task.id)) return;
-
-        const dueTime = new Date(task.dueDate).getTime();
-        if (isNaN(dueTime)) return;
-
-        const diffInMinutes = (dueTime - now) / (1000 * 60);
-
-        if (diffInMinutes > 0 && diffInMinutes <= 15) {
-          new Notification('⏰ Task Reminder', {
-            body: `"${task.title}" is due in ${Math.round(diffInMinutes)} minute${Math.round(diffInMinutes) === 1 ? '' : 's'}!`,
-            icon: '/pwa-192x192.png',
-            tag: task.id,
-          });
-          notifiedTasksRef.current.add(task.id);
-        }
-      });
-    };
-
-    const interval = setInterval(checkDueTasks, 60000);
-    checkDueTasks();
-
-    return () => clearInterval(interval);
-  }, [tasks]);
-  // ------------------------------------
 
   return (
     <div className="min-h-screen bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col transition-colors duration-200 overflow-x-hidden w-full">
@@ -274,7 +336,6 @@ export default function App() {
 
       <div className="flex-1 flex flex-col w-full">
         <div className="flex-1 flex flex-col bg-slate-50 dark:bg-slate-900 min-h-full transition-colors">
-          {/* Mobile App Header */}
           <Header
             completedCount={completedCount}
             totalCount={tasks.length}
@@ -311,36 +372,34 @@ export default function App() {
                   onDeleteTask={handleDeleteTask}
                 />
               ) : uiDesign === 'radial' ? (
-    <CircularRadialView
-      tasks={activeTasks}
-      onToggleStatus={handleToggleStatus}
-      onDeleteTask={handleDeleteTask}
-    />
-  ) : uiDesign === 'hive' ? (
-    <HoneycombHiveView
-      tasks={activeTasks}
-      onToggleStatus={handleToggleStatus}
-      onDeleteTask={handleDeleteTask}
-    />
-                 ) : uiDesign === 'vending' ? (
-    <VendingMachineView
-      tasks={activeTasks}
-      onToggleStatus={handleToggleStatus}
-      onDeleteTask={handleDeleteTask}
-    />
-                ) : uiDesign === 'detective' ? (
-    <DetectiveBoardView
-      tasks={activeTasks}
-      onToggleStatus={handleToggleStatus}
-      onDeleteTask={handleDeleteTask}
-    />
-                
+                <CircularRadialView
+                  tasks={activeTasks}
+                  onToggleStatus={handleToggleStatus}
+                  onDeleteTask={handleDeleteTask}
+                />
+              ) : uiDesign === 'hive' ? (
+                <HoneycombHiveView
+                  tasks={activeTasks}
+                  onToggleStatus={handleToggleStatus}
+                  onDeleteTask={handleDeleteTask}
+                />
+              ) : uiDesign === 'vending' ? (
+                <VendingMachineView
+                  tasks={activeTasks}
+                  onToggleStatus={handleToggleStatus}
+                  onDeleteTask={handleDeleteTask}
+                />
+              ) : uiDesign === 'detective' ? (
+                <DetectiveBoardView
+                  tasks={activeTasks}
+                  onToggleStatus={handleToggleStatus}
+                  onDeleteTask={handleDeleteTask}
+                />
               ) : (
                 <PriorityMatrixView
                   tasks={activeTasks}
                   onToggleStatus={handleToggleStatus}
                   onQuadrantSelect={setDefaultQuadrant}
-
                 />
               )
             )}
@@ -387,7 +446,6 @@ export default function App() {
             onPushToTalk={() => setIsVoiceModalOpen(true)}
           />
 
-          {/* Bottom Tab Bar */}
           <BottomTabBar
             activeTab={activeTab}
             onChangeTab={setActiveTab}
@@ -396,26 +454,25 @@ export default function App() {
         </div>
       </div>
 
-      {/* Modals */}
       <VoiceTaskModal
         isOpen={isVoiceModalOpen}
         onClose={() => setIsVoiceModalOpen(false)}
         quadrant={defaultQuadrant}
-              onAddTask={(text, quad, detectedDue) => {
-         handleSaveTask({
-  title: text,
-  description: '',
-  quadrant: quad,
-  status: 'todo',
-  priority: 'urgent',
-  category: 'Engineering',
-  estimatedMinutes: 30,
+        onAddTask={(text, quad, detectedDue) => {
+          handleSaveTask({
+            title: text,
+            description: '',
+            quadrant: quad,
+            status: 'todo',
+            priority: 'urgent',
+            category: 'Engineering',
+            estimatedMinutes: 30,
             dueDate: detectedDue || new Date(Date.now() + 3600000).toISOString(),
-  impactScore: 3,
-  effortScore: 3,
-} as any);
-          }}
-        />
+            impactScore: 3,
+            effortScore: 3,
+          } as any);
+        }}
+      />
 
       <TaskModal
         isOpen={isTaskModalOpen}
