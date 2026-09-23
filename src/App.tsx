@@ -134,14 +134,25 @@ export default function App() {
 
   // Request notification permission on startup
   useEffect(() => {
-    if (Capacitor.isNativePlatform()) {
+        if (Capacitor.isNativePlatform()) {
       LocalNotifications.requestPermissions()
         .then((res) => console.log('LocalNotifications permission:', res))
         .catch((err) => console.warn('LocalNotifications error:', err));
-    } else if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
-      Notification.requestPermission();
-    }
-  }, []);
+
+      LocalNotifications.createChannel({
+        id: 'task-reminders-high',
+        name: 'Task Reminders (High Priority)',
+        description: 'Reminders that fire at the exact time',
+        importance: 5,
+        visibility: 1,
+        vibration: true,
+        sound: 'default',
+        lights: true,
+        lightColor: '#FF0000',
+      }).then(() => console.log('✅ High-priority channel created'))
+        .catch((err) => console.warn('❌ Channel error:', err));
+          }
+    }, []);
 
   // On startup (native), reschedule reminders for all future Do First tasks
   useEffect(() => {
