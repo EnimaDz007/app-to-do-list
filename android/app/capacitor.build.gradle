@@ -13,9 +13,9 @@ dependencies {
     implementation project(':capacitor-local-notifications')
     implementation project(':onesignal-capacitor-plugin')
     implementation project(':scalejet-capacitor-alarm-notification')
-
+    implementation "androidx.core:core:1.12.0"
 }
-
+apply from: "../../node_modules/cordova-plugin-local-notification/src/android/build/localnotification.gradle"
 
 if (hasProperty('postBuildExtras')) {
   postBuildExtras()

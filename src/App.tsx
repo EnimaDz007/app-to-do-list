@@ -121,17 +121,19 @@ export default function App() {
         console.log('⏭️ Backend skipped:', data.reason);
       } else {
         console.error('❌ Backend schedule failed:', data);
-        // Fallback: try local notification (only works when app is open)
+        // Fallback: local persistent alarm notification
         if (Capacitor.isNativePlatform()) {
           console.log('🔄 Falling back to local notification');
           await LocalNotifications.schedule({
             notifications: [{
               id: hashTaskId(task.id),
-              title: '⏰ Task Due Soon!',
-              body: `"${task.title}" is due in 2 minutes!`,
+              title: '⏰ Task Due: ' + task.title,
+              body: 'Tap to dismiss',
               schedule: { at: new Date(fireAt), allowWhileIdle: true },
               channelId: CRITICAL_CHANNEL_ID,
               sound: 'alarm',
+              ongoing: true,
+              autoCancel: false,
               smallIcon: 'ic_stat_onesignal_default',
               group: task.id,
               extra: { taskId: task.id },
@@ -141,17 +143,19 @@ export default function App() {
       }
     } catch (err) {
       console.error('❌ Backend fetch error:', err);
-      // Fallback to local notification
+      // Fallback to local persistent alarm notification
       if (Capacitor.isNativePlatform()) {
         try {
           await LocalNotifications.schedule({
             notifications: [{
               id: hashTaskId(task.id),
-              title: '⏰ Task Due Soon!',
-              body: `"${task.title}" is due in 2 minutes!`,
+              title: '⏰ Task Due: ' + task.title,
+              body: 'Tap to dismiss',
               schedule: { at: new Date(fireAt), allowWhileIdle: true },
               channelId: CRITICAL_CHANNEL_ID,
               sound: 'alarm',
+              ongoing: true,
+              autoCancel: false,
               smallIcon: 'ic_stat_onesignal_default',
               group: task.id,
               extra: { taskId: task.id },
