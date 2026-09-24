@@ -40,16 +40,21 @@ export default async function handler(req: any, res: any) {
       return res.status(400).json({ error: 'Invalid dueTime format' });
     }
 
-    const reminderMs = dueMs - 15 * 60 * 1000;
     const now = Date.now();
+    const FIFTEEN_MIN = 15 * 60 * 1000;
+    const ONE_MIN = 60 * 1000;
 
     let sendAfter: number;
-    if (reminderMs > now) {
-      sendAfter = reminderMs;
-    } else if (dueMs > now) {
-      sendAfter = now + 10000;
+
+    if (dueMs - FIFTEEN_MIN > now + ONE_MIN) {
+      // Plenty of time → schedule for 15 minutes before due
+      sendAfter = dueMs - FIFTEEN_MIN;
+    } else if (dueMs > now + ONE_MIN) {
+      // Less than 15 min but more than 1 min → fire 1 minute before due
+      sendAfter = dueMs - ONE_MIN;
     } else {
-      return res.status(200).json({ skipped: true, reason: 'already_past' });
+      // Due within 1 minute or already past → skip
+      return res.status(200).json({ skipped: true, reason: 'too_close_or_past' });
     }
 
     const payload = {
