@@ -40,10 +40,10 @@ import { triggerHaptic } from './utils/haptics';
 
 const STORAGE_KEY = 'taskflow_tasks_list';
 
-// ✅ Register the native Alarm plugin
+// ✅ Native Alarm plugin bridge (calls Java AlarmService)
 const AlarmNative = registerPlugin<{
-  startAlarm: (options: { title: string; taskId: string }) => Promise<{ success: boolean }>;
-  stopAlarm: () => Promise<{ success: boolean }>;
+  startAlarm: (options: { title: string; taskId: string; fireAt?: number }) => Promise<{ success: boolean }>;
+  stopAlarm: (options?: { taskId?: string }) => Promise<{ success: boolean }>;
 }>('AlarmNative');
 
 // Convert taskId string to a stable 32-bit int for LocalNotifications
@@ -77,7 +77,7 @@ export default function App() {
   const activeTasks = tasks.filter((t) => !t.archivedAt);
   const archivedTasks = tasks.filter((t) => t.archivedAt);
 
-  // --- SCHEDULE ALARM (uses native service + backend) ---
+  // --- SCHEDULE ALARM (native service + backend) ---
   const scheduleTaskReminder = async (task: Task) => {
     if (task.quadrant !== 'do_first') return;
     if (task.status === 'completed') return;
@@ -99,7 +99,7 @@ export default function App() {
       return;
     }
 
-    // --- Save schedule info to native storage for AlarmService to use ---
+    // --- Save pending alarm for tracking ---
     try {
       const pendingAlarms = JSON.parse(localStorage.getItem('taskflow_pending_alarms') || '{}');
       pendingAlarms[hashTaskId(task.id)] = {
@@ -113,7 +113,7 @@ export default function App() {
       console.warn('Failed to save pending alarm:', err);
     }
 
-    // --- Native Android: use LocalNotifications (fallback to system) ---
+    // --- Native Android: use LocalNotifications + native AlarmService ---
     if (Capacitor.isNativePlatform()) {
       try {
         await LocalNotifications.requestPermissions();
@@ -134,13 +134,14 @@ export default function App() {
           }],
         });
 
-        // 📱 ALSO trigger the native alarm service for full alarm-clock behavior
+        // 📱 Trigger the native AlarmService — NOW SCHEDULED (not immediate)
         try {
           await AlarmNative.startAlarm({
             title: task.title,
             taskId: task.id,
+            fireAt: fireAt,
           });
-          console.log('🔔 Native AlarmService started');
+          console.log('🔔 Native AlarmService scheduled for', new Date(fireAt).toLocaleString());
         } catch (nativeErr) {
           console.warn('Native alarm service not available (fallback active):', nativeErr);
         }
@@ -183,9 +184,9 @@ export default function App() {
         notifications: [{ id: hashTaskId(taskId) }],
       });
 
-      // Stop the native service if running
+      // Stop + cancel the native alarm
       try {
-        await AlarmNative.stopAlarm();
+        await AlarmNative.stopAlarm({ taskId });
       } catch (e) {}
 
       console.log('🗑️ Cancelled alarm for:', taskId);
