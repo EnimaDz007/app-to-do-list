@@ -71,9 +71,8 @@ export default function App() {
   const activeTasks = tasks.filter((t) => !t.archivedAt);
   const archivedTasks = tasks.filter((t) => t.archivedAt);
 
-  // --- SCHEDULE LOCAL NOTIFICATION (native) ---
+  // --- SCHEDULE REMINDER (backend + local fallback) ---
   const scheduleTaskReminder = async (task: Task) => {
-    if (!Capacitor.isNativePlatform()) return;
     if (task.quadrant !== 'do_first') return;
     if (task.status === 'completed') return;
     if (!task.dueDate) return;
@@ -86,36 +85,81 @@ export default function App() {
 
     let fireAt: number;
     if (reminderTime > now) {
-      // Schedule for the 15-min mark
       fireAt = reminderTime;
     } else if (dueTime > now) {
-      // Reminder window already passed but task still upcoming → fire in 5 seconds
       fireAt = now + 5000;
     } else {
-      // Task already overdue → skip
       console.log('⏭️ Skipping overdue task:', task.title);
       return;
     }
 
+    // --- Send to backend for reliable server-side scheduling ---
     try {
-      await LocalNotifications.schedule({
-        notifications: [
-          {
-            id: hashTaskId(task.id),
-            title: '⏰ Task Reminder',
-            body: `"${task.title}" is due soon!`,
-            schedule: { at: new Date(fireAt), allowWhileIdle: true },
-            sound: undefined,
-            smallIcon: 'ic_stat_onesignal_default',
-            largeIcon: undefined,
-            group: task.id,
-            extra: { taskId: task.id },
-          },
-        ],
+      const userId = localStorage.getItem('taskflow_user_id');
+      if (!userId) {
+        console.warn('⚠️ No user ID found, skipping backend schedule');
+        return;
+      }
+
+      const response = await fetch('/api/schedule-reminder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          externalId: userId,
+          title: task.title,
+          dueTime: task.dueDate,
+          taskId: task.id,
+        }),
       });
-      console.log('✅ Scheduled reminder for:', task.title, 'at', new Date(fireAt).toLocaleString());
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        console.log('✅ Backend scheduled reminder:', data.notificationId, 'for', data.scheduledFor);
+      } else if (data.skipped) {
+        console.log('⏭️ Backend skipped:', data.reason);
+      } else {
+        console.error('❌ Backend schedule failed:', data);
+        // Fallback: try local notification (only works when app is open)
+        if (Capacitor.isNativePlatform()) {
+          console.log('🔄 Falling back to local notification');
+          await LocalNotifications.schedule({
+            notifications: [{
+              id: hashTaskId(task.id),
+              title: '⏰ Task Reminder',
+              body: `"${task.title}" is due soon!`,
+              schedule: { at: new Date(fireAt), allowWhileIdle: true },
+              channelId: 'task-reminders-high',
+              sound: 'default',
+              smallIcon: 'ic_stat_onesignal_default',
+              group: task.id,
+              extra: { taskId: task.id },
+            }],
+          });
+        }
+      }
     } catch (err) {
-      console.error('❌ Failed to schedule:', err);
+      console.error('❌ Backend fetch error:', err);
+      // Fallback to local notification
+      if (Capacitor.isNativePlatform()) {
+        try {
+          await LocalNotifications.schedule({
+            notifications: [{
+              id: hashTaskId(task.id),
+              title: '⏰ Task Reminder',
+              body: `"${task.title}" is due soon!`,
+              schedule: { at: new Date(fireAt), allowWhileIdle: true },
+              channelId: 'task-reminders-high',
+              sound: 'default',
+              smallIcon: 'ic_stat_onesignal_default',
+              group: task.id,
+              extra: { taskId: task.id },
+            }],
+          });
+        } catch (e) {
+          console.error('Fallback also failed:', e);
+        }
+      }
     }
   };
 
@@ -134,7 +178,7 @@ export default function App() {
 
   // Request notification permission on startup
   useEffect(() => {
-        if (Capacitor.isNativePlatform()) {
+    if (Capacitor.isNativePlatform()) {
       LocalNotifications.requestPermissions()
         .then((res) => console.log('LocalNotifications permission:', res))
         .catch((err) => console.warn('LocalNotifications error:', err));
@@ -151,8 +195,8 @@ export default function App() {
         lightColor: '#FF0000',
       }).then(() => console.log('✅ High-priority channel created'))
         .catch((err) => console.warn('❌ Channel error:', err));
-          }
-    }, []);
+    }
+  }, []);
 
   // On startup (native), reschedule reminders for all future Do First tasks
   useEffect(() => {
@@ -235,7 +279,6 @@ export default function App() {
   }, []);
 
   const handleToggleStatus = (taskId: string) => {
-    // Cancel reminder when completing
     cancelTaskReminder(taskId);
     setTasks((prev) =>
       prev.map((task) => {
@@ -277,7 +320,6 @@ export default function App() {
 
   const handleSaveTask = (taskData: Omit<Task, 'id' | 'createdAt'> & { id?: string }) => {
     if (taskData.id) {
-      // Editing: cancel old reminder, save, schedule new
       cancelTaskReminder(taskData.id);
       const updatedTask = { ...taskData, id: taskData.id } as Task;
       setTasks((prev) =>
@@ -287,7 +329,6 @@ export default function App() {
             : t
         )
       );
-      // Reschedule with new due time
       scheduleTaskReminder({
         ...updatedTask,
         createdAt: new Date().toISOString(),
@@ -300,7 +341,6 @@ export default function App() {
         createdAt: new Date().toISOString(),
       };
       setTasks((prev) => [newTask, ...prev]);
-      // Schedule native reminder
       scheduleTaskReminder(newTask);
       playAudioChime('beep');
     }
