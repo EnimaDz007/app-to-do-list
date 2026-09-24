@@ -39,6 +39,7 @@ import { Mic } from 'lucide-react';
 import { triggerHaptic } from './utils/haptics';
 
 const STORAGE_KEY = 'taskflow_tasks_list';
+const CRITICAL_CHANNEL_ID = 'task-reminders-critical';
 
 // Convert taskId string to a stable 32-bit int for LocalNotifications
 const hashTaskId = (taskId: string): number => {
@@ -81,7 +82,7 @@ export default function App() {
     if (isNaN(dueTime)) return;
 
     const now = Date.now();
-    const reminderTime = dueTime - 15 * 60 * 1000; // 15 min before due
+    const reminderTime = dueTime - 2 * 60 * 1000; // 2 min before due
 
     let fireAt: number;
     if (reminderTime > now) {
@@ -126,11 +127,11 @@ export default function App() {
           await LocalNotifications.schedule({
             notifications: [{
               id: hashTaskId(task.id),
-              title: '⏰ Task Reminder',
-              body: `"${task.title}" is due soon!`,
+              title: '⏰ Task Due Soon!',
+              body: `"${task.title}" is due in 2 minutes!`,
               schedule: { at: new Date(fireAt), allowWhileIdle: true },
-              channelId: 'task-reminders-high',
-              sound: 'default',
+              channelId: CRITICAL_CHANNEL_ID,
+              sound: 'alarm',
               smallIcon: 'ic_stat_onesignal_default',
               group: task.id,
               extra: { taskId: task.id },
@@ -146,11 +147,11 @@ export default function App() {
           await LocalNotifications.schedule({
             notifications: [{
               id: hashTaskId(task.id),
-              title: '⏰ Task Reminder',
-              body: `"${task.title}" is due soon!`,
+              title: '⏰ Task Due Soon!',
+              body: `"${task.title}" is due in 2 minutes!`,
               schedule: { at: new Date(fireAt), allowWhileIdle: true },
-              channelId: 'task-reminders-high',
-              sound: 'default',
+              channelId: CRITICAL_CHANNEL_ID,
+              sound: 'alarm',
               smallIcon: 'ic_stat_onesignal_default',
               group: task.id,
               extra: { taskId: task.id },
@@ -184,16 +185,16 @@ export default function App() {
         .catch((err) => console.warn('LocalNotifications error:', err));
 
       LocalNotifications.createChannel({
-        id: 'task-reminders-high',
-        name: 'Task Reminders (High Priority)',
-        description: 'Reminders that fire at the exact time',
+        id: CRITICAL_CHANNEL_ID,
+        name: 'Critical Alerts',
+        description: 'Loud alarms for important reminders',
         importance: 5,
         visibility: 1,
         vibration: true,
-        sound: 'default',
+        sound: 'alarm',
         lights: true,
         lightColor: '#FF0000',
-      }).then(() => console.log('✅ High-priority channel created'))
+      }).then(() => console.log('✅ Critical channel created'))
         .catch((err) => console.warn('❌ Channel error:', err));
     }
   }, []);
