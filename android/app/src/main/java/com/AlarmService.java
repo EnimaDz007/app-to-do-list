@@ -113,12 +113,10 @@ public class AlarmService extends Service {
         }
     }
 
-    private void startAlarmSound() {
+        private void startAlarmSound() {
         try {
-            Uri alarmUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM);
-            if (alarmUri == null) {
-                alarmUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE);
-            }
+            // Use custom sound from res/raw/short_notification_sound_for_meizu.mp3
+            Uri alarmUri = Uri.parse("android.resource://" + getPackageName() + "/" + R.raw.short_notification_sound_for_meizu);
 
             mediaPlayer = new MediaPlayer();
             mediaPlayer.setDataSource(this, alarmUri);
@@ -132,7 +130,26 @@ public class AlarmService extends Service {
             mediaPlayer.prepare();
             mediaPlayer.start();
         } catch (Exception e) {
-            e.printStackTrace();
+            // Fallback to default alarm if custom sound fails
+            try {
+                Uri fallbackUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM);
+                if (fallbackUri == null) {
+                    fallbackUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE);
+                }
+                mediaPlayer = new MediaPlayer();
+                mediaPlayer.setDataSource(this, fallbackUri);
+                mediaPlayer.setAudioAttributes(
+                    new AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                );
+                mediaPlayer.setLooping(true);
+                mediaPlayer.prepare();
+                mediaPlayer.start();
+            } catch (Exception e2) {
+                e2.printStackTrace();
+            }
         }
     }
 
