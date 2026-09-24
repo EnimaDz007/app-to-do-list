@@ -8,17 +8,18 @@
     <!-- Notification permissions -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- Alarm permissions (exact-time reminders) -->
+    <!-- Alarm permissions -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
 
-    <!-- Foreground service (for continuous alarm) -->
+    <!-- Foreground service (alarm ringing) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.VIBRATE" />
 
-    <!-- Battery optimization (to survive Doze mode) -->
+    <!-- Battery optimization -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
@@ -44,6 +45,27 @@
 
         </activity>
 
+        <!-- 🔔 Foreground alarm service -->
+        <service
+            android:name=".AlarmService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="alarm_ringing" />
+        </service>
+
+        <!-- 🔔 Dismiss button receiver -->
+        <receiver
+            android:name=".AlarmDismissReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="DISMISS_ALARM" />
+            </intent-filter>
+        </receiver>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -55,6 +77,5 @@
         </provider>
     </application>
 
-    <!-- Internet -->
     <uses-permission android:name="android.permission.INTERNET" />
 </manifest>

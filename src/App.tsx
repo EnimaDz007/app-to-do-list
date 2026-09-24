@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, registerPlugin } from '@capacitor/core';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { useDevicePerformance } from './hooks/useDevicePerformance';
 import { Task, TabView, DeviceFrameMode, QuadrantId } from './types';
@@ -39,7 +39,12 @@ import { Mic } from 'lucide-react';
 import { triggerHaptic } from './utils/haptics';
 
 const STORAGE_KEY = 'taskflow_tasks_list';
-const CRITICAL_CHANNEL_ID = 'task-reminders-critical';
+
+// ✅ Register the native Alarm plugin
+const AlarmNative = registerPlugin<{
+  startAlarm: (options: { title: string; taskId: string }) => Promise<{ success: boolean }>;
+  stopAlarm: () => Promise<{ success: boolean }>;
+}>('AlarmNative');
 
 // Convert taskId string to a stable 32-bit int for LocalNotifications
 const hashTaskId = (taskId: string): number => {
@@ -72,7 +77,7 @@ export default function App() {
   const activeTasks = tasks.filter((t) => !t.archivedAt);
   const archivedTasks = tasks.filter((t) => t.archivedAt);
 
-  // --- SCHEDULE REMINDER (backend + local fallback) ---
+  // --- SCHEDULE ALARM (uses native service + backend) ---
   const scheduleTaskReminder = async (task: Task) => {
     if (task.quadrant !== 'do_first') return;
     if (task.status === 'completed') return;
@@ -94,13 +99,62 @@ export default function App() {
       return;
     }
 
-    // --- Send to backend for reliable server-side scheduling ---
+    // --- Save schedule info to native storage for AlarmService to use ---
+    try {
+      const pendingAlarms = JSON.parse(localStorage.getItem('taskflow_pending_alarms') || '{}');
+      pendingAlarms[hashTaskId(task.id)] = {
+        fireAt,
+        title: task.title,
+        taskId: task.id,
+      };
+      localStorage.setItem('taskflow_pending_alarms', JSON.stringify(pendingAlarms));
+      console.log('💾 Saved pending alarm:', task.title, 'at', new Date(fireAt).toLocaleString());
+    } catch (err) {
+      console.warn('Failed to save pending alarm:', err);
+    }
+
+    // --- Native Android: use LocalNotifications (fallback to system) ---
+    if (Capacitor.isNativePlatform()) {
+      try {
+        await LocalNotifications.requestPermissions();
+
+        await LocalNotifications.schedule({
+          notifications: [{
+            id: hashTaskId(task.id),
+            title: '⏰ ' + task.title,
+            body: 'Tap Dismiss to stop',
+            schedule: { at: new Date(fireAt), allowWhileIdle: true },
+            channelId: 'task-reminders-critical',
+            sound: 'default',
+            ongoing: true,
+            autoCancel: false,
+            smallIcon: 'ic_stat_onesignal_default',
+            group: task.id,
+            extra: { taskId: task.id },
+          }],
+        });
+
+        // 📱 ALSO trigger the native alarm service for full alarm-clock behavior
+        try {
+          await AlarmNative.startAlarm({
+            title: task.title,
+            taskId: task.id,
+          });
+          console.log('🔔 Native AlarmService started');
+        } catch (nativeErr) {
+          console.warn('Native alarm service not available (fallback active):', nativeErr);
+        }
+
+        console.log('✅ Reminder scheduled at', new Date(fireAt).toLocaleString());
+      } catch (err) {
+        console.error('❌ Local notification failed:', err);
+      }
+    }
+
+    // --- Backend backup (for when phone is off) ---
     try {
       const userId = localStorage.getItem('taskflow_user_id');
-      if (!userId) {
-        console.warn('⚠️ No user ID found, skipping backend schedule');
-        return;
-      }
+      if (!userId) return;
 
       const response = await fetch('/api/schedule-reminder', {
         method: 'POST',
@@ -114,57 +168,11 @@ export default function App() {
       });
 
       const data = await response.json();
-
       if (response.ok && data.success) {
-        console.log('✅ Backend scheduled reminder:', data.notificationId, 'for', data.scheduledFor);
-      } else if (data.skipped) {
-        console.log('⏭️ Backend skipped:', data.reason);
-      } else {
-        console.error('❌ Backend schedule failed:', data);
-        // Fallback: local persistent alarm notification
-        if (Capacitor.isNativePlatform()) {
-          console.log('🔄 Falling back to local notification');
-          await LocalNotifications.schedule({
-            notifications: [{
-              id: hashTaskId(task.id),
-              title: '⏰ Task Due: ' + task.title,
-              body: 'Tap to dismiss',
-              schedule: { at: new Date(fireAt), allowWhileIdle: true },
-              channelId: CRITICAL_CHANNEL_ID,
-              sound: 'alarm',
-              ongoing: true,
-              autoCancel: false,
-              smallIcon: 'ic_stat_onesignal_default',
-              group: task.id,
-              extra: { taskId: task.id },
-            }],
-          });
-        }
+        console.log('✅ Backend backup scheduled:', data.notificationId);
       }
     } catch (err) {
-      console.error('❌ Backend fetch error:', err);
-      // Fallback to local persistent alarm notification
-      if (Capacitor.isNativePlatform()) {
-        try {
-          await LocalNotifications.schedule({
-            notifications: [{
-              id: hashTaskId(task.id),
-              title: '⏰ Task Due: ' + task.title,
-              body: 'Tap to dismiss',
-              schedule: { at: new Date(fireAt), allowWhileIdle: true },
-              channelId: CRITICAL_CHANNEL_ID,
-              sound: 'alarm',
-              ongoing: true,
-              autoCancel: false,
-              smallIcon: 'ic_stat_onesignal_default',
-              group: task.id,
-              extra: { taskId: task.id },
-            }],
-          });
-        } catch (e) {
-          console.error('Fallback also failed:', e);
-        }
-      }
+      console.warn('Backend backup skipped:', err);
     }
   };
 
@@ -174,14 +182,20 @@ export default function App() {
       await LocalNotifications.cancel({
         notifications: [{ id: hashTaskId(taskId) }],
       });
-      console.log('🗑️ Cancelled reminder for:', taskId);
+
+      // Stop the native service if running
+      try {
+        await AlarmNative.stopAlarm();
+      } catch (e) {}
+
+      console.log('🗑️ Cancelled alarm for:', taskId);
     } catch (err) {
       // ignore
     }
   };
   // ----------------------------------------
 
-  // Request notification permission on startup
+  // Request notification permission on startup + create channel
   useEffect(() => {
     if (Capacitor.isNativePlatform()) {
       LocalNotifications.requestPermissions()
@@ -189,17 +203,16 @@ export default function App() {
         .catch((err) => console.warn('LocalNotifications error:', err));
 
       LocalNotifications.createChannel({
-        id: CRITICAL_CHANNEL_ID,
-        name: 'Critical Alerts',
-        description: 'Loud alarms for important reminders',
+        id: 'task-reminders-critical',
+        name: 'Task Reminders',
+        description: 'Task due reminders',
         importance: 5,
         visibility: 1,
         vibration: true,
-        sound: 'alarm',
+        sound: 'default',
         lights: true,
         lightColor: '#FF0000',
-      }).then(() => console.log('✅ Critical channel created'))
-        .catch((err) => console.warn('❌ Channel error:', err));
+      }).catch(() => {});
     }
   }, []);
 
@@ -212,7 +225,7 @@ export default function App() {
       }
     });
     // eslint-disable-next-line
-  }, []); // only on mount
+  }, []);
 
   // Auto-archive completed tasks after 2 seconds
   useEffect(() => {
@@ -235,7 +248,7 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [tasks]);
 
-  // Listen for updates from views (pin, subtask changes)
+  // Listen for updates from views
   useEffect(() => {
     const handleTasksUpdated = () => {
       const saved = localStorage.getItem(STORAGE_KEY);
