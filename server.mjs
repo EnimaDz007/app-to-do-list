@@ -6,7 +6,6 @@ import { getFirestore } from 'firebase-admin/firestore';
 import fs from 'fs';
 
 // 1. Initialize Firebase Admin
-// Reads from environment variable (for production/Render) OR local file (for development)
 let serviceAccount;
 if (process.env.FIREBASE_SERVICE_ACCOUNT) {
   serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
@@ -20,7 +19,7 @@ initializeApp({
   credential: cert(serviceAccount)
 });
 
-// 2. Firestore database (replaces the local data.json file)
+// 2. Firestore database
 const db = getFirestore();
 const tokensCollection = db.collection('tokens');
 const tasksCollection = db.collection('tasks');
@@ -30,9 +29,10 @@ app.use(cors({ origin: '*' }));
 app.use(express.json());
 
 // 3. Timer management
-const scheduledTimers = {}; // taskId -> setTimeout handle
+const scheduledTimers = {};
 
 async function sendPushForTask(taskId) {
+  console.log(`🔔 Timer fired for task: ${taskId}`);
   try {
     const taskDoc = await tasksCollection.doc(taskId).get();
     if (!taskDoc.exists) {
@@ -63,13 +63,8 @@ async function sendPushForTask(taskId) {
     console.log(`🚀 Auto-push sent for "${task.title}":`, response);
   } catch (error) {
     console.error('❌ Error sending auto-push:', error);
-    if (error.code === 'messaging/registration-token-not-registered' ||
-        error.code === 'messaging/invalid-registration-token') {
-      console.log(`🗑️ Removing invalid token for task ${taskId}`);
-    }
   }
 
-  // Always remove the completed task from Firestore
   try {
     await tasksCollection.doc(taskId).delete();
   } catch (err) {
