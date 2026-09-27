@@ -5,6 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Capacitor, registerPlugin } from '@capacitor/core';
+import { PushNotifications } from '@capacitor/push-notifications';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { useDevicePerformance } from './hooks/useDevicePerformance';
 import { Task, TabView, DeviceFrameMode, QuadrantId } from './types';
@@ -42,7 +43,7 @@ const STORAGE_KEY = 'taskflow_tasks_list';
 
 // ✅ Native Alarm plugin bridge (calls Java AlarmService)
 const AlarmNative = registerPlugin<{
-  startAlarm: (options: { title: string; taskId: string; fireAt?: number }) => Promise<{ success: boolean }>;
+  startAlarm: (options: { title: string; taskId: string; fireAt?: string }) => Promise<{ success: boolean }>;
   stopAlarm: (options?: { taskId?: string }) => Promise<{ success: boolean }>;
 }>('AlarmNative');
 
@@ -87,17 +88,20 @@ export default function App() {
     if (isNaN(dueTime)) return;
 
     const now = Date.now();
-    const reminderTime = dueTime - 2 * 60 * 1000; // 2 min before due
 
     let fireAt: number;
-    if (reminderTime > now) {
-      fireAt = reminderTime;
-    } else if (dueTime > now) {
-      fireAt = now + 5000;
+    if (dueTime > now + 3000) {
+      fireAt = dueTime; // <--- Fire EXACTLY at due time for the loud alarm
     } else {
       console.log('⏭️ Skipping overdue task:', task.title);
       return;
     }
+
+    // 🔍 DEBUG LOGS
+    console.log('🔍 DEBUG now =', new Date(now).toLocaleString(), '(' + now + ')');
+    console.log('🔍 DEBUG dueTime =', new Date(dueTime).toLocaleString(), '(' + dueTime + ')');
+    console.log('🔍 DEBUG fireAt =', new Date(fireAt).toLocaleString(), '(' + fireAt + ')');
+    console.log('🔍 DEBUG diff (ms) =', fireAt - now);
 
     // --- Save pending alarm for tracking ---
     try {
@@ -108,56 +112,48 @@ export default function App() {
         taskId: task.id,
       };
       localStorage.setItem('taskflow_pending_alarms', JSON.stringify(pendingAlarms));
-      console.log('💾 Saved pending alarm:', task.title, 'at', new Date(fireAt).toLocaleString());
     } catch (err) {
       console.warn('Failed to save pending alarm:', err);
     }
 
-    // --- Native Android: use LocalNotifications + native AlarmService ---
+    // --- Native Android: use ONLY the custom Java AlarmService now ---
     if (Capacitor.isNativePlatform()) {
       try {
-        await LocalNotifications.requestPermissions();
+        console.log('🔔 Calling AlarmNative.startAlarm with fireAt=' + fireAt);
+        await AlarmNative.startAlarm({
+          title: task.title,
+          taskId: task.id,
+          fireAt: String(fireAt), // <--- Sending as String so Java gets the right number!
+        });
+        console.log('🔔 AlarmNative call returned successfully');
+      } catch (nativeErr) {
+        console.warn('Native alarm service not available:', nativeErr);
+      }
 
+      // --- Local Notification for 2 minutes BEFORE the due time (SILENT) ---
+      try {
+        const notifId = hashTaskId(task.id) + 1; // Different ID from native alarm
         await LocalNotifications.schedule({
           notifications: [{
-            id: hashTaskId(task.id),
-            title: '⏰ ' + task.title,
-            body: 'Tap Dismiss to stop',
-            schedule: { at: new Date(fireAt), allowWhileIdle: true },
-            channelId: 'task-reminders-critical',
-            sound: 'default',
-            ongoing: true,
-            autoCancel: false,
+            id: notifId,
+            title: '⏰ Task Due Soon: ' + task.title,
+            body: 'This task is due in 2 minutes.',
+            schedule: { at: new Date(dueTime - 2 * 60 * 1000) }, // <--- EXACTLY 2 minutes before
+            channelId: 'task-reminders-silent', // <--- Using the silent channel we just created
             smallIcon: 'ic_stat_onesignal_default',
-            group: task.id,
             extra: { taskId: task.id },
-          }],
+          }]
         });
-
-        // 📱 Trigger the native AlarmService — NOW SCHEDULED (not immediate)
-        try {
-          await AlarmNative.startAlarm({
-            title: task.title,
-            taskId: task.id,
-            fireAt: fireAt,
-          });
-          console.log('🔔 Native AlarmService scheduled for', new Date(fireAt).toLocaleString());
-        } catch (nativeErr) {
-          console.warn('Native alarm service not available (fallback active):', nativeErr);
-        }
-
-        console.log('✅ Reminder scheduled at', new Date(fireAt).toLocaleString());
-      } catch (err) {
-        console.error('❌ Local notification failed:', err);
+        console.log('🔔 Silent Notification scheduled for 2 mins before due time:', new Date(dueTime - 2 * 60 * 1000).toLocaleString());
+      } catch (notifErr) {
+        console.warn('Local notification failed:', notifErr);
       }
     }
 
     // --- Backend backup (for when phone is off) ---
     try {
-      const userId = localStorage.getItem('taskflow_user_id');
-      if (!userId) return;
-
-      const response = await fetch('/api/schedule-reminder', {
+      const userId = localStorage.getItem('taskflow_user_id') || 'test-user-123';
+      const response = await fetch('http://localhost:5000/api/schedule-reminder', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -168,56 +164,126 @@ export default function App() {
         }),
       });
 
+      if (!response.ok) {
+        throw new Error(`Server returned status: ${response.status}`);
+      }
+
       const data = await response.json();
-      if (response.ok && data.success) {
-        console.log('✅ Backend backup scheduled:', data.notificationId);
+      if (data.success) {
+        console.log('✅ Backend backup scheduled:', data.message);
       }
     } catch (err) {
-      console.warn('Backend backup skipped:', err);
+      console.warn('Backend backup skipped (this is okay):', err);
     }
   };
 
   const cancelTaskReminder = async (taskId: string) => {
     if (!Capacitor.isNativePlatform()) return;
     try {
-      await LocalNotifications.cancel({
-        notifications: [{ id: hashTaskId(taskId) }],
-      });
-
-      // Stop + cancel the native alarm
+      // 1. Cancel the loud ring from Java
       try {
         await AlarmNative.stopAlarm({ taskId });
       } catch (e) {}
 
-      console.log('🗑️ Cancelled alarm for:', taskId);
+      // 2. Cancel the silent Local Notification
+      try {
+        await LocalNotifications.cancel({
+          notifications: [{ id: hashTaskId(taskId) + 1 }]
+        });
+      } catch (e) {}
+
+      // 3. Cancel the server-side scheduled push
+      try {
+        await fetch('http://localhost:5000/api/cancel-reminder', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ taskId }),
+        });
+        console.log('🗑️ Server timer cancelled for:', taskId);
+      } catch (e) {
+        console.warn('Server cancel skipped (offline):', e);
+      }
+
+      console.log('🗑️ Cancelled all alarms for:', taskId);
     } catch (err) {
       // ignore
     }
   };
   // ----------------------------------------
 
-  // Request notification permission on startup + create channel
   useEffect(() => {
     if (Capacitor.isNativePlatform()) {
       LocalNotifications.requestPermissions()
         .then((res) => console.log('LocalNotifications permission:', res))
         .catch((err) => console.warn('LocalNotifications error:', err));
 
+      // ✅ CREATE THE SILENT CHANNEL (This was the missing piece!)
       LocalNotifications.createChannel({
-        id: 'task-reminders-critical',
-        name: 'Task Reminders',
-        description: 'Task due reminders',
-        importance: 5,
+        id: 'task-reminders-silent',
+        name: 'Silent Task Reminders',
+        description: 'Silent heads-up before a task is due',
+        importance: 2, // 2 = Low importance (No sound)
         visibility: 1,
-        vibration: true,
-        sound: 'default',
+        vibration: false,
         lights: true,
-        lightColor: '#FF0000',
-      }).catch(() => {});
+      }).catch((err) => console.warn('Failed to create silent channel:', err));
     }
   }, []);
 
-  // On startup (native), reschedule reminders for all future Do First tasks
+  // --- SETUP PUSH NOTIFICATIONS (FCM) ---
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+
+    const setupPush = async () => {
+      try {
+        // 1. Request permission
+        let permStatus = await PushNotifications.checkPermissions();
+        if (permStatus.receive === 'prompt') {
+          permStatus = await PushNotifications.requestPermissions();
+        }
+        
+        if (permStatus.receive !== 'granted') {
+          console.warn('User denied push notification permission!');
+          return;
+        }
+
+        // 2. Register with FCM
+        await PushNotifications.register();
+
+        // 3. Listen for the token
+        PushNotifications.addListener('registration', async (token) => {
+          console.log('📱 FCM TOKEN RECEIVED:', token.value);
+          
+          // Send token to our server!
+          try {
+            const userId = localStorage.getItem('taskflow_user_id') || 'test-user-123';
+            const response = await fetch('http://localhost:5000/api/register-device', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ userId: userId, fcmToken: token.value }),
+            });
+            const data = await response.json();
+            if (data.success) {
+              console.log('✅ Token successfully registered with the server!');
+            }
+          } catch (err) {
+            console.warn('Failed to register token with server:', err);
+          }
+        });
+
+        // 4. Listen for push notifications arriving
+        PushNotifications.addListener('pushNotificationReceived', (notification) => {
+          console.log('🔔 Push notification received:', notification);
+        });
+
+      } catch (err) {
+        console.error('Push setup failed:', err);
+      }
+    };
+
+    setupPush();
+  }, []);
+
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
     tasks.forEach((task) => {
@@ -225,10 +291,8 @@ export default function App() {
         scheduleTaskReminder(task);
       }
     });
-    // eslint-disable-next-line
   }, []);
 
-  // Auto-archive completed tasks after 2 seconds
   useEffect(() => {
     const completedOnes = tasks.filter(
       (t) => t.status === 'completed' && !t.archivedAt && t.completedAt
@@ -249,7 +313,6 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [tasks]);
 
-  // Listen for updates from views
   useEffect(() => {
     const handleTasksUpdated = () => {
       const saved = localStorage.getItem(STORAGE_KEY);
@@ -275,7 +338,6 @@ export default function App() {
   const [focusTask, setFocusTask] = useState<Task | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
-  // Sync to localStorage
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
@@ -284,7 +346,6 @@ export default function App() {
     }
   }, [tasks]);
 
-  // Browser-only: check for due tasks on web
   useEffect(() => {
     if (Capacitor.isNativePlatform()) return;
     if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
@@ -469,6 +530,7 @@ export default function App() {
                 <PriorityMatrixView
                   tasks={activeTasks}
                   onToggleStatus={handleToggleStatus}
+                  onDeleteTask={handleDeleteTask}
                   onQuadrantSelect={setDefaultQuadrant}
                 />
               )

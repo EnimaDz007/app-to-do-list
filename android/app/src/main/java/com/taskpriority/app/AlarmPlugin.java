@@ -15,25 +15,38 @@ public class AlarmPlugin extends Plugin {
     @PluginMethod
     public void startAlarm(PluginCall call) {
         Log.e("AlarmDebug", "🔥 AlarmPlugin.startAlarm() was called from JavaScript!");
+        Log.e("AlarmDebug", "📦 Full call data: " + call.getData().toString());
 
         String title = call.getString("title", "Task Reminder");
         String taskId = call.getString("taskId", "");
-        Double fireAtDouble = call.getDouble("fireAt");
 
-        Log.e("AlarmDebug", "📦 Received fireAt: " + fireAtDouble);
+        // ✅ Read fireAt directly from the raw data to bypass the broken Capacitor bridge
+        Object fireAtObj = call.getData().opt("fireAt");
+        long fireAtMs = 0;
+
+        if (fireAtObj instanceof Number) {
+            fireAtMs = ((Number) fireAtObj).longValue();
+        } else if (fireAtObj instanceof String) {
+            try {
+                fireAtMs = Long.parseLong((String) fireAtObj);
+            } catch (NumberFormatException e) {
+                Log.e("AlarmDebug", "❌ Failed to parse fireAt string: " + fireAtObj);
+            }
+        }
+
+        Log.e("AlarmDebug", "✅ Parsed fireAtMs: " + fireAtMs);
 
         Context context = getContext();
+        long now = System.currentTimeMillis();
 
-        if (fireAtDouble != null) {
-            long fireAtMs = fireAtDouble.longValue();
+        if (fireAtMs > now) {
             AlarmScheduler.schedule(context, fireAtMs, title, taskId);
-
             JSObject result = new JSObject();
             result.put("success", true);
             result.put("scheduledFor", fireAtMs);
             call.resolve(result);
         } else {
-            Log.e("AlarmDebug", "❌ fireAt was null! Firing immediately as fallback.");
+            Log.e("AlarmDebug", "❌ fireAt is invalid or in the past! Firing immediately as fallback.");
             Intent intent = new Intent(context, AlarmService.class);
             intent.putExtra("title", title);
             intent.putExtra("taskId", taskId);
@@ -58,7 +71,7 @@ public class AlarmPlugin extends Plugin {
         Intent serviceIntent = new Intent(context, AlarmService.class);
         context.stopService(serviceIntent);
 
-        if (!taskId.isEmpty()) {
+        if (taskId != null && !taskId.isEmpty()) {
             AlarmScheduler.cancel(context, taskId);
         }
 

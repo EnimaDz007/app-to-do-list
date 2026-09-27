@@ -11,8 +11,7 @@ apply from: "../capacitor-cordova-android-plugins/cordova.variables.gradle"
 dependencies {
     implementation project(':capacitor-community-speech-recognition')
     implementation project(':capacitor-local-notifications')
-    implementation project(':onesignal-capacitor-plugin')
-    implementation project(':scalejet-capacitor-alarm-notification')
+    implementation project(':capacitor-push-notifications')
 
 }
 

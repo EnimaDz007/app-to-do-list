@@ -38,8 +38,8 @@ public class AlarmService extends Service {
         PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
         if (pm != null) {
             wakeLock = pm.newWakeLock(
-                PowerManager.PARTIAL_WAKE_LOCK,
-                "TaskPriority::AlarmWakeLock"
+                    PowerManager.PARTIAL_WAKE_LOCK,
+                    "TaskPriority::AlarmWakeLock"
             );
             wakeLock.acquire(10 * 60 * 1000L);
         }
@@ -61,29 +61,30 @@ public class AlarmService extends Service {
         Intent openAppIntent = new Intent(this, MainActivity.class);
         openAppIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         PendingIntent contentIntent = PendingIntent.getActivity(
-            this, 0, openAppIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+                this, 0, openAppIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
 
         Intent dismissIntent = new Intent(this, AlarmDismissReceiver.class);
         dismissIntent.setAction("DISMISS_ALARM");
         PendingIntent dismissPendingIntent = PendingIntent.getBroadcast(
-            this, 1, dismissIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+                this, 1, dismissIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
 
         Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("⏰ " + taskTitle)
-            .setContentText("Tap Dismiss to stop the alarm")
-            .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
-            .setPriority(NotificationCompat.PRIORITY_MAX)
-            .setCategory(NotificationCompat.CATEGORY_ALARM)
-            .setOngoing(true)
-            .setAutoCancel(false)
-            .setContentIntent(contentIntent)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Dismiss", dismissPendingIntent)
-            .setFullScreenIntent(contentIntent, true)
-            .build();
+                .setContentTitle("⏰ " + taskTitle)
+                .setContentText("Tap Dismiss to stop the alarm")
+                .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+                .setPriority(NotificationCompat.PRIORITY_MAX)
+                .setCategory(NotificationCompat.CATEGORY_ALARM)
+                .setOngoing(true)
+                .setAutoCancel(false)
+                .setContentIntent(contentIntent)
+                .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Dismiss", dismissPendingIntent)
+                .setFullScreenIntent(contentIntent, true) // This already turns on the screen!
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC) // Shows on lock screen
+                .build();
 
         startForeground(NOTIFICATION_ID, notification);
 
@@ -96,9 +97,9 @@ public class AlarmService extends Service {
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
-                CHANNEL_ID,
-                "Alarm Ringing",
-                NotificationManager.IMPORTANCE_HIGH
+                    CHANNEL_ID,
+                    "Alarm Ringing",
+                    NotificationManager.IMPORTANCE_HIGH
             );
             channel.setDescription("Rings continuously until dismissed");
             channel.enableVibration(true);
@@ -113,7 +114,7 @@ public class AlarmService extends Service {
         }
     }
 
-        private void startAlarmSound() {
+    private void startAlarmSound() {
         try {
             // Use custom sound from res/raw/short_notification_sound_for_meizu.mp3
             Uri alarmUri = Uri.parse("android.resource://" + getPackageName() + "/" + R.raw.short_notification_sound_for_meizu);
@@ -121,10 +122,10 @@ public class AlarmService extends Service {
             mediaPlayer = new MediaPlayer();
             mediaPlayer.setDataSource(this, alarmUri);
             mediaPlayer.setAudioAttributes(
-                new AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_ALARM)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                    .build()
+                    new AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_ALARM)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                            .build()
             );
             mediaPlayer.setLooping(true);
             mediaPlayer.prepare();
@@ -139,10 +140,10 @@ public class AlarmService extends Service {
                 mediaPlayer = new MediaPlayer();
                 mediaPlayer.setDataSource(this, fallbackUri);
                 mediaPlayer.setAudioAttributes(
-                    new AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_ALARM)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build()
+                        new AudioAttributes.Builder()
+                                .setUsage(AudioAttributes.USAGE_ALARM)
+                                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                                .build()
                 );
                 mediaPlayer.setLooping(true);
                 mediaPlayer.prepare();
