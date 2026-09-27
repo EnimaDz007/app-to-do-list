@@ -41,6 +41,9 @@ import { triggerHaptic } from './utils/haptics';
 
 const STORAGE_KEY = 'taskflow_tasks_list';
 
+// ✅ Live server URL (deployed on Render)
+const SERVER_URL = 'https://task-priority-server-pir6.onrender.com';
+
 // ✅ Native Alarm plugin bridge (calls Java AlarmService)
 const AlarmNative = registerPlugin<{
   startAlarm: (options: { title: string; taskId: string; fireAt?: string }) => Promise<{ success: boolean }>;
@@ -153,7 +156,7 @@ export default function App() {
     // --- Backend backup (for when phone is off) ---
     try {
       const userId = localStorage.getItem('taskflow_user_id') || 'test-user-123';
-      const response = await fetch('http://localhost:5000/api/schedule-reminder', {
+      const response = await fetch(`${SERVER_URL}/api/schedule-reminder`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -194,7 +197,7 @@ export default function App() {
 
       // 3. Cancel the server-side scheduled push
       try {
-        await fetch('http://localhost:5000/api/cancel-reminder', {
+        await fetch(`${SERVER_URL}/api/cancel-reminder`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ taskId }),
@@ -257,7 +260,7 @@ export default function App() {
           // Send token to our server!
           try {
             const userId = localStorage.getItem('taskflow_user_id') || 'test-user-123';
-            const response = await fetch('http://localhost:5000/api/register-device', {
+            const response = await fetch(`${SERVER_URL}/api/register-device`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ userId: userId, fcmToken: token.value }),

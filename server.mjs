@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import { initializeApp, cert } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
+import { getFirestore } from 'firebase-admin/firestore';
 import fs from 'fs';
 
 // 1. Initialize Firebase Admin
@@ -19,61 +20,35 @@ initializeApp({
   credential: cert(serviceAccount)
 });
 
+// 2. Firestore database (replaces the local data.json file)
+const db = getFirestore();
+const tokensCollection = db.collection('tokens');
+const tasksCollection = db.collection('tasks');
+
 const app = express();
 app.use(cors({ origin: '*' }));
 app.use(express.json());
-
-// 2. Persistent Database (JSON file)
-const DB_FILE = './data.json';
-let db = {
-  registeredTokens: {}, // userId -> fcmToken
-  scheduledTasks: {}    // taskId -> { externalId, title, dueTime, taskId }
-};
-
-function loadDB() {
-  try {
-    if (fs.existsSync(DB_FILE)) {
-      db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-      if (!db.registeredTokens) db.registeredTokens = {};
-      if (!db.scheduledTasks) db.scheduledTasks = {};
-      console.log(`📂 Loaded DB → Tokens: ${Object.keys(db.registeredTokens).length} | Tasks: ${Object.keys(db.scheduledTasks).length}`);
-    } else {
-      console.log('📂 No DB found. Starting fresh.');
-    }
-  } catch (err) {
-    console.error('Failed to load DB:', err);
-  }
-}
-
-function saveDB() {
-  try {
-    fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
-  } catch (err) {
-    console.error('Failed to save DB:', err);
-  }
-}
-
-loadDB();
 
 // 3. Timer management
 const scheduledTimers = {}; // taskId -> setTimeout handle
 
 async function sendPushForTask(taskId) {
-  const task = db.scheduledTasks[taskId];
-  if (!task) {
-    console.log(`⏭️ Task ${taskId} no longer exists. Skipping push.`);
-    return;
-  }
-
-  const fcmToken = db.registeredTokens[task.externalId];
-  if (!fcmToken) {
-    console.log(`❌ No FCM token found for user ${task.externalId}`);
-    delete db.scheduledTasks[taskId];
-    saveDB();
-    return;
-  }
-
   try {
+    const taskDoc = await tasksCollection.doc(taskId).get();
+    if (!taskDoc.exists) {
+      console.log(`⏭️ Task ${taskId} no longer exists. Skipping push.`);
+      return;
+    }
+    const task = taskDoc.data();
+
+    const tokenDoc = await tokensCollection.doc(task.externalId).get();
+    if (!tokenDoc.exists) {
+      console.log(`❌ No FCM token found for user ${task.externalId}`);
+      await tasksCollection.doc(taskId).delete();
+      return;
+    }
+    const fcmToken = tokenDoc.data().fcmToken;
+
     const response = await getMessaging().send({
       token: fcmToken,
       notification: {
@@ -82,25 +57,25 @@ async function sendPushForTask(taskId) {
       },
       android: {
         priority: 'high',
-        notification: {
-          channelId: 'task-reminders-critical'
-        }
+        notification: { channelId: 'task-reminders-critical' }
       }
     });
     console.log(`🚀 Auto-push sent for "${task.title}":`, response);
   } catch (error) {
     console.error('❌ Error sending auto-push:', error);
-    // Clean up invalid tokens automatically
     if (error.code === 'messaging/registration-token-not-registered' ||
         error.code === 'messaging/invalid-registration-token') {
-      console.log(`🗑️ Removing invalid token for user ${task.externalId}`);
-      delete db.registeredTokens[task.externalId];
+      console.log(`🗑️ Removing invalid token for task ${taskId}`);
     }
   }
 
-  delete db.scheduledTasks[taskId];
+  // Always remove the completed task from Firestore
+  try {
+    await tasksCollection.doc(taskId).delete();
+  } catch (err) {
+    console.error('Failed to delete task from Firestore:', err);
+  }
   delete scheduledTimers[taskId];
-  saveDB();
 }
 
 function scheduleTask(task) {
@@ -127,37 +102,55 @@ function scheduleTask(task) {
   return true;
 }
 
-// 4. On boot: reload all pending tasks
-function rescheduleAll() {
-  const taskIds = Object.keys(db.scheduledTasks);
-  if (taskIds.length === 0) return;
-
-  console.log(`🔄 Rescheduling ${taskIds.length} pending task(s) from DB...`);
-  taskIds.forEach((taskId) => {
-    const ok = scheduleTask(db.scheduledTasks[taskId]);
-    if (!ok) {
-      delete db.scheduledTasks[taskId];
+// 4. On boot: reload all pending tasks from Firestore
+async function rescheduleAll() {
+  try {
+    const snapshot = await tasksCollection.get();
+    if (snapshot.empty) {
+      console.log('📂 No pending tasks in Firestore.');
+      return;
     }
-  });
-  saveDB();
+
+    console.log(`🔄 Rescheduling ${snapshot.size} pending task(s) from Firestore...`);
+    const toDelete = [];
+    snapshot.forEach((doc) => {
+      const task = doc.data();
+      task.taskId = doc.id;
+      const ok = scheduleTask(task);
+      if (!ok) toDelete.push(doc.id);
+    });
+
+    for (const id of toDelete) {
+      await tasksCollection.doc(id).delete();
+    }
+  } catch (err) {
+    console.error('Failed to reschedule from Firestore:', err);
+  }
 }
 
 rescheduleAll();
 
 // 5. ROUTE: Register device token
-app.post('/api/register-device', (req, res) => {
+app.post('/api/register-device', async (req, res) => {
   const { userId, fcmToken } = req.body;
   if (!userId || !fcmToken) {
     return res.status(400).json({ error: 'userId and fcmToken are required' });
   }
-  db.registeredTokens[userId] = fcmToken;
-  saveDB();
-  console.log(`📱 Device registered! User: ${userId}`);
-  res.json({ success: true, message: "Device registered" });
+  try {
+    await tokensCollection.doc(userId).set({
+      fcmToken,
+      updatedAt: new Date().toISOString()
+    });
+    console.log(`📱 Device registered! User: ${userId}`);
+    res.json({ success: true, message: "Device registered" });
+  } catch (err) {
+    console.error('Failed to register device:', err);
+    res.status(500).json({ error: 'Failed to register device' });
+  }
 });
 
 // 6. ROUTE: Schedule a reminder
-app.post('/api/schedule-reminder', (req, res) => {
+app.post('/api/schedule-reminder', async (req, res) => {
   const { externalId, title, dueTime, taskId } = req.body;
   console.log("✅ Reminder request:", { externalId, title, dueTime, taskId });
 
@@ -170,18 +163,18 @@ app.post('/api/schedule-reminder', (req, res) => {
     return res.status(400).json({ error: 'Invalid or overdue dueTime' });
   }
 
-  // Save to persistent DB
-  db.scheduledTasks[taskId] = { externalId, title, dueTime, taskId };
-  saveDB();
-
-  // Schedule the timer
-  scheduleTask(db.scheduledTasks[taskId]);
-
-  res.json({ success: true, message: "Reminder scheduled", fireInMs: dueTimestamp - Date.now() });
+  try {
+    await tasksCollection.doc(taskId).set({ externalId, title, dueTime, taskId });
+    scheduleTask({ externalId, title, dueTime, taskId });
+    res.json({ success: true, message: "Reminder scheduled", fireInMs: dueTimestamp - Date.now() });
+  } catch (err) {
+    console.error('Failed to schedule reminder:', err);
+    res.status(500).json({ error: 'Failed to schedule reminder' });
+  }
 });
 
 // 7. ROUTE: Cancel a reminder
-app.post('/api/cancel-reminder', (req, res) => {
+app.post('/api/cancel-reminder', async (req, res) => {
   const { taskId } = req.body;
   if (!taskId) return res.status(400).json({ error: 'taskId is required' });
 
@@ -191,21 +184,21 @@ app.post('/api/cancel-reminder', (req, res) => {
     console.log(`🗑️ Cancelled timer for task: ${taskId}`);
   }
 
-  if (db.scheduledTasks[taskId]) {
-    delete db.scheduledTasks[taskId];
-    saveDB();
+  try {
+    await tasksCollection.doc(taskId).delete();
+  } catch (err) {
+    console.error('Failed to delete task from Firestore:', err);
   }
 
   res.json({ success: true, message: "Reminder cancelled" });
 });
 
-// 8. A simple health-check route (useful for Render to verify the server is alive)
+// 8. Health check route
 app.get('/', (req, res) => {
   res.send('Task Priority Server is alive! 🚀');
 });
 
 // 9. Start the server
-// Render provides the PORT via environment variable. Locally, defaults to 5000.
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Backend server is running on port ${PORT}`);
