@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { X, Save, Clock, Target, Dumbbell, Mic, MicOff, Sparkles } from 'lucide-react';
 import { Task, QuadrantId, TaskCategory, PriorityLevel } from '../types';
 import { QUADRANT_CONFIGS } from '../data/initialTasks';
@@ -17,6 +17,60 @@ interface TaskModalProps {
   defaultQuadrant?: QuadrantId;
 }
 
+// Helper: Convert a Date object to a local datetime-local string (YYYY-MM-DDTHH:MM)
+function dateToLocalInputString(date: Date): string {
+  const tzOffset = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - tzOffset).toISOString().slice(0, 16);
+}
+
+// Helper: Convert a datetime-local string (local time) into an ISO UTC string for storage
+function localInputStringToISO(localStr: string): string {
+  if (!localStr) return new Date().toISOString();
+  return new Date(localStr).toISOString();
+}
+
+// ✅ Helper: Detect relative time expressions in the transcript ("in 3 minutes", "dans 5 min", "بعد 10 دقائق")
+function extractRelativeTime(text: string): Date | null {
+  const lower = text.toLowerCase();
+
+  const patterns: { regex: RegExp; unit: 'min' | 'hour' }[] = [
+    { regex: /\bin\s+(\d+)\s*(?:min|minute|minutes)\b/i, unit: 'min' },
+    { regex: /\bin\s+(\d+)\s*(?:h|hr|hour|hours)\b/i, unit: 'hour' },
+    { regex: /\bdans\s+(\d+)\s*(?:min|minute|minutes)\b/i, unit: 'min' },
+    { regex: /\bdans\s+(\d+)\s*(?:h|hr|heure|heures)\b/i, unit: 'hour' },
+    { regex: /بعد\s+(\d+)\s*(?:دقيقة|دقائق|دقيقه)\b/, unit: 'min' },
+    { regex: /بعد\s+(\d+)\s*(?:ساعة|ساعات|ساعه)\b/, unit: 'hour' },
+  ];
+
+  for (const { regex, unit } of patterns) {
+    const match = lower.match(regex);
+    if (match) {
+      const amount = parseInt(match[1], 10);
+      if (isNaN(amount)) continue;
+      const result = new Date();
+      if (unit === 'min') {
+        result.setMinutes(result.getMinutes() + amount);
+      } else {
+        result.setHours(result.getHours() + amount);
+      }
+      console.log(`⏱️ Voice: detected relative time → +${amount} ${unit}(s)`);
+      return result;
+    }
+  }
+
+  return null;
+}
+
+// ✅ Helper: Remove the relative time expression from the transcript (so the title stays clean)
+function stripRelativeTime(text: string): string {
+  return text
+    .replace(/\bin\s+\d+\s*(?:min|minute|minutes|h|hr|hour|hours)\b/i, '')
+    .replace(/\bdans\s+\d+\s*(?:min|minute|minutes|h|hr|heure|heures)\b/i, '')
+    .replace(/بعد\s+\d+\s*(?:دقيقة|دقائق|دقيقه|ساعة|ساعات|ساعه)/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export const TaskModal: React.FC<TaskModalProps> = ({
   isOpen,
   onClose,
@@ -30,12 +84,18 @@ export const TaskModal: React.FC<TaskModalProps> = ({
   const [quadrant, setQuadrant] = useState<QuadrantId>(defaultQuadrant);
   const [category, setCategory] = useState<TaskCategory>('Engineering');
   const [estimatedMinutes, setEstimatedMinutes] = useState<number>(30);
- const [dueDate, setDueDate] = useState(() => {
-  const d = new Date();
-  d.setHours(d.getHours() + 1, 0, 0, 0);
-  const tzOffset = d.getTimezoneOffset() * 60000;
-  return new Date(d.getTime() - tzOffset).toISOString().slice(0, 16);
-});
+
+  // ✅ Track if the user has manually edited the title.
+  // When true, the voice transcript effect will NOT overwrite it.
+  const userEditedTitleRef = useRef(false);
+
+  // Default due date: 15 minutes from now
+  const [dueDate, setDueDate] = useState<string>(() => {
+    const d = new Date();
+    d.setMinutes(d.getMinutes() + 15);
+    return dateToLocalInputString(d);
+  });
+
   const [impactScore, setImpactScore] = useState<number>(4);
   const [effortScore, setEffortScore] = useState<number>(2);
 
@@ -46,8 +106,16 @@ export const TaskModal: React.FC<TaskModalProps> = ({
     interimTranscript,
     startListening,
     stopListening,
+    restartListening,
     resetTranscript,
   } = useSpeechRecognition();
+
+  const stopListeningRef = useRef(stopListening);
+  const resetTranscriptRef = useRef(resetTranscript);
+  useEffect(() => {
+    stopListeningRef.current = stopListening;
+    resetTranscriptRef.current = resetTranscript;
+  });
 
   const speechLangMap: Record<string, string> = {
     en: 'en-US',
@@ -55,37 +123,61 @@ export const TaskModal: React.FC<TaskModalProps> = ({
     ar: 'ar-SA',
   };
 
-  // Sync speech into title and auto-detect category & quadrant
+  // ✅ Sync speech into title and auto-detect category, quadrant & relative time
   useEffect(() => {
-    if (transcript) {
-      const parsed = parseSpokenTask(transcript);
-      setTitle(parsed.title || transcript);
-      if (parsed.description) {
-        setDescription(parsed.description);
-      }
-      setCategory(parsed.category);
-      setQuadrant(parsed.quadrant);
-      if (parsed.estimatedMinutes) {
-        setEstimatedMinutes(parsed.estimatedMinutes);
-      }
-      if (parsed.dueDate) {
-        setDueDate(parsed.dueDate);
-      }
+    if (!transcript) return;
+
+    // 🔑 If the user typed something manually, don't overwrite it
+    if (userEditedTitleRef.current) {
+      console.log('[TaskModal] 🚫 user edited title — skipping voice→title sync');
+      return;
+    }
+
+    const relativeTime = extractRelativeTime(transcript);
+    const cleanedTranscript = relativeTime ? stripRelativeTime(transcript) : transcript;
+    const parsed = parseSpokenTask(cleanedTranscript);
+
+    setTitle(parsed.title || cleanedTranscript || transcript);
+    if (parsed.description) {
+      setDescription(parsed.description);
+    }
+    setCategory(parsed.category);
+    setQuadrant(parsed.quadrant);
+    if (parsed.estimatedMinutes) {
+      setEstimatedMinutes(parsed.estimatedMinutes);
+    }
+
+    if (relativeTime) {
+      setDueDate(dateToLocalInputString(relativeTime));
+    } else if (parsed.dueDate) {
+      setDueDate(parsed.dueDate);
     }
   }, [transcript]);
 
+  // ✅ Reset form fields when the modal opens (but do NOT touch the mic here)
   useEffect(() => {
+    if (!isOpen) return;
+
+    // 🔑 Reset the "user edited" flag when the modal opens fresh
+    userEditedTitleRef.current = false;
+
     if (editingTask) {
       setTitle(editingTask.title);
       setDescription(editingTask.description);
       setQuadrant(editingTask.quadrant);
       setCategory(editingTask.category);
       setEstimatedMinutes(editingTask.estimatedMinutes);
-setDueDate(() => {
-  const d = editingTask.dueDate ? new Date(editingTask.dueDate) : new Date(Date.now() + 3600000);
-  if (isNaN(d.getTime())) return new Date(Date.now() + 3600000 - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-});
+
+      setDueDate(() => {
+        const d = editingTask.dueDate
+          ? new Date(editingTask.dueDate)
+          : new Date(Date.now() + 15 * 60000);
+        if (isNaN(d.getTime())) {
+          return dateToLocalInputString(new Date(Date.now() + 15 * 60000));
+        }
+        return dateToLocalInputString(d);
+      });
+
       setImpactScore(editingTask.impactScore || 3);
       setEffortScore(editingTask.effortScore || 2);
     } else {
@@ -94,31 +186,39 @@ setDueDate(() => {
       setQuadrant(defaultQuadrant);
       setCategory('Engineering');
       setEstimatedMinutes(30);
-setDueDate(() => {
-  const d = new Date();
-  d.setHours(d.getHours() + 1, 0, 0, 0);
-  const tz = d.getTimezoneOffset() * 60000;
-  return new Date(d.getTime() - tz).toISOString().slice(0, 16);
-});
+
+      setDueDate(() => {
+        const d = new Date();
+        d.setMinutes(d.getMinutes() + 15);
+        return dateToLocalInputString(d);
+      });
+
       setImpactScore(4);
       setEffortScore(2);
     }
-    resetTranscript();
-    stopListening();
-  }, [editingTask, defaultQuadrant, isOpen, resetTranscript, stopListening]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, editingTask, defaultQuadrant]);
 
-  const handleToggleVoice = () => {
-    if (isListening) {
-      triggerHaptic('light');
-      playVoiceCue('stop');
-      stopListening();
-    } else {
-      triggerHaptic('medium');
-      playVoiceCue('start');
-      resetTranscript();
+  // ✅ AUTO-START: Begin always-on listening as soon as the modal opens.
+  useEffect(() => {
+    if (!isOpen) return;
+    if (!isSupported) return;
+
+    stopListeningRef.current();
+    resetTranscriptRef.current();
+
+    const timer = setTimeout(() => {
+      console.log('🎤 Modal opened — starting always-on mic.');
       startListening(speechLangMap[language] || 'en-US');
-    }
-  };
+    }, 600);
+
+    return () => {
+      clearTimeout(timer);
+      console.log('🛑 Modal closed — stopping mic.');
+      stopListeningRef.current();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, isSupported, language]);
 
   if (!isOpen) return null;
 
@@ -143,7 +243,7 @@ setDueDate(() => {
       category,
       status: editingTask ? editingTask.status : 'todo',
       estimatedMinutes,
- dueDate: dueDate ? new Date(dueDate).toISOString() : new Date().toISOString(),
+      dueDate: localInputStringToISO(dueDate),
       impactScore,
       effortScore,
     });
@@ -199,20 +299,27 @@ setDueDate(() => {
                 {t('modal_field_title')} <span className="text-rose-500">*</span>
               </label>
 
-              {/* Push to talk button */}
+              {/* ✅ Tappable mic — tap to restart if auto-restart fails */}
               <button
                 id="btn-taskmodal-mic"
                 type="button"
-                onClick={handleToggleVoice}
+                onClick={() => {
+                  triggerHaptic('medium');
+                  if (isListening) {
+                    stopListening();
+                  } else {
+                    restartListening();
+                  }
+                }}
                 className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-bold transition cursor-pointer ${
                   isListening
                     ? 'bg-rose-500 text-white shadow-xs ring-2 ring-rose-500/30'
                     : 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-900/60'
                 }`}
-                title={isListening ? 'Listening... Click to stop' : 'Push to Talk'}
+                title={isListening ? 'Listening... tap to stop' : 'Tap to restart mic'}
               >
                 <Mic className={`w-3.5 h-3.5 ${isListening ? 'animate-bounce' : ''}`} />
-                <span>{isListening ? t('ptt_listening') : t('ptt_btn_title')}</span>
+                <span>{isListening ? 'Listening...' : 'Tap to Talk'}</span>
               </button>
             </div>
 
@@ -222,7 +329,11 @@ setDueDate(() => {
                 type="text"
                 required
                 value={title}
-                onChange={(e) => setTitle(e.target.value)}
+                onChange={(e) => {
+                  // 🔑 Mark that the user manually edited the title
+                  userEditedTitleRef.current = true;
+                  setTitle(e.target.value);
+                }}
                 placeholder={t('modal_field_title_placeholder')}
                 className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2.5 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500 transition"
               />
@@ -282,8 +393,7 @@ setDueDate(() => {
             </div>
           </div>
 
-          {/* Category & Minutes */}
-                    {/* 🆕 Due Date & Time Picker */}
+          {/* Due Date & Time Picker */}
           <div>
             <label className="block font-medium text-slate-700 dark:text-slate-300 mb-1">
               <span className="flex items-center gap-1">
@@ -299,9 +409,11 @@ setDueDate(() => {
               className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500 cursor-pointer"
             />
             <p className="text-[10px] text-slate-400 mt-1">
-              You will be notified 15 minutes before this task is due.
+              Tip: Say "remind me in 3 minutes" to auto-set the time. You'll get a silent alert 2 min before, and a loud alarm at the due time.
             </p>
           </div>
+
+          {/* Category & Minutes */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block font-medium text-slate-700 dark:text-slate-300 mb-1">
@@ -331,9 +443,8 @@ setDueDate(() => {
               <input
                 id="input-task-minutes"
                 type="number"
-               
-              value={estimatedMinutes || ''}
-             onChange={(e) => setEstimatedMinutes(e.target.value === '' ? 0 : parseInt(e.target.value))}
+                value={estimatedMinutes || ''}
+                onChange={(e) => setEstimatedMinutes(e.target.value === '' ? 0 : parseInt(e.target.value))}
                 className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500"
               />
             </div>

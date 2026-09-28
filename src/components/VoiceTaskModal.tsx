@@ -27,6 +27,23 @@ const SPEECH_LANG: Record<string, string> = {
   ar: 'ar-SA',
 };
 
+const HALLUCINATIONS = [
+  'thank you', 'thanks', 'thank you very much',
+  'شكرا', 'شكرا لك', 'شكرا جزيلا',
+  'merci', 'merci beaucoup',
+  'uh', 'um', 'hmm', 'er', 'ah',
+  'you', 'the', 'a', 'and', 'or', 'so',
+  'subtitles by', 'subs by', 'subscribe',
+  'okay google', 'hey google', 'alexa',
+  'mama', 'papa', 'call mama', 'call papa',
+  'please', 'yes', 'no', 'ok',
+];
+
+function isHallucination(text: string): boolean {
+  const cleaned = text.toLowerCase().replace(/[.,!?;:]/g, '').trim();
+  return HALLUCINATIONS.includes(cleaned);
+}
+
 export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
   isOpen,
   onClose,
@@ -39,21 +56,292 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
   const [transcript, setTranscript] = useState('');
   const [isListening, setIsListening] = useState(false);
 
-  const recognitionRef = useRef<any>(null);
-  const isMountedRef = useRef(true);
+  console.log('[PTT] 🚀 VERSION 12.0 (NEVER STOP)');
+
+  const committedRef = useRef('');
+  const currentUtteranceRef = useRef('');
+  const lastHeardRef = useRef('');
+  const userEditedRef = useRef(false);
+
+  const webRecogRef = useRef<any>(null);
+  const nativePartialRef = useRef<any>(null);
+  const nativeStateRef = useRef<any>(null);
   const sessionActiveRef = useRef(false);
-  const nativePartialListenerRef = useRef<any>(null);
+  const isRestartingRef = useRef(false);
+  const langRef = useRef('en-US');
+  const lastStateChangeRef = useRef<number>(Date.now());
+  const watchdogRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isMountedRef = useRef(true);
 
   const theme = QUADRANTS.find((q) => q.id === selectedQuadrant)!;
   const isNative = Capacitor.isNativePlatform();
+
+  const refreshDisplay = () => {
+    if (userEditedRef.current) return;
+    const combined = [committedRef.current, currentUtteranceRef.current]
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+    console.log('[PTT] 🖼️ display → committed =', JSON.stringify(committedRef.current), '| current =', JSON.stringify(currentUtteranceRef.current));
+    setTranscript(combined);
+  };
+
+  const commitCurrent = () => {
+    const cur = currentUtteranceRef.current.trim();
+    console.log('[PTT] 💾 commit. cur =', JSON.stringify(cur), '| committed was =', JSON.stringify(committedRef.current));
+    currentUtteranceRef.current = '';
+    lastHeardRef.current = '';
+    if (!cur) return;
+
+    const prev = committedRef.current.trim();
+    if (!prev) {
+      committedRef.current = cur;
+    } else if (prev.toLowerCase().endsWith(cur.toLowerCase())) {
+      return;
+    } else {
+      committedRef.current = `${prev} ${cur}`;
+    }
+    console.log('[PTT] 💾 Committed now =', JSON.stringify(committedRef.current));
+    refreshDisplay();
+  };
+
+  const attachNativeListeners = async () => {
+    nativePartialRef.current = await SpeechRecognition.addListener(
+      'partialResults',
+      (data: any) => {
+        if (!isMountedRef.current || !sessionActiveRef.current) return;
+        if (!data.matches || data.matches.length === 0) return;
+
+        const newText = (data.matches[0] || '').trim();
+        if (!newText) return;
+
+        if (isHallucination(newText)) {
+          console.log('[PTT] 🚫 Filtered:', JSON.stringify(newText));
+          return;
+        }
+        if (newText.length < 2) return;
+
+        const oldText = lastHeardRef.current;
+        if (newText === oldText) return;
+        lastHeardRef.current = newText;
+
+        const session = currentUtteranceRef.current;
+
+        if (session && newText.toLowerCase().startsWith(session.toLowerCase())) {
+          currentUtteranceRef.current = newText;
+        } else if (session && session.toLowerCase().includes(newText.toLowerCase())) {
+          // no-op
+        } else if (session) {
+          commitCurrent();
+          currentUtteranceRef.current = newText;
+        } else {
+          currentUtteranceRef.current = newText;
+        }
+
+        console.log('[PTT] 📝 Partial:', JSON.stringify(newText));
+        refreshDisplay();
+        lastStateChangeRef.current = Date.now();
+      }
+    );
+
+    nativeStateRef.current = await SpeechRecognition.addListener(
+      'listeningState',
+      (data: any) => {
+        if (!isMountedRef.current) return;
+        const status = data?.status;
+        const now = Date.now();
+        console.log('[PTT] 🎤 State:', status);
+
+        if (status === 'started') {
+          setIsListening(true);
+          lastStateChangeRef.current = now;
+        } else if (status === 'stopped') {
+          setIsListening(false);
+          lastStateChangeRef.current = now;
+        }
+      }
+    );
+  };
+
+  const detachNativeListeners = () => {
+    if (nativePartialRef.current) {
+      try { nativePartialRef.current.remove(); } catch {}
+      nativePartialRef.current = null;
+    }
+    if (nativeStateRef.current) {
+      try { nativeStateRef.current.remove(); } catch {}
+      nativeStateRef.current = null;
+    }
+  };
+
+  const killRecognition = async () => {
+    sessionActiveRef.current = false;
+    isRestartingRef.current = false;
+    if (watchdogRef.current) {
+      clearInterval(watchdogRef.current);
+      watchdogRef.current = null;
+    }
+    if (isNative) {
+      try { await SpeechRecognition.stop(); } catch {}
+      detachNativeListeners();
+    }
+    const recog = webRecogRef.current;
+    webRecogRef.current = null;
+    if (recog) {
+      try {
+        recog.onresult = null;
+        recog.onerror = null;
+        recog.onend = null;
+        recog.abort();
+      } catch {}
+    }
+    if (isMountedRef.current) setIsListening(false);
+  };
+
+  const startRecognitionNative = async () => {
+    try {
+      const available = await SpeechRecognition.available();
+      if (!available.available) { alert('Voice not supported on this device.'); return; }
+      const perm = await SpeechRecognition.requestPermissions();
+      if (perm.speechRecognition !== 'granted') { alert('Microphone permission denied.'); return; }
+
+      sessionActiveRef.current = true;
+      langRef.current = SPEECH_LANG[language] || 'en-US';
+      lastStateChangeRef.current = Date.now();
+
+      await attachNativeListeners();
+
+      await SpeechRecognition.start({
+        language: langRef.current,
+        maxResults: 3,
+        partialResults: true,
+        popup: false,
+      });
+      setIsListening(true);
+      startWatchdog();
+    } catch (err) {
+      console.error('[PTT] Native start error:', err);
+      setIsListening(false);
+    }
+  };
+
+  // 🔑 NEVER call stop() — just try to start() again
+  const nativeRestart = async () => {
+    if (isRestartingRef.current || !sessionActiveRef.current) return;
+    isRestartingRef.current = true;
+    try {
+      console.log('[PTT] 🔁 Restart: start() only (no stop)');
+      try {
+        await SpeechRecognition.start({
+          language: langRef.current,
+          maxResults: 3,
+          partialResults: true,
+          popup: false,
+        });
+        console.log('[PTT] ✅ start() resolved directly');
+      } catch (e) {
+        console.log('[PTT] Direct start failed, waiting 2s and retrying:', e);
+        await new Promise((r) => setTimeout(r, 2000));
+        if (!sessionActiveRef.current) return;
+        try {
+          await SpeechRecognition.start({
+            language: langRef.current,
+            maxResults: 3,
+            partialResults: true,
+            popup: false,
+          });
+          console.log('[PTT] ✅ Retry start() resolved');
+        } catch (e2) {
+          console.warn('[PTT] ❌ Retry also failed:', e2);
+        }
+      }
+      lastStateChangeRef.current = Date.now();
+    } finally {
+      isRestartingRef.current = false;
+    }
+  };
+
+  const startWatchdog = () => {
+    if (watchdogRef.current) clearInterval(watchdogRef.current);
+    watchdogRef.current = setInterval(() => {
+      if (!sessionActiveRef.current) return;
+      if (isRestartingRef.current) return;
+      const silent = Date.now() - lastStateChangeRef.current;
+      if (silent > 3000) {
+        if (currentUtteranceRef.current.trim()) {
+          console.log('[PTT] 🐕 silence → commit:', currentUtteranceRef.current);
+          commitCurrent();
+        }
+        nativeRestart();
+      }
+    }, 1500);
+  };
+
+  const startRecognitionWeb = () => {
+    if (typeof window === 'undefined') return;
+    const SR = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
+    if (!SR) { alert('Voice not supported.'); return; }
+    if (webRecogRef.current) { try { webRecogRef.current.abort(); } catch {} webRecogRef.current = null; }
+
+    sessionActiveRef.current = true;
+    langRef.current = SPEECH_LANG[language] || 'en-US';
+
+    const recog = new SR();
+    recog.continuous = true;
+    recog.interimResults = true;
+    recog.lang = langRef.current;
+    recog.maxAlternatives = 1;
+
+    recog.onresult = (event: any) => {
+      if (!isMountedRef.current || !sessionActiveRef.current) return;
+      let interim = '';
+      const finals: string[] = [];
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const res = event.results[i];
+        const txt = (res[0]?.transcript || '').trim();
+        if (!txt) continue;
+        if (isHallucination(txt)) continue;
+        if (res.isFinal) finals.push(txt);
+        else interim += txt + ' ';
+      }
+      if (interim) {
+        currentUtteranceRef.current = interim.trim();
+        refreshDisplay();
+      }
+      if (finals.length > 0) {
+        currentUtteranceRef.current = finals.join(' ').trim();
+        commitCurrent();
+      }
+    };
+    recog.onerror = (event: any) => {
+      if (event.error !== 'no-speech' && event.error !== 'aborted') console.warn('[PTT] Web error:', event.error);
+    };
+    recog.onend = () => {
+      if (!isMountedRef.current) return;
+      setIsListening(false);
+      commitCurrent();
+      if (sessionActiveRef.current) {
+        setTimeout(() => {
+          if (sessionActiveRef.current) {
+            try { recog.start(); setIsListening(true); } catch {}
+          }
+        }, 200);
+      }
+    };
+    webRecogRef.current = recog;
+    try { recog.start(); setIsListening(true); } catch (e) { console.warn('[PTT] Web start failed:', e); }
+  };
+
+  const startRecognition = () => {
+    if (isNative) startRecognitionNative();
+    else startRecognitionWeb();
+  };
 
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
-      if (nativePartialListenerRef.current) {
-        try { nativePartialListenerRef.current.remove(); } catch (e) {}
-      }
+      detachNativeListeners();
     };
   }, []);
 
@@ -62,6 +350,10 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
       setStep('select');
       setSelectedQuadrant(quadrant);
       setTranscript('');
+      committedRef.current = '';
+      currentUtteranceRef.current = '';
+      lastHeardRef.current = '';
+      userEditedRef.current = false;
       sessionActiveRef.current = false;
     } else {
       killRecognition();
@@ -69,155 +361,20 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
     // eslint-disable-next-line
   }, [isOpen]);
 
-  const killRecognition = async () => {
-    sessionActiveRef.current = false;
-
-    // Stop native speech recognition
-    if (isNative) {
-      try { await SpeechRecognition.stop(); } catch (e) {}
-      if (nativePartialListenerRef.current) {
-        try { nativePartialListenerRef.current.remove(); } catch (e) {}
-        nativePartialListenerRef.current = null;
-      }
-    }
-
-    // Stop web speech recognition
-    const recog = recognitionRef.current;
-    recognitionRef.current = null;
-    if (recog) {
-      recog.onresult = null;
-      recog.onerror = null;
-      recog.onend = null;
-      try { recog.abort(); } catch (e) {}
-      try { recog.stop(); } catch (e) {}
-    }
-
-    if (isMountedRef.current) setIsListening(false);
-  };
-
-  const startRecognitionNative = async () => {
-    try {
-      const available = await SpeechRecognition.available();
-      if (!available.available) {
-        alert('Voice not supported on this device.');
-        return;
-      }
-
-      const perm = await SpeechRecognition.requestPermissions();
-      if (perm.speechRecognition !== 'granted') {
-        alert('Microphone permission denied. Please enable it in phone settings.');
-        return;
-      }
-
-      sessionActiveRef.current = true;
-
-      nativePartialListenerRef.current = await SpeechRecognition.addListener(
-        'partialResults',
-        (data: any) => {
-          if (!isMountedRef.current || !sessionActiveRef.current) return;
-          if (data.matches && data.matches.length > 0) {
-            const text = data.matches[0];
-            if (text) setTranscript(text);
-          }
-        }
-      );
-
-      await SpeechRecognition.start({
-        language: SPEECH_LANG[language] || 'en-US',
-        maxResults: 1,
-        prompt: t('ptt_listening'),
-        partialResults: true,
-        popup: false,
-      });
-
-      if (isMountedRef.current) setIsListening(true);
-    } catch (err) {
-      console.error('Native speech error:', err);
-      if (isMountedRef.current) setIsListening(false);
-    }
-  };
-
-  const startRecognitionWeb = () => {
-    if (typeof window === 'undefined') return;
-    const SR = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
-    if (!SR) {
-      alert('Voice not supported. Please type instead.');
-      return;
-    }
-
-    killRecognition();
-    sessionActiveRef.current = true;
-
-    const recog = new SR();
-    recog.continuous = true;
-    recog.interimResults = false;
-    recog.lang = SPEECH_LANG[language] || 'en-US';
-    recog.maxAlternatives = 1;
-
-    recog.onresult = (event: any) => {
-      if (!isMountedRef.current || !sessionActiveRef.current) return;
-      const results = event.results;
-      if (!results || results.length === 0) return;
-
-      const newFinals: string[] = [];
-      for (let i = event.resultIndex; i < results.length; i++) {
-        if (results[i].isFinal) {
-          const text = results[i][0]?.transcript?.trim();
-          if (text) newFinals.push(text);
-        }
-      }
-
-      if (newFinals.length > 0) {
-        setTranscript((prev) => {
-          const base = prev.trim();
-          const addition = newFinals.join(' ');
-          return base ? `${base} ${addition}` : addition;
-        });
-      }
-    };
-
-    recog.onerror = (event: any) => {
-      if (event.error !== 'no-speech' && event.error !== 'aborted') {
-        console.warn('Speech error:', event.error);
-      }
-    };
-
-    recog.onend = () => {
-      if (isMountedRef.current && sessionActiveRef.current) {
-        setIsListening(false);
-      }
-    };
-
-    recognitionRef.current = recog;
-    try {
-      recog.start();
-      if (isMountedRef.current) setIsListening(true);
-    } catch (e) {
-      console.warn('Failed to start:', e);
-    }
-  };
-
-  const startRecognition = () => {
-    if (isNative) {
-      startRecognitionNative();
-    } else {
-      startRecognitionWeb();
-    }
-  };
-
   const handleSelectQuadrant = (qId: QuadrantId) => {
     setSelectedQuadrant(qId);
     setStep('speak');
     setTranscript('');
+    committedRef.current = '';
+    currentUtteranceRef.current = '';
+    lastHeardRef.current = '';
+    userEditedRef.current = false;
     setTimeout(() => startRecognition(), 250);
   };
 
   const handleAdd = () => {
     const text = transcript.trim();
-    if (!text) {
-      alert('Please speak or type something first.');
-      return;
-    }
+    if (!text) { alert('Please speak or type something first.'); return; }
     const parsed = parseSpokenTask(text);
     const capitalized = text.charAt(0).toUpperCase() + text.slice(1);
     onAddTask(capitalized, selectedQuadrant, parsed.dueDate);
@@ -229,17 +386,37 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
   const handleBack = () => {
     killRecognition();
     setTranscript('');
+    committedRef.current = '';
+    currentUtteranceRef.current = '';
+    lastHeardRef.current = '';
+    userEditedRef.current = false;
     setStep('select');
   };
 
   const handleCancel = () => {
     killRecognition();
     setTranscript('');
+    committedRef.current = '';
+    currentUtteranceRef.current = '';
+    lastHeardRef.current = '';
+    userEditedRef.current = false;
     onClose();
   };
 
   const handleClear = () => {
     setTranscript('');
+    committedRef.current = '';
+    currentUtteranceRef.current = '';
+    lastHeardRef.current = '';
+    userEditedRef.current = true;
+  };
+
+  const handleManualEdit = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value;
+    setTranscript(value);
+    committedRef.current = value;
+    currentUtteranceRef.current = '';
+    userEditedRef.current = true;
   };
 
   const handleResume = () => {
@@ -253,13 +430,10 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
       {isOpen && (
         <>
           <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             onClick={handleCancel}
             className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-md"
           />
-
           <motion.div
             initial={{ opacity: 0, scale: 0.85, y: 20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -276,20 +450,9 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
 
             <AnimatePresence mode="wait">
               {step === 'select' ? (
-                <motion.div
-                  key="select"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.2 }}
-                >
-                  <h2 className="mb-1 text-center text-[20px] font-extrabold tracking-tight text-slate-900 dark:text-white">
-                    {t('ptt_drawer_title')}
-                  </h2>
-                  <p className="mb-6 text-center text-[12px] font-medium text-slate-500 dark:text-slate-400">
-                    {t('matrix_quick_add').replace('{quadrant}', '')}
-                  </p>
-
+                <motion.div key="select" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
+                  <h2 className="mb-1 text-center text-[20px] font-extrabold tracking-tight text-slate-900 dark:text-white">{t('ptt_drawer_title')}</h2>
+                  <p className="mb-6 text-center text-[12px] font-medium text-slate-500 dark:text-slate-400">{t('matrix_quick_add').replace('{quadrant}', '')}</p>
                   <div className="grid grid-cols-2 gap-3">
                     {QUADRANTS.map((q) => {
                       const Icon = q.icon;
@@ -302,29 +465,17 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
                           <div className={`flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br ${q.gradient} shadow-lg`}>
                             <Icon size={22} className="text-white" />
                           </div>
-                          <span className={`text-[12px] font-bold ${q.text} dark:text-slate-200`}>
-                            {getQuadrantName(q.id)}
-                          </span>
+                          <span className={`text-[12px] font-bold ${q.text} dark:text-slate-200`}>{getQuadrantName(q.id)}</span>
                         </button>
                       );
                     })}
                   </div>
-
-                  <button
-                    onClick={handleCancel}
-                    className="mt-5 w-full py-2.5 text-sm font-semibold text-slate-500 dark:text-slate-400 transition-opacity hover:opacity-70"
-                  >
+                  <button onClick={handleCancel} className="mt-5 w-full py-2.5 text-sm font-semibold text-slate-500 dark:text-slate-400 transition-opacity hover:opacity-70">
                     {t('modal_btn_cancel')}
                   </button>
                 </motion.div>
               ) : (
-                <motion.div
-                  key="speak"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.2 }}
-                >
+                <motion.div key="speak" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
                   <h2 className="text-center text-[19px] font-extrabold tracking-tight text-slate-900 dark:text-white">
                     {t('ptt_listening').split('...')[0]}
                   </h2>
@@ -372,18 +523,14 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
                   <div className="relative mb-3">
                     <textarea
                       value={transcript}
-                      onChange={(e) => setTranscript(e.target.value)}
+                      onChange={handleManualEdit}
                       placeholder={t('ptt_write_placeholder')}
                       rows={3}
                       dir="ltr"
                       className={`w-full resize-none rounded-2xl border-[1.5px] p-3 pr-10 text-left text-[13px] font-medium outline-none ${theme.bg} dark:bg-slate-700/50 ${theme.border} dark:border-slate-600 ${theme.text} dark:text-white`}
                     />
                     {transcript && (
-                      <button
-                        onClick={handleClear}
-                        className={`absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full ${theme.bg} dark:bg-slate-700 ${theme.text} dark:text-white`}
-                        title={t('ptt_clear')}
-                      >
+                      <button onClick={handleClear} className={`absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full ${theme.bg} dark:bg-slate-700 ${theme.text} dark:text-white`} title={t('ptt_clear')}>
                         <Eraser size={13} />
                       </button>
                     )}
@@ -392,18 +539,11 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
                   {transcript && (
                     <div className="mb-3 flex items-center justify-center gap-1.5 rounded-full bg-slate-100 dark:bg-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-600 dark:text-slate-200">
                       <Calendar size={12} />
-                      {new Date(parseSpokenTask(transcript).dueDate).toLocaleString('en-US', {
-                        month: 'short',
-                        day: 'numeric',
-                        hour: 'numeric',
-                        minute: '2-digit',
-                      })}
+                      {new Date(parseSpokenTask(transcript).dueDate).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
                     </div>
                   )}
 
-                  <p className="mb-3 text-center text-[11px] font-medium text-slate-500 dark:text-slate-300">
-                    {t('ptt_release_tip')}
-                  </p>
+                  <p className="mb-3 text-center text-[11px] font-medium text-slate-500 dark:text-slate-300">{t('ptt_release_tip')}</p>
 
                   <button
                     onClick={handleAdd}
@@ -414,10 +554,7 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
                     {t('ptt_add_task_btn')}
                   </button>
 
-                  <button
-                    onClick={handleBack}
-                    className={`w-full py-2.5 text-sm font-semibold ${theme.text} dark:text-slate-300 transition-opacity hover:opacity-70`}
-                  >
+                  <button onClick={handleBack} className={`w-full py-2.5 text-sm font-semibold ${theme.text} dark:text-slate-300 transition-opacity hover:opacity-70`}>
                     ← {t('modal_btn_cancel')}
                   </button>
                 </motion.div>

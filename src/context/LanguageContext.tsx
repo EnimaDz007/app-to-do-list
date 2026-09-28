@@ -19,13 +19,10 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       if (saved === 'en' || saved === 'fr' || saved === 'ar') {
         return saved;
       }
-      // Check browser preferences
-      const navLang = navigator.language.slice(0, 2);
-      if (navLang === 'fr') return 'fr';
-      if (navLang === 'ar') return 'ar';
     } catch {
       // ignore
     }
+    // ✅ Always default to English on a fresh install
     return 'en';
   });
 
