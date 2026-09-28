@@ -19,7 +19,6 @@ initializeApp({
   credential: cert(serviceAccount)
 });
 
-// 2. Firestore database
 const db = getFirestore();
 const tokensCollection = db.collection('tokens');
 const tasksCollection = db.collection('tasks');
@@ -28,10 +27,9 @@ const app = express();
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 
-// 3. Timer management
 const scheduledTimers = {};
 
-// 🔁 Compute the next due date from a recurrence rule (mirrors client logic)
+// 🔁 Compute the next due date from a recurrence rule
 function computeNextDueDate(fromISO, rec) {
   if (!rec || !rec.frequency) return null;
   const from = new Date(fromISO);
@@ -99,18 +97,55 @@ function computeNextDueDate(fromISO, rec) {
   return candidate.toISOString();
 }
 
-// 4. Send push for a task, then reschedule if recurring
+// Helper: create + schedule a next occurrence
+async function createNextOccurrence(task) {
+  if (!task.recurrence || !task.recurrence.frequency) return null;
+  if (!task.fullTask) return null;
+
+  const nextDue = computeNextDueDate(task.dueTime, task.recurrence);
+  if (!nextDue) {
+    console.log(`🔁 Recurrence ended for "${task.title}"`);
+    return null;
+  }
+
+  const nextTaskId = `${task.taskId}-recur-${Date.now()}`;
+  const nextFullTask = {
+    ...task.fullTask,
+    id: nextTaskId,
+    dueDate: nextDue,
+    status: 'todo',
+    completedAt: undefined,
+    archivedAt: undefined,
+    createdAt: new Date().toISOString(),
+  };
+
+  const nextRecord = {
+    externalId: task.externalId,
+    title: task.title,
+    dueTime: nextDue,
+    taskId: nextTaskId,
+    recurrence: task.recurrence,
+    fullTask: nextFullTask,
+  };
+
+  await tasksCollection.doc(nextTaskId).set(nextRecord);
+  console.log(`🔁 Auto-created next occurrence: "${task.title}" → ${nextDue}`);
+  scheduleTask(nextRecord);
+  return nextFullTask;
+}
+
+// 4. Send push, then reschedule if recurring
 async function sendPushForTask(taskId) {
   console.log(`🔔 Timer fired for task: ${taskId}`);
   try {
     const taskDoc = await tasksCollection.doc(taskId).get();
     if (!taskDoc.exists) {
-      console.log(`⏭️ Task ${taskId} no longer exists. Skipping push.`);
+      console.log(`⏭️ Task ${taskId} no longer exists.`);
       return;
     }
     const task = taskDoc.data();
 
-    // Send the push
+    // Send push
     const tokenDoc = await tokensCollection.doc(task.externalId).get();
     if (tokenDoc.exists) {
       const fcmToken = tokenDoc.data().fcmToken;
@@ -134,26 +169,8 @@ async function sendPushForTask(taskId) {
       console.log(`❌ No FCM token for user ${task.externalId}`);
     }
 
-    // 🔁 If task has a recurrence, compute + schedule the next occurrence
-    if (task.recurrence && task.recurrence.frequency) {
-      const nextDue = computeNextDueDate(task.dueTime, task.recurrence);
-      if (nextDue) {
-        const nextTaskId = `${taskId}-next-${Date.now()}`;
-        const nextTask = {
-          externalId: task.externalId,
-          title: task.title,
-          dueTime: nextDue,
-          taskId: nextTaskId,
-          recurrence: task.recurrence,
-        };
-        await tasksCollection.doc(nextTaskId).set(nextTask);
-        console.log(`🔁 Auto-created next occurrence: "${task.title}" → ${nextDue}`);
-        // Recursively schedule the new occurrence
-        scheduleTask(nextTask);
-      } else {
-        console.log(`🔁 Recurrence ended for "${task.title}"`);
-      }
-    }
+    // Auto-create next occurrence if recurring
+    await createNextOccurrence(task);
 
     // Delete the fired task
     await tasksCollection.doc(taskId).delete();
@@ -187,7 +204,7 @@ function scheduleTask(task) {
   return true;
 }
 
-// 5. On boot: reload all pending tasks from Firestore
+// On boot: reload pending tasks
 async function rescheduleAll() {
   try {
     const snapshot = await tasksCollection.get();
@@ -209,13 +226,13 @@ async function rescheduleAll() {
       await tasksCollection.doc(id).delete();
     }
   } catch (err) {
-    console.error('Failed to reschedule from Firestore:', err);
+    console.error('Failed to reschedule:', err);
   }
 }
 
 rescheduleAll();
 
-// 6. ROUTE: Register device token
+// ROUTE: Register device token
 app.post('/api/register-device', async (req, res) => {
   const { userId, fcmToken } = req.body;
   if (!userId || !fcmToken) {
@@ -229,14 +246,13 @@ app.post('/api/register-device', async (req, res) => {
     console.log(`📱 Device registered! User: ${userId}`);
     res.json({ success: true, message: "Device registered" });
   } catch (err) {
-    console.error('Failed to register device:', err);
     res.status(500).json({ error: 'Failed to register device' });
   }
 });
 
-// 7. ROUTE: Schedule a reminder (with optional recurrence)
+// ROUTE: Schedule a reminder (with recurrence + full task)
 app.post('/api/schedule-reminder', async (req, res) => {
-  const { externalId, title, dueTime, taskId, recurrence } = req.body;
+  const { externalId, title, dueTime, taskId, recurrence, fullTask } = req.body;
   console.log("✅ Reminder request:", { externalId, title, dueTime, taskId, recurrence: recurrence?.frequency || 'none' });
 
   if (!externalId || !dueTime || !taskId) {
@@ -250,9 +266,8 @@ app.post('/api/schedule-reminder', async (req, res) => {
 
   try {
     const taskRecord = { externalId, title, dueTime, taskId };
-    if (recurrence && recurrence.frequency) {
-      taskRecord.recurrence = recurrence;
-    }
+    if (recurrence && recurrence.frequency) taskRecord.recurrence = recurrence;
+    if (fullTask) taskRecord.fullTask = fullTask;
     await tasksCollection.doc(taskId).set(taskRecord);
     scheduleTask(taskRecord);
     res.json({ success: true, message: "Reminder scheduled", fireInMs: dueTimestamp - Date.now() });
@@ -262,7 +277,40 @@ app.post('/api/schedule-reminder', async (req, res) => {
   }
 });
 
-// 8. ROUTE: Cancel a reminder
+// ROUTE: Complete a reminder → server creates next occurrence
+app.post('/api/complete-reminder', async (req, res) => {
+  const { taskId } = req.body;
+  if (!taskId) return res.status(400).json({ error: 'taskId is required' });
+
+  try {
+    const taskDoc = await tasksCollection.doc(taskId).get();
+    if (!taskDoc.exists) {
+      return res.json({ success: true, nextTask: null, message: 'Task not found (probably already fired)' });
+    }
+    const task = taskDoc.data();
+    task.taskId = taskId;
+
+    // Cancel timer if pending
+    if (scheduledTimers[taskId]) {
+      clearTimeout(scheduledTimers[taskId]);
+      delete scheduledTimers[taskId];
+      console.log(`🗑️ Cancelled pending timer for completed task: ${taskId}`);
+    }
+
+    // Create next occurrence if recurring
+    const nextTask = await createNextOccurrence(task);
+
+    // Delete original from Firestore
+    await tasksCollection.doc(taskId).delete();
+
+    res.json({ success: true, nextTask });
+  } catch (err) {
+    console.error('complete-reminder error:', err);
+    res.status(500).json({ error: 'Failed to complete reminder' });
+  }
+});
+
+// ROUTE: Cancel a reminder (delete without recurrence)
 app.post('/api/cancel-reminder', async (req, res) => {
   const { taskId } = req.body;
   if (!taskId) return res.status(400).json({ error: 'taskId is required' });
@@ -276,18 +324,43 @@ app.post('/api/cancel-reminder', async (req, res) => {
   try {
     await tasksCollection.doc(taskId).delete();
   } catch (err) {
-    console.error('Failed to delete task from Firestore:', err);
+    console.error('Failed to delete task:', err);
   }
 
   res.json({ success: true, message: "Reminder cancelled" });
 });
 
-// 9. Health check
+// ROUTE: Get all pending tasks for a user (used by app to sync)
+app.get('/api/tasks/:userId', async (req, res) => {
+  const { userId } = req.params;
+  if (!userId) return res.status(400).json({ error: 'userId is required' });
+
+  try {
+    const snapshot = await tasksCollection.where('externalId', '==', userId).get();
+    const tasks = [];
+    snapshot.forEach((doc) => {
+      const data = doc.data();
+      tasks.push({
+        taskId: doc.id,
+        title: data.title,
+        dueTime: data.dueTime,
+        recurrence: data.recurrence || null,
+        fullTask: data.fullTask || null,
+      });
+    });
+    console.log(`📤 Sync request for user ${userId} → ${tasks.length} task(s)`);
+    res.json({ success: true, tasks });
+  } catch (err) {
+    console.error('Sync error:', err);
+    res.status(500).json({ error: 'Failed to fetch tasks' });
+  }
+});
+
+// Health check
 app.get('/', (req, res) => {
   res.send('Task Priority Server is alive! 🚀');
 });
 
-// 10. Start
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Backend server is running on port ${PORT}`);
