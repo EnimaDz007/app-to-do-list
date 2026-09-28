@@ -13,20 +13,50 @@ export type TaskCategory =
   | 'Marketing' 
   | 'Personal';
 
-// 🔁 Recurrence types
+// 🔁 Recurrence types (Phase 7)
 export type RecurrenceFrequency = 
-  | 'daily'       // every N days
-  | 'weekdays'    // Mon–Fri only
-  | 'weekly'      // specific days of the week
-  | 'monthly'     // specific day of month
-  | 'yearly';     // same date every year
+  | 'daily'
+  | 'weekdays'
+  | 'weekly'
+  | 'monthly'
+  | 'yearly';
 
 export interface Recurrence {
   frequency: RecurrenceFrequency;
-  interval: number;             // e.g. 2 for "every 2 days/weeks/months"
-  daysOfWeek?: number[];        // 0=Sun, 1=Mon, ..., 6=Sat (used for 'weekly')
-  dayOfMonth?: number;          // 1–31 (used for 'monthly')
-  endDate?: string;             // ISO date; optional stop date
+  interval: number;
+  daysOfWeek?: number[];
+  dayOfMonth?: number;
+  endDate?: string;
+}
+
+// 🎯 Habit Tracker types (Phase 8)
+export type HabitFrequency = 'daily' | 'weekly' | 'custom';
+
+export type HabitGoalType = 'check' | 'count'; // check = done/not done, count = target number per day
+
+export interface Habit {
+  id: string;
+  name: string;
+  description?: string;
+  emoji: string;                 // e.g. "🏃", "📚"
+  color: string;                 // hex color, e.g. "#8b5cf6"
+  frequency: HabitFrequency;
+  daysOfWeek?: number[];         // 0=Sun..6=Sat (used for 'weekly' and 'custom')
+  goalType: HabitGoalType;       // check or count
+  goalCount?: number;            // e.g. 8 glasses of water
+  reminderTime?: string;         // "HH:MM" (24h) or undefined
+  reminderEnabled: boolean;
+  createdAt: string;
+  archivedAt?: string;
+}
+
+export interface HabitCheckIn {
+  id: string;                    // `${habitId}_${YYYY-MM-DD}`
+  habitId: string;
+  date: string;                  // 'YYYY-MM-DD' in LOCAL timezone
+  count: number;                 // >= 1; for goalType 'check' it stays 1
+  note?: string;
+  completedAt: string;           // ISO timestamp
 }
 
 export interface Subtask {
@@ -46,17 +76,16 @@ export interface Task {
   quadrant: QuadrantId;
   estimatedMinutes: number;
   dueDate: string;
-  impactScore: number; // 1 - 5
-  effortScore: number; // 1 - 5
+  impactScore: number;
+  effortScore: number;
   createdAt: string;
   completedAt?: string;
   pinned?: boolean;
   subtasks?: Subtask[];
-  // 🔁 NEW: optional recurrence rule
   recurrence?: Recurrence;
 }
 
-export type TabView = 'matrix' | 'list' | 'timeline' | 'analytics' | 'export' | 'archive';
+export type TabView = 'matrix' | 'list' | 'timeline' | 'analytics' | 'habits' | 'export' | 'archive';
 
 export type DeviceFrameMode = 'iphone' | 'android' | 'responsive';
 

@@ -8,7 +8,7 @@ import { Capacitor, registerPlugin } from '@capacitor/core';
 import { PushNotifications } from '@capacitor/push-notifications';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { useDevicePerformance } from './hooks/useDevicePerformance';
-import { Task, TabView, DeviceFrameMode, QuadrantId, Recurrence } from './types';
+import { Task, TabView, DeviceFrameMode, QuadrantId, Habit, HabitCheckIn } from './types';
 import { INITIAL_TASKS } from './data/initialTasks';
 import { Header } from './components/Header';
 import { BottomTabBar } from './components/BottomTabBar';
@@ -35,22 +35,22 @@ import { OfflineIndicator } from './components/OfflineIndicator';
 import { MobileDeviceFrame } from './components/MobileDeviceFrame';
 import { FocusTimerWidget } from './components/FocusTimerWidget';
 import { SettingsModal } from './components/SettingsModal';
+import { HabitModal } from './components/HabitModal';
+import { HabitView } from './components/HabitView';
 import { playAudioChime, getDueTasks, sendBrowserNotification } from './utils/notifications';
 import { Mic } from 'lucide-react';
 import { triggerHaptic } from './utils/haptics';
 
 const STORAGE_KEY = 'taskflow_tasks_list';
-
-// ✅ Live server URL (deployed on Render)
+const HABITS_STORAGE_KEY = 'taskflow_habits_list';
+const CHECKINS_STORAGE_KEY = 'taskflow_habit_checkins';
 const SERVER_URL = 'https://task-priority-server-pir6.onrender.com';
 
-// ✅ Native Alarm plugin bridge (calls Java AlarmService)
 const AlarmNative = registerPlugin<{
   startAlarm: (options: { title: string; taskId: string; fireAt?: string }) => Promise<{ success: boolean }>;
   stopAlarm: (options?: { taskId?: string }) => Promise<{ success: boolean }>;
 }>('AlarmNative');
 
-// Convert taskId string to a stable 32-bit int for LocalNotifications
 const hashTaskId = (taskId: string): number => {
   let hash = 0;
   for (let i = 0; i < taskId.length; i++) {
@@ -60,97 +60,41 @@ const hashTaskId = (taskId: string): number => {
   return Math.abs(hash);
 };
 
-// 🔁 Calculate the next due date for a recurring task
-function computeNextDueDate(fromISO: string, rec: Recurrence): string | null {
-  const from = new Date(fromISO);
-  if (isNaN(from.getTime())) return null;
-  const now = Date.now();
-
-  const advance = (d: Date): Date => {
-    const next = new Date(d.getTime());
-    const interval = Math.max(1, rec.interval || 1);
-    switch (rec.frequency) {
-      case 'daily': {
-        next.setDate(next.getDate() + interval);
-        break;
-      }
-      case 'weekdays': {
-        do {
-          next.setDate(next.getDate() + 1);
-        } while (next.getDay() === 0 || next.getDay() === 6);
-        break;
-      }
-      case 'weekly': {
-        const days = (rec.daysOfWeek && rec.daysOfWeek.length > 0) ? [...rec.daysOfWeek].sort((a,b) => a-b) : [from.getDay()];
-        const curDay = next.getDay();
-        let found: number | null = null;
-        for (const day of days) {
-          if (day > curDay) { found = day; break; }
-        }
-        if (found !== null) {
-          next.setDate(next.getDate() + (found - curDay));
-        } else {
-          const daysUntilNextWeek = 7 - curDay + days[0];
-          next.setDate(next.getDate() + daysUntilNextWeek + (interval - 1) * 7);
-        }
-        break;
-      }
-      case 'monthly': {
-        const target = rec.dayOfMonth || from.getDate();
-        next.setMonth(next.getMonth() + interval);
-        const daysInMonth = new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate();
-        next.setDate(Math.min(target, daysInMonth));
-        break;
-      }
-      case 'yearly': {
-        next.setFullYear(next.getFullYear() + interval);
-        break;
-      }
-    }
-    return next;
-  };
-
-  // Advance until the candidate is in the future
-  let candidate = advance(from);
-  let iterations = 0;
-  while (candidate.getTime() <= now && iterations < 200) {
-    candidate = advance(candidate);
-    iterations++;
-  }
-
-  // Respect optional endDate
-  if (rec.endDate) {
-    const end = new Date(rec.endDate);
-    if (!isNaN(end.getTime()) && candidate.getTime() > end.getTime()) {
-      return null;
-    }
-  }
-
-  return candidate.toISOString();
-}
-
 export default function App() {
   useDevicePerformance();
   const { uiDesign } = useUIDesign();
 
+  // ---------- Tasks ----------
   const [tasks, setTasks] = useState<Task[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        return JSON.parse(saved);
-      }
-    } catch {
-      // ignore
-    }
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return [];
+  });
+
+  // ---------- Habits ----------
+  const [habits, setHabits] = useState<Habit[]>(() => {
+    try {
+      const saved = localStorage.getItem(HABITS_STORAGE_KEY);
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return [];
+  });
+
+  const [checkIns, setCheckIns] = useState<HabitCheckIn[]>(() => {
+    try {
+      const saved = localStorage.getItem(CHECKINS_STORAGE_KEY);
+      if (saved) return JSON.parse(saved);
+    } catch {}
     return [];
   });
 
   const streakData = useStreak(tasks.filter((t) => t.status === 'completed').length);
-
   const activeTasks = tasks.filter((t) => !t.archivedAt);
   const archivedTasks = tasks.filter((t) => t.archivedAt);
 
-  // --- SCHEDULE ALARM (native service + backend) ---
+  // ---------- Schedule Alarm ----------
   const scheduleTaskReminder = async (task: Task) => {
     if (task.quadrant !== 'do_first') return;
     if (task.status === 'completed') return;
@@ -160,7 +104,6 @@ export default function App() {
     if (isNaN(dueTime)) return;
 
     const now = Date.now();
-
     let fireAt: number;
     if (dueTime > now + 3000) {
       fireAt = dueTime;
@@ -169,32 +112,19 @@ export default function App() {
       return;
     }
 
-    console.log('🔍 DEBUG now =', new Date(now).toLocaleString(), '(' + now + ')');
-    console.log('🔍 DEBUG dueTime =', new Date(dueTime).toLocaleString(), '(' + dueTime + ')');
-    console.log('🔍 DEBUG fireAt =', new Date(fireAt).toLocaleString(), '(' + fireAt + ')');
-    console.log('🔍 DEBUG diff (ms) =', fireAt - now);
-
     try {
       const pendingAlarms = JSON.parse(localStorage.getItem('taskflow_pending_alarms') || '{}');
-      pendingAlarms[hashTaskId(task.id)] = {
-        fireAt,
-        title: task.title,
-        taskId: task.id,
-      };
+      pendingAlarms[hashTaskId(task.id)] = { fireAt, title: task.title, taskId: task.id };
       localStorage.setItem('taskflow_pending_alarms', JSON.stringify(pendingAlarms));
-    } catch (err) {
-      console.warn('Failed to save pending alarm:', err);
-    }
+    } catch {}
 
     if (Capacitor.isNativePlatform()) {
       try {
-        console.log('🔔 Calling AlarmNative.startAlarm with fireAt=' + fireAt);
         await AlarmNative.startAlarm({
           title: task.title,
           taskId: task.id,
           fireAt: String(fireAt),
         });
-        console.log('🔔 AlarmNative call returned successfully');
       } catch (nativeErr) {
         console.warn('Native alarm service not available:', nativeErr);
       }
@@ -212,7 +142,6 @@ export default function App() {
             extra: { taskId: task.id },
           }]
         });
-        console.log('🔔 Silent Notification scheduled for 2 mins before due time:', new Date(dueTime - 2 * 60 * 1000).toLocaleString());
       } catch (notifErr) {
         console.warn('Local notification failed:', notifErr);
       }
@@ -228,60 +157,54 @@ export default function App() {
           title: task.title,
           dueTime: task.dueDate,
           taskId: task.id,
-          recurrence: task.recurrence, // 🔑 NEW: send recurrence rule to server
+          recurrence: task.recurrence,
+          fullTask: task,
         }),
       });
-
-      if (!response.ok) {
-        throw new Error(`Server returned status: ${response.status}`);
-      }
-
+      if (!response.ok) throw new Error(`Server returned ${response.status}`);
       const data = await response.json();
-      if (data.success) {
-        console.log('✅ Backend backup scheduled:', data.message);
-      }
+      if (data.success) console.log('✅ Backend backup scheduled:', data.message);
     } catch (err) {
-      console.warn('Backend backup skipped (this is okay):', err);
+      console.warn('Backend backup skipped:', err);
     }
   };
 
   const cancelTaskReminder = async (taskId: string) => {
     if (!Capacitor.isNativePlatform()) return;
     try {
+      try { await AlarmNative.stopAlarm({ taskId }); } catch {}
       try {
-        await AlarmNative.stopAlarm({ taskId });
-      } catch (e) {}
-
-      try {
-        await LocalNotifications.cancel({
-          notifications: [{ id: hashTaskId(taskId) + 1 }]
-        });
-      } catch (e) {}
-
+        await LocalNotifications.cancel({ notifications: [{ id: hashTaskId(taskId) + 1 }] });
+      } catch {}
       try {
         await fetch(`${SERVER_URL}/api/cancel-reminder`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ taskId }),
         });
-        console.log('🗑️ Server timer cancelled for:', taskId);
-      } catch (e) {
-        console.warn('Server cancel skipped (offline):', e);
-      }
-
-      console.log('🗑️ Cancelled all alarms for:', taskId);
-    } catch (err) {
-      // ignore
-    }
+      } catch {}
+    } catch {}
   };
-  // ----------------------------------------
 
+  const completeTaskOnServer = async (taskId: string): Promise<Task | null> => {
+    try {
+      const response = await fetch(`${SERVER_URL}/api/complete-reminder`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ taskId }),
+      });
+      const data = await response.json();
+      if (data.success && data.nextTask) return data.nextTask as Task;
+    } catch (err) {
+      console.warn('Complete on server failed:', err);
+    }
+    return null;
+  };
+
+  // ---------- Effects: notification setup ----------
   useEffect(() => {
     if (Capacitor.isNativePlatform()) {
-      LocalNotifications.requestPermissions()
-        .then((res) => console.log('LocalNotifications permission:', res))
-        .catch((err) => console.warn('LocalNotifications error:', err));
-
+      LocalNotifications.requestPermissions().catch(() => {});
       LocalNotifications.createChannel({
         id: 'task-reminders-silent',
         name: 'Silent Task Reminders',
@@ -290,57 +213,78 @@ export default function App() {
         visibility: 1,
         vibration: false,
         lights: true,
-      }).catch((err) => console.warn('Failed to create silent channel:', err));
+      }).catch(() => {});
     }
   }, []);
 
-  // --- SETUP PUSH NOTIFICATIONS (FCM) ---
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
-
     const setupPush = async () => {
       try {
         let permStatus = await PushNotifications.checkPermissions();
         if (permStatus.receive === 'prompt') {
           permStatus = await PushNotifications.requestPermissions();
         }
-
-        if (permStatus.receive !== 'granted') {
-          console.warn('User denied push notification permission!');
-          return;
-        }
-
+        if (permStatus.receive !== 'granted') return;
         await PushNotifications.register();
-
         PushNotifications.addListener('registration', async (token) => {
           console.log('📱 FCM TOKEN RECEIVED:', token.value);
-
           try {
             const userId = localStorage.getItem('taskflow_user_id') || 'test-user-123';
-            const response = await fetch(`${SERVER_URL}/api/register-device`, {
+            await fetch(`${SERVER_URL}/api/register-device`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ userId: userId, fcmToken: token.value }),
+              body: JSON.stringify({ userId, fcmToken: token.value }),
             });
-            const data = await response.json();
-            if (data.success) {
-              console.log('✅ Token successfully registered with the server!');
-            }
           } catch (err) {
-            console.warn('Failed to register token with server:', err);
+            console.warn('Token register failed:', err);
           }
         });
-
         PushNotifications.addListener('pushNotificationReceived', (notification) => {
-          console.log('🔔 Push notification received:', notification);
+          console.log('🔔 Push received:', notification);
         });
-
       } catch (err) {
         console.error('Push setup failed:', err);
       }
     };
-
     setupPush();
+  }, []);
+
+  // ---------- Sync from server ----------
+  const syncTasksFromServer = async () => {
+    if (!Capacitor.isNativePlatform()) return;
+    try {
+      const userId = localStorage.getItem('taskflow_user_id') || 'test-user-123';
+      const response = await fetch(`${SERVER_URL}/api/tasks/${userId}`);
+      const data = await response.json();
+      if (!data.success || !data.tasks) return;
+
+      setTasks((prev) => {
+        const existingIds = new Set(prev.map((t) => t.id));
+        const newTasks: Task[] = [];
+        for (const record of data.tasks) {
+          if (record.fullTask && !existingIds.has(record.fullTask.id)) {
+            newTasks.push(record.fullTask);
+          }
+        }
+        if (newTasks.length === 0) return prev;
+        console.log(`🔄 Sync: added ${newTasks.length} task(s) from server`);
+        return [...newTasks, ...prev];
+      });
+    } catch (err) {
+      console.warn('Sync failed:', err);
+    }
+  };
+
+  useEffect(() => {
+    syncTasksFromServer();
+    const handler = () => { if (document.visibilityState === 'visible') syncTasksFromServer(); };
+    document.addEventListener('visibilitychange', handler);
+    window.addEventListener('focus', handler);
+    return () => {
+      document.removeEventListener('visibilitychange', handler);
+      window.removeEventListener('focus', handler);
+    };
   }, []);
 
   useEffect(() => {
@@ -357,7 +301,6 @@ export default function App() {
       (t) => t.status === 'completed' && !t.archivedAt && t.completedAt
     );
     if (completedOnes.length === 0) return;
-
     const timer = setTimeout(() => {
       setTasks((prev) =>
         prev.map((t) => {
@@ -368,23 +311,19 @@ export default function App() {
         })
       );
     }, 2000);
-
     return () => clearTimeout(timer);
   }, [tasks]);
 
   useEffect(() => {
     const handleTasksUpdated = () => {
       const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        try {
-          setTasks(JSON.parse(saved));
-        } catch (e) {}
-      }
+      if (saved) { try { setTasks(JSON.parse(saved)); } catch {} }
     };
     window.addEventListener('tasks-updated', handleTasksUpdated);
     return () => window.removeEventListener('tasks-updated', handleTasksUpdated);
   }, []);
 
+  // ---------- UI State ----------
   const [activeTab, setActiveTab] = useState<TabView>('matrix');
   const [deviceMode, setDeviceMode] = useState<DeviceFrameMode>('iphone');
 
@@ -397,13 +336,22 @@ export default function App() {
   const [focusTask, setFocusTask] = useState<Task | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
+  // Habit UI state
+  const [isHabitModalOpen, setIsHabitModalOpen] = useState(false);
+  const [editingHabit, setEditingHabit] = useState<Habit | null>(null);
+
+  // ---------- Persist ----------
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
-    } catch {
-      // ignore
-    }
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks)); } catch {}
   }, [tasks]);
+
+  useEffect(() => {
+    try { localStorage.setItem(HABITS_STORAGE_KEY, JSON.stringify(habits)); } catch {}
+  }, [habits]);
+
+  useEffect(() => {
+    try { localStorage.setItem(CHECKINS_STORAGE_KEY, JSON.stringify(checkIns)); } catch {}
+  }, [checkIns]);
 
   useEffect(() => {
     if (Capacitor.isNativePlatform()) return;
@@ -417,13 +365,11 @@ export default function App() {
     }
   }, []);
 
-  // 🔁 Toggle status + auto-create next occurrence for recurring tasks
-  const handleToggleStatus = (taskId: string) => {
+  // ---------- Task handlers ----------
+  const handleToggleStatus = async (taskId: string) => {
     cancelTaskReminder(taskId);
-
     const task = tasks.find((t) => t.id === taskId);
     if (!task) return;
-
     const isNowDone = task.status !== 'completed';
 
     setTasks((prev) =>
@@ -440,64 +386,33 @@ export default function App() {
 
     if (isNowDone) {
       playAudioChime('success');
-
-      if (task.recurrence) {
-        const nextDue = computeNextDueDate(task.dueDate, task.recurrence);
-        if (nextDue) {
-          const nextTask: Task = {
-            ...task,
-            id: `task-${Date.now()}-recur`,
-            status: 'todo',
-            dueDate: nextDue,
-            createdAt: new Date().toISOString(),
-            completedAt: undefined,
-            archivedAt: undefined,
-          };
-          console.log('🔁 Auto-created next occurrence:', nextTask.title, '→', nextDue);
-          setTasks((prev) => [nextTask, ...prev]);
-          setTimeout(() => scheduleTaskReminder(nextTask), 100);
-        } else {
-          console.log('🔁 Recurrence ended (no more occurrences)');
-        }
+      const nextTask = await completeTaskOnServer(taskId);
+      if (nextTask) {
+        console.log('🔁 Server returned next occurrence:', nextTask.id, '→', nextTask.dueDate);
+        setTasks((prev) => [nextTask, ...prev]);
+        setTimeout(() => scheduleTaskReminder(nextTask), 200);
       }
     }
   };
 
   const handleMoveTaskQuadrant = (taskId: string, targetQuadrant: QuadrantId) => {
-    setTasks((prev) =>
-      prev.map((t) => (t.id === taskId ? { ...t, quadrant: targetQuadrant } : t))
-    );
+    setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, quadrant: targetQuadrant } : t)));
     playAudioChime('beep');
   };
 
   const handleImportTasks = (newTasks: Task[], mode: 'replace' | 'append') => {
-    if (mode === 'replace') {
-      setTasks(newTasks);
-    } else {
-      setTasks((prev) => [...newTasks, ...prev]);
-    }
+    if (mode === 'replace') setTasks(newTasks);
+    else setTasks((prev) => [...newTasks, ...prev]);
   };
 
-  const handleStartFocus = (task: Task) => {
-    setFocusTask(task);
-    setIsFocusTimerOpen(true);
-  };
+  const handleStartFocus = (task: Task) => { setFocusTask(task); setIsFocusTimerOpen(true); };
 
   const handleSaveTask = (taskData: Omit<Task, 'id' | 'createdAt'> & { id?: string }) => {
     if (taskData.id) {
       cancelTaskReminder(taskData.id);
       const updatedTask = { ...taskData, id: taskData.id } as Task;
-      setTasks((prev) =>
-        prev.map((t) =>
-          t.id === taskData.id
-            ? { ...t, ...taskData }
-            : t
-        )
-      );
-      scheduleTaskReminder({
-        ...updatedTask,
-        createdAt: new Date().toISOString(),
-      } as Task);
+      setTasks((prev) => prev.map((t) => (t.id === taskData.id ? { ...t, ...taskData } : t)));
+      scheduleTaskReminder({ ...updatedTask, createdAt: new Date().toISOString() } as Task);
       playAudioChime('beep');
     } else {
       const newTask: Task = {
@@ -518,19 +433,13 @@ export default function App() {
   };
 
   const handleOpenNewTask = (quadrant: QuadrantId = 'do_first') => {
-    setEditingTask(null);
-    setDefaultQuadrant(quadrant);
-    setIsTaskModalOpen(true);
+    setEditingTask(null); setDefaultQuadrant(quadrant); setIsTaskModalOpen(true);
   };
 
   const handleRestoreFromArchive = (taskId: string) => {
-    setTasks((prev) =>
-      prev.map((t) =>
-        t.id === taskId
-          ? { ...t, archivedAt: undefined, status: 'todo' as const, completedAt: undefined }
-          : t
-      )
-    );
+    setTasks((prev) => prev.map((t) =>
+      t.id === taskId ? { ...t, archivedAt: undefined, status: 'todo' as const, completedAt: undefined } : t
+    ));
   };
 
   const handlePermanentDelete = (taskId: string) => {
@@ -538,9 +447,94 @@ export default function App() {
     setTasks((prev) => prev.filter((t) => t.id !== taskId));
   };
 
-  const handleEditTask = (task: Task) => {
-    setEditingTask(task);
-    setIsTaskModalOpen(true);
+  const handleEditTask = (task: Task) => { setEditingTask(task); setIsTaskModalOpen(true); };
+
+  // ---------- Habit handlers ----------
+  const handleSaveHabit = (habitData: Omit<Habit, 'id' | 'createdAt'> & { id?: string }) => {
+    if (habitData.id) {
+      // Update
+      setHabits((prev) =>
+        prev.map((h) => (h.id === habitData.id ? { ...h, ...habitData } as Habit : h))
+      );
+    } else {
+      // Create
+      const newHabit: Habit = {
+        ...habitData,
+        id: `habit-${Date.now()}`,
+        createdAt: new Date().toISOString(),
+      } as Habit;
+      setHabits((prev) => [newHabit, ...prev]);
+    }
+    triggerHaptic('success');
+  };
+
+  const handleDeleteHabit = (habitId: string) => {
+    setHabits((prev) => prev.filter((h) => h.id !== habitId));
+    // Also delete all check-ins for this habit
+    setCheckIns((prev) => prev.filter((ci) => ci.habitId !== habitId));
+    triggerHaptic('success');
+  };
+
+  const handleEditHabit = (habit: Habit) => {
+    setEditingHabit(habit);
+    setIsHabitModalOpen(true);
+  };
+
+  const handleToggleCheckIn = (habitId: string, date: string) => {
+    const habit = habits.find((h) => h.id === habitId);
+    if (!habit) return;
+
+    setCheckIns((prev) => {
+      const existing = prev.find((ci) => ci.habitId === habitId && ci.date === date);
+
+      if (habit.goalType === 'count') {
+        // Decrement (used by the − button)
+        if (!existing) return prev;
+        if (existing.count <= 1) {
+          return prev.filter((ci) => ci.id !== existing.id);
+        }
+        return prev.map((ci) =>
+          ci.id === existing.id ? { ...ci, count: ci.count - 1 } : ci
+        );
+      } else {
+        // Toggle check
+        if (existing) {
+          return prev.filter((ci) => ci.id !== existing.id);
+        }
+        return [...prev, {
+          id: `${habitId}_${date}`,
+          habitId,
+          date,
+          count: 1,
+          completedAt: new Date().toISOString(),
+        }];
+      }
+    });
+  };
+
+  const handleIncrementCount = (habitId: string, date: string) => {
+    setCheckIns((prev) => {
+      const existing = prev.find((ci) => ci.habitId === habitId && ci.date === date);
+      if (existing) {
+        return prev.map((ci) =>
+          ci.id === existing.id
+            ? { ...ci, count: ci.count + 1, completedAt: new Date().toISOString() }
+            : ci
+        );
+      }
+      return [...prev, {
+        id: `${habitId}_${date}`,
+        habitId,
+        date,
+        count: 1,
+        completedAt: new Date().toISOString(),
+      }];
+    });
+  };
+
+  const handleOpenNewHabit = () => {
+    setEditingHabit(null);
+    setIsHabitModalOpen(true);
   };
 
   const completedCount = tasks.filter((t) => t.status === 'completed').length;
@@ -549,7 +543,6 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col transition-colors duration-200 overflow-x-hidden w-full">
       <OfflineIndicator />
-
       <div className="flex-1 flex flex-col w-full">
         <div className="flex-1 flex flex-col bg-slate-50 dark:bg-slate-900 min-h-full transition-colors">
           <Header
@@ -561,113 +554,51 @@ export default function App() {
             onOpenNewTask={() => handleOpenNewTask('do_first')}
             onOpenVoiceTask={() => setIsVoiceModalOpen(true)}
             onOpenSettings={() => setIsSettingsOpen(true)}
-            onOpenFocusTimer={() => {
-              setFocusTask(null);
-              setIsFocusTimerOpen(true);
-            }}
+            onOpenFocusTimer={() => { setFocusTask(null); setIsFocusTimerOpen(true); }}
           />
-
           <main className="flex-1 px-4 py-3.5 pb-24 overflow-y-auto">
             {activeTab === 'matrix' && (
               uiDesign === 'neumorphic' ? (
-                <SoftNeumorphicView
-                  tasks={activeTasks}
-                  onToggleStatus={handleToggleStatus}
-                  onDeleteTask={handleDeleteTask}
-                />
+                <SoftNeumorphicView tasks={activeTasks} onToggleStatus={handleToggleStatus} onDeleteTask={handleDeleteTask} />
               ) : uiDesign === 'stacked' ? (
-                <StackedCardsView
-                  tasks={activeTasks}
-                  onToggleStatus={handleToggleStatus}
-                  onDeleteTask={handleDeleteTask}
-                />
+                <StackedCardsView tasks={activeTasks} onToggleStatus={handleToggleStatus} onDeleteTask={handleDeleteTask} />
               ) : uiDesign === 'tarot' ? (
-                <TarotDeckView
-                  tasks={activeTasks}
-                  onToggleStatus={handleToggleStatus}
-                  onDeleteTask={handleDeleteTask}
-                />
+                <TarotDeckView tasks={activeTasks} onToggleStatus={handleToggleStatus} onDeleteTask={handleDeleteTask} />
               ) : uiDesign === 'radial' ? (
-                <CircularRadialView
-                  tasks={activeTasks}
-                  onToggleStatus={handleToggleStatus}
-                  onDeleteTask={handleDeleteTask}
-                />
+                <CircularRadialView tasks={activeTasks} onToggleStatus={handleToggleStatus} onDeleteTask={handleDeleteTask} />
               ) : uiDesign === 'hive' ? (
-                <HoneycombHiveView
-                  tasks={activeTasks}
-                  onToggleStatus={handleToggleStatus}
-                  onDeleteTask={handleDeleteTask}
-                />
+                <HoneycombHiveView tasks={activeTasks} onToggleStatus={handleToggleStatus} onDeleteTask={handleDeleteTask} />
               ) : uiDesign === 'vending' ? (
-                <VendingMachineView
-                  tasks={activeTasks}
-                  onToggleStatus={handleToggleStatus}
-                  onDeleteTask={handleDeleteTask}
-                />
+                <VendingMachineView tasks={activeTasks} onToggleStatus={handleToggleStatus} onDeleteTask={handleDeleteTask} />
               ) : uiDesign === 'detective' ? (
-                <DetectiveBoardView
-                  tasks={activeTasks}
-                  onToggleStatus={handleToggleStatus}
-                  onDeleteTask={handleDeleteTask}
-                />
+                <DetectiveBoardView tasks={activeTasks} onToggleStatus={handleToggleStatus} onDeleteTask={handleDeleteTask} />
               ) : (
-                <PriorityMatrixView
-                  tasks={activeTasks}
-                  onToggleStatus={handleToggleStatus}
-                  onDeleteTask={handleDeleteTask}
-                  onQuadrantSelect={setDefaultQuadrant}
-                />
+                <PriorityMatrixView tasks={activeTasks} onToggleStatus={handleToggleStatus} onDeleteTask={handleDeleteTask} onQuadrantSelect={setDefaultQuadrant} />
               )
             )}
-
             {activeTab === 'list' && (
-              <PriorityListView
-                tasks={tasks}
-                onToggleStatus={handleToggleStatus}
-                onEditTask={handleEditTask}
-                onDeleteTask={handleDeleteTask}
-                onOpenNewTask={() => handleOpenNewTask('do_first')}
-                onOpenVoiceTask={() => setIsVoiceModalOpen(true)}
-                onStartFocus={handleStartFocus}
-                onMoveTaskQuadrant={handleMoveTaskQuadrant}
+              <PriorityListView tasks={tasks} onToggleStatus={handleToggleStatus} onEditTask={handleEditTask} onDeleteTask={handleDeleteTask} onOpenNewTask={() => handleOpenNewTask('do_first')} onOpenVoiceTask={() => setIsVoiceModalOpen(true)} onStartFocus={handleStartFocus} onMoveTaskQuadrant={handleMoveTaskQuadrant} />
+            )}
+            {activeTab === 'timeline' && <DailyTimelineView tasks={tasks} onToggleStatus={handleToggleStatus} />}
+            {activeTab === 'analytics' && <ProgressAnalyticsView tasks={tasks} />}
+            {activeTab === 'habits' && (
+              <HabitView
+                habits={habits}
+                checkIns={checkIns}
+                onToggleCheckIn={handleToggleCheckIn}
+                onIncrementCount={handleIncrementCount}
+                onEditHabit={handleEditHabit}
+                onDeleteHabit={handleDeleteHabit}
+                onOpenNewHabit={handleOpenNewHabit}
               />
             )}
-
-            {activeTab === 'timeline' && (
-              <DailyTimelineView
-                tasks={tasks}
-                onToggleStatus={handleToggleStatus}
-              />
-            )}
-
-            {activeTab === 'analytics' && (
-              <ProgressAnalyticsView tasks={tasks} />
-            )}
-
-            {activeTab === 'archive' && (
-              <ArchiveView
-                tasks={tasks}
-                onRestore={handleRestoreFromArchive}
-                onDelete={handlePermanentDelete}
-              />
-            )}
-
-            {activeTab === 'export' && (
-              <NativePackagingHub onOpenInstallModal={() => setIsInstallModalOpen(true)} />
-            )}
+            {activeTab === 'archive' && <ArchiveView tasks={tasks} onRestore={handleRestoreFromArchive} onDelete={handlePermanentDelete} />}
+            {activeTab === 'export' && <NativePackagingHub onOpenInstallModal={() => setIsInstallModalOpen(true)} />}
           </main>
-
-          <FloatingActionButton
-            onNewTask={() => handleOpenNewTask(defaultQuadrant)}
-            onPushToTalk={() => setIsVoiceModalOpen(true)}
-          />
-
-          <BottomTabBar
-            activeTab={activeTab}
-            onChangeTab={setActiveTab}
-            urgentCount={urgentCount}
-          />
+          {activeTab !== 'habits' && (
+            <FloatingActionButton onNewTask={() => handleOpenNewTask(defaultQuadrant)} onPushToTalk={() => setIsVoiceModalOpen(true)} />
+          )}
+          <BottomTabBar activeTab={activeTab} onChangeTab={setActiveTab} urgentCount={urgentCount} />
         </div>
       </div>
 
@@ -691,36 +622,18 @@ export default function App() {
         }}
       />
 
-      <TaskModal
-        isOpen={isTaskModalOpen}
-        onClose={() => setIsTaskModalOpen(false)}
-        onSaveTask={handleSaveTask}
-        editingTask={editingTask}
-        defaultQuadrant={defaultQuadrant}
+      <TaskModal isOpen={isTaskModalOpen} onClose={() => setIsTaskModalOpen(false)} onSaveTask={handleSaveTask} editingTask={editingTask} defaultQuadrant={defaultQuadrant} />
+
+      <HabitModal
+        isOpen={isHabitModalOpen}
+        onClose={() => { setIsHabitModalOpen(false); setEditingHabit(null); }}
+        onSaveHabit={handleSaveHabit}
+        editingHabit={editingHabit}
       />
 
-      <PWAInstallModal
-        isOpen={isInstallModalOpen}
-        onClose={() => setIsInstallModalOpen(false)}
-      />
-
-      <FocusTimerWidget
-        isOpen={isFocusTimerOpen}
-        onClose={() => setIsFocusTimerOpen(false)}
-        activeTask={focusTask}
-        onCompleteTask={(taskId) => {
-          handleToggleStatus(taskId);
-          setIsFocusTimerOpen(false);
-        }}
-      />
-
-      <SettingsModal
-        isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
-        tasks={tasks}
-        onImportTasks={handleImportTasks}
-        onOpenInstallModal={() => setIsInstallModalOpen(true)}
-      />
+      <PWAInstallModal isOpen={isInstallModalOpen} onClose={() => setIsInstallModalOpen(false)} />
+      <FocusTimerWidget isOpen={isFocusTimerOpen} onClose={() => setIsFocusTimerOpen(false)} activeTask={focusTask} onCompleteTask={(taskId) => { handleToggleStatus(taskId); setIsFocusTimerOpen(false); }} />
+      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} tasks={tasks} onImportTasks={handleImportTasks} onOpenInstallModal={() => setIsInstallModalOpen(true)} />
     </div>
   );
 }
