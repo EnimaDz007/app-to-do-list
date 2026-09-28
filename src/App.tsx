@@ -64,7 +64,6 @@ export default function App() {
   useDevicePerformance();
   const { uiDesign } = useUIDesign();
 
-  // ---------- Tasks ----------
   const [tasks, setTasks] = useState<Task[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
@@ -73,7 +72,6 @@ export default function App() {
     return [];
   });
 
-  // ---------- Habits ----------
   const [habits, setHabits] = useState<Habit[]>(() => {
     try {
       const saved = localStorage.getItem(HABITS_STORAGE_KEY);
@@ -94,23 +92,18 @@ export default function App() {
   const activeTasks = tasks.filter((t) => !t.archivedAt);
   const archivedTasks = tasks.filter((t) => t.archivedAt);
 
-  // ---------- Schedule Alarm ----------
+  // ---------- Task alarms ----------
   const scheduleTaskReminder = async (task: Task) => {
     if (task.quadrant !== 'do_first') return;
     if (task.status === 'completed') return;
     if (!task.dueDate) return;
-
     const dueTime = new Date(task.dueDate).getTime();
     if (isNaN(dueTime)) return;
-
     const now = Date.now();
     let fireAt: number;
     if (dueTime > now + 3000) {
       fireAt = dueTime;
-    } else {
-      console.log('⏭️ Skipping overdue task:', task.title);
-      return;
-    }
+    } else return;
 
     try {
       const pendingAlarms = JSON.parse(localStorage.getItem('taskflow_pending_alarms') || '{}');
@@ -120,20 +113,12 @@ export default function App() {
 
     if (Capacitor.isNativePlatform()) {
       try {
-        await AlarmNative.startAlarm({
-          title: task.title,
-          taskId: task.id,
-          fireAt: String(fireAt),
-        });
-      } catch (nativeErr) {
-        console.warn('Native alarm service not available:', nativeErr);
-      }
-
+        await AlarmNative.startAlarm({ title: task.title, taskId: task.id, fireAt: String(fireAt) });
+      } catch {}
       try {
-        const notifId = hashTaskId(task.id) + 1;
         await LocalNotifications.schedule({
           notifications: [{
-            id: notifId,
+            id: hashTaskId(task.id) + 1,
             title: '⏰ Task Due Soon: ' + task.title,
             body: 'This task is due in 2 minutes.',
             schedule: { at: new Date(dueTime - 2 * 60 * 1000) },
@@ -142,9 +127,7 @@ export default function App() {
             extra: { taskId: task.id },
           }]
         });
-      } catch (notifErr) {
-        console.warn('Local notification failed:', notifErr);
-      }
+      } catch {}
     }
 
     try {
@@ -162,8 +145,6 @@ export default function App() {
         }),
       });
       if (!response.ok) throw new Error(`Server returned ${response.status}`);
-      const data = await response.json();
-      if (data.success) console.log('✅ Backend backup scheduled:', data.message);
     } catch (err) {
       console.warn('Backend backup skipped:', err);
     }
@@ -173,9 +154,7 @@ export default function App() {
     if (!Capacitor.isNativePlatform()) return;
     try {
       try { await AlarmNative.stopAlarm({ taskId }); } catch {}
-      try {
-        await LocalNotifications.cancel({ notifications: [{ id: hashTaskId(taskId) + 1 }] });
-      } catch {}
+      try { await LocalNotifications.cancel({ notifications: [{ id: hashTaskId(taskId) + 1 }] }); } catch {}
       try {
         await fetch(`${SERVER_URL}/api/cancel-reminder`, {
           method: 'POST',
@@ -201,7 +180,51 @@ export default function App() {
     return null;
   };
 
-  // ---------- Effects: notification setup ----------
+  // ---------- Habit reminders on server ----------
+  const syncHabitReminderToServer = async (habit: Habit) => {
+    if (!Capacitor.isNativePlatform()) return;
+    const userId = localStorage.getItem('taskflow_user_id') || 'test-user-123';
+    try {
+      if (habit.reminderEnabled && habit.reminderTime) {
+        const tzOffset = new Date().getTimezoneOffset(); // minutes behind UTC (e.g. -60 for GMT+1)
+        await fetch(`${SERVER_URL}/api/schedule-habit-reminder`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            habitId: habit.id,
+            externalId: userId,
+            name: habit.name,
+            emoji: habit.emoji,
+            reminderTime: habit.reminderTime,
+            daysOfWeek: habit.daysOfWeek || null,
+            timezoneOffsetMinutes: tzOffset,
+          }),
+        });
+        console.log('✅ Habit reminder synced:', habit.name);
+      } else {
+        await fetch(`${SERVER_URL}/api/cancel-habit-reminder`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ habitId: habit.id }),
+        });
+      }
+    } catch (err) {
+      console.warn('Habit reminder sync failed:', err);
+    }
+  };
+
+  const cancelHabitReminderOnServer = async (habitId: string) => {
+    if (!Capacitor.isNativePlatform()) return;
+    try {
+      await fetch(`${SERVER_URL}/api/cancel-habit-reminder`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ habitId }),
+      });
+    } catch {}
+  };
+
+  // ---------- Effects ----------
   useEffect(() => {
     if (Capacitor.isNativePlatform()) {
       LocalNotifications.requestPermissions().catch(() => {});
@@ -236,21 +259,17 @@ export default function App() {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ userId, fcmToken: token.value }),
             });
-          } catch (err) {
-            console.warn('Token register failed:', err);
-          }
+          } catch {}
         });
         PushNotifications.addListener('pushNotificationReceived', (notification) => {
           console.log('🔔 Push received:', notification);
         });
-      } catch (err) {
-        console.error('Push setup failed:', err);
-      }
+      } catch {}
     };
     setupPush();
   }, []);
 
-  // ---------- Sync from server ----------
+  // Sync tasks from server
   const syncTasksFromServer = async () => {
     if (!Capacitor.isNativePlatform()) return;
     try {
@@ -258,7 +277,6 @@ export default function App() {
       const response = await fetch(`${SERVER_URL}/api/tasks/${userId}`);
       const data = await response.json();
       if (!data.success || !data.tasks) return;
-
       setTasks((prev) => {
         const existingIds = new Set(prev.map((t) => t.id));
         const newTasks: Task[] = [];
@@ -268,12 +286,9 @@ export default function App() {
           }
         }
         if (newTasks.length === 0) return prev;
-        console.log(`🔄 Sync: added ${newTasks.length} task(s) from server`);
         return [...newTasks, ...prev];
       });
-    } catch (err) {
-      console.warn('Sync failed:', err);
-    }
+    } catch {}
   };
 
   useEffect(() => {
@@ -285,6 +300,18 @@ export default function App() {
       document.removeEventListener('visibilitychange', handler);
       window.removeEventListener('focus', handler);
     };
+  }, []);
+
+  // Re-sync ALL habit reminders on boot (in case timezone changed)
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    const active = habits.filter((h) => !h.archivedAt);
+    active.forEach((h) => {
+      if (h.reminderEnabled && h.reminderTime) {
+        syncHabitReminderToServer(h);
+      }
+    });
+    // eslint-disable-next-line
   }, []);
 
   useEffect(() => {
@@ -323,10 +350,14 @@ export default function App() {
     return () => window.removeEventListener('tasks-updated', handleTasksUpdated);
   }, []);
 
+  // Persist to localStorage
+  useEffect(() => { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks)); } catch {} }, [tasks]);
+  useEffect(() => { try { localStorage.setItem(HABITS_STORAGE_KEY, JSON.stringify(habits)); } catch {} }, [habits]);
+  useEffect(() => { try { localStorage.setItem(CHECKINS_STORAGE_KEY, JSON.stringify(checkIns)); } catch {} }, [checkIns]);
+
   // ---------- UI State ----------
   const [activeTab, setActiveTab] = useState<TabView>('matrix');
   const [deviceMode, setDeviceMode] = useState<DeviceFrameMode>('iphone');
-
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [isVoiceModalOpen, setIsVoiceModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
@@ -335,35 +366,8 @@ export default function App() {
   const [isFocusTimerOpen, setIsFocusTimerOpen] = useState(false);
   const [focusTask, setFocusTask] = useState<Task | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-
-  // Habit UI state
   const [isHabitModalOpen, setIsHabitModalOpen] = useState(false);
   const [editingHabit, setEditingHabit] = useState<Habit | null>(null);
-
-  // ---------- Persist ----------
-  useEffect(() => {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks)); } catch {}
-  }, [tasks]);
-
-  useEffect(() => {
-    try { localStorage.setItem(HABITS_STORAGE_KEY, JSON.stringify(habits)); } catch {}
-  }, [habits]);
-
-  useEffect(() => {
-    try { localStorage.setItem(CHECKINS_STORAGE_KEY, JSON.stringify(checkIns)); } catch {}
-  }, [checkIns]);
-
-  useEffect(() => {
-    if (Capacitor.isNativePlatform()) return;
-    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-      const due = getDueTasks(tasks);
-      if (due.length > 0) {
-        sendBrowserNotification('Tasks Due Today 📌', {
-          body: `You have ${due.length} high-priority or scheduled task(s) for today.`,
-        });
-      }
-    }
-  }, []);
 
   // ---------- Task handlers ----------
   const handleToggleStatus = async (taskId: string) => {
@@ -375,11 +379,7 @@ export default function App() {
     setTasks((prev) =>
       prev.map((t) =>
         t.id === taskId
-          ? {
-              ...t,
-              status: isNowDone ? 'completed' : 'todo',
-              completedAt: isNowDone ? new Date().toISOString() : undefined,
-            }
+          ? { ...t, status: isNowDone ? 'completed' : 'todo', completedAt: isNowDone ? new Date().toISOString() : undefined }
           : t
       )
     );
@@ -388,7 +388,6 @@ export default function App() {
       playAudioChime('success');
       const nextTask = await completeTaskOnServer(taskId);
       if (nextTask) {
-        console.log('🔁 Server returned next occurrence:', nextTask.id, '→', nextTask.dueDate);
         setTasks((prev) => [nextTask, ...prev]);
         setTimeout(() => scheduleTaskReminder(nextTask), 200);
       }
@@ -452,25 +451,29 @@ export default function App() {
   // ---------- Habit handlers ----------
   const handleSaveHabit = (habitData: Omit<Habit, 'id' | 'createdAt'> & { id?: string }) => {
     if (habitData.id) {
-      // Update
-      setHabits((prev) =>
-        prev.map((h) => (h.id === habitData.id ? { ...h, ...habitData } as Habit : h))
-      );
+      // Update existing
+      const updatedHabit = { ...habitData, id: habitData.id } as Habit;
+      setHabits((prev) => prev.map((h) => (h.id === habitData.id ? updatedHabit : h)));
+      // Sync reminder with server
+      syncHabitReminderToServer(updatedHabit);
     } else {
-      // Create
+      // Create new
       const newHabit: Habit = {
         ...habitData,
         id: `habit-${Date.now()}`,
         createdAt: new Date().toISOString(),
       } as Habit;
       setHabits((prev) => [newHabit, ...prev]);
+      if (newHabit.reminderEnabled && newHabit.reminderTime) {
+        syncHabitReminderToServer(newHabit);
+      }
     }
     triggerHaptic('success');
   };
 
   const handleDeleteHabit = (habitId: string) => {
+    cancelHabitReminderOnServer(habitId);
     setHabits((prev) => prev.filter((h) => h.id !== habitId));
-    // Also delete all check-ins for this habit
     setCheckIns((prev) => prev.filter((ci) => ci.habitId !== habitId));
     triggerHaptic('success');
   };
@@ -488,24 +491,16 @@ export default function App() {
       const existing = prev.find((ci) => ci.habitId === habitId && ci.date === date);
 
       if (habit.goalType === 'count') {
-        // Decrement (used by the − button)
         if (!existing) return prev;
         if (existing.count <= 1) {
           return prev.filter((ci) => ci.id !== existing.id);
         }
-        return prev.map((ci) =>
-          ci.id === existing.id ? { ...ci, count: ci.count - 1 } : ci
-        );
+        return prev.map((ci) => ci.id === existing.id ? { ...ci, count: ci.count - 1 } : ci);
       } else {
-        // Toggle check
-        if (existing) {
-          return prev.filter((ci) => ci.id !== existing.id);
-        }
+        if (existing) return prev.filter((ci) => ci.id !== existing.id);
         return [...prev, {
           id: `${habitId}_${date}`,
-          habitId,
-          date,
-          count: 1,
+          habitId, date, count: 1,
           completedAt: new Date().toISOString(),
         }];
       }
@@ -524,9 +519,7 @@ export default function App() {
       }
       return [...prev, {
         id: `${habitId}_${date}`,
-        habitId,
-        date,
-        count: 1,
+        habitId, date, count: 1,
         completedAt: new Date().toISOString(),
       }];
     });
