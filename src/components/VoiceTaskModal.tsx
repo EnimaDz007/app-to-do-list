@@ -21,11 +21,7 @@ const QUADRANTS = [
   { id: 'eliminate' as QuadrantId, name: 'Eliminate', icon: Trash2,   gradient: 'from-slate-500 to-slate-700',      bg: 'bg-slate-50',   border: 'border-slate-200',   text: 'text-slate-700' },
 ];
 
-const SPEECH_LANG: Record<string, string> = {
-  en: 'en-US',
-  fr: 'fr-FR',
-  ar: 'ar-SA',
-};
+const SPEECH_LANG: Record<string, string> = { en: 'en-US', fr: 'fr-FR', ar: 'ar-SA' };
 
 const HALLUCINATIONS = [
   'thank you', 'thanks', 'thank you very much',
@@ -44,19 +40,27 @@ function isHallucination(text: string): boolean {
   return HALLUCINATIONS.includes(cleaned);
 }
 
+function looksLikeGarbage(text: string): boolean {
+  const cleaned = text.trim();
+  if (cleaned.length < 3) return true;
+  const hasVowel = /[aeiouyAEIOUYإأآاويى]/.test(cleaned) || /[\u0600-\u06FF]/.test(cleaned);
+  if (!hasVowel) return true;
+  if (!/[a-zA-Z\u0600-\u06FF]/.test(cleaned)) return true;
+  return false;
+}
+
 export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
-  isOpen,
-  onClose,
-  quadrant = 'do_first',
-  onAddTask,
+  isOpen, onClose, quadrant = 'do_first', onAddTask,
 }) => {
   const { t, language } = useLanguage();
   const [step, setStep] = useState<'select' | 'speak'>('select');
   const [selectedQuadrant, setSelectedQuadrant] = useState<QuadrantId>(quadrant);
   const [transcript, setTranscript] = useState('');
   const [isListening, setIsListening] = useState(false);
+  // 🔑 "Speaking now" flag for visual indicator
+  const [isActivelySpeaking, setIsActivelySpeaking] = useState(false);
 
-  console.log('[PTT] 🚀 VERSION 12.0 (NEVER STOP)');
+  console.log('[PTT] 🚀 VERSION 15.0 (idle vs speaking)');
 
   const committedRef = useRef('');
   const currentUtteranceRef = useRef('');
@@ -72,6 +76,7 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
   const lastStateChangeRef = useRef<number>(Date.now());
   const watchdogRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isMountedRef = useRef(true);
+  const speakingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const theme = QUADRANTS.find((q) => q.id === selectedQuadrant)!;
   const isNative = Capacitor.isNativePlatform();
@@ -82,16 +87,24 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
       .filter(Boolean)
       .join(' ')
       .trim();
-    console.log('[PTT] 🖼️ display → committed =', JSON.stringify(committedRef.current), '| current =', JSON.stringify(currentUtteranceRef.current));
     setTranscript(combined);
+  };
+
+  // 🔑 Called whenever a new partial arrives — turn on "speaking" indicator
+  const markSpeaking = () => {
+    setIsActivelySpeaking(true);
+    if (speakingTimerRef.current) clearTimeout(speakingTimerRef.current);
+    speakingTimerRef.current = setTimeout(() => {
+      if (isMountedRef.current) setIsActivelySpeaking(false);
+    }, 1800);
   };
 
   const commitCurrent = () => {
     const cur = currentUtteranceRef.current.trim();
-    console.log('[PTT] 💾 commit. cur =', JSON.stringify(cur), '| committed was =', JSON.stringify(committedRef.current));
     currentUtteranceRef.current = '';
     lastHeardRef.current = '';
     if (!cur) return;
+    if (looksLikeGarbage(cur)) return;
 
     const prev = committedRef.current.trim();
     if (!prev) {
@@ -101,86 +114,62 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
     } else {
       committedRef.current = `${prev} ${cur}`;
     }
-    console.log('[PTT] 💾 Committed now =', JSON.stringify(committedRef.current));
     refreshDisplay();
   };
 
   const attachNativeListeners = async () => {
-    nativePartialRef.current = await SpeechRecognition.addListener(
-      'partialResults',
-      (data: any) => {
-        if (!isMountedRef.current || !sessionActiveRef.current) return;
-        if (!data.matches || data.matches.length === 0) return;
+    nativePartialRef.current = await SpeechRecognition.addListener('partialResults', (data: any) => {
+      if (!isMountedRef.current || !sessionActiveRef.current) return;
+      if (!data.matches || data.matches.length === 0) return;
+      const newText = (data.matches[0] || '').trim();
+      if (!newText) return;
+      if (isHallucination(newText) || looksLikeGarbage(newText)) return;
 
-        const newText = (data.matches[0] || '').trim();
-        if (!newText) return;
+      const oldText = lastHeardRef.current;
+      if (newText === oldText) return;
+      lastHeardRef.current = newText;
 
-        if (isHallucination(newText)) {
-          console.log('[PTT] 🚫 Filtered:', JSON.stringify(newText));
-          return;
-        }
-        if (newText.length < 2) return;
+      const session = currentUtteranceRef.current;
+      if (session && newText.toLowerCase().startsWith(session.toLowerCase())) {
+        currentUtteranceRef.current = newText;
+      } else if (session && session.toLowerCase().includes(newText.toLowerCase())) {
+        // no-op
+      } else if (session) {
+        commitCurrent();
+        currentUtteranceRef.current = newText;
+      } else {
+        currentUtteranceRef.current = newText;
+      }
 
-        const oldText = lastHeardRef.current;
-        if (newText === oldText) return;
-        lastHeardRef.current = newText;
+      markSpeaking(); // 🔑 wake up the visual indicator
+      refreshDisplay();
+      lastStateChangeRef.current = Date.now();
+    });
 
-        const session = currentUtteranceRef.current;
-
-        if (session && newText.toLowerCase().startsWith(session.toLowerCase())) {
-          currentUtteranceRef.current = newText;
-        } else if (session && session.toLowerCase().includes(newText.toLowerCase())) {
-          // no-op
-        } else if (session) {
-          commitCurrent();
-          currentUtteranceRef.current = newText;
-        } else {
-          currentUtteranceRef.current = newText;
-        }
-
-        console.log('[PTT] 📝 Partial:', JSON.stringify(newText));
-        refreshDisplay();
+    nativeStateRef.current = await SpeechRecognition.addListener('listeningState', (data: any) => {
+      if (!isMountedRef.current) return;
+      const status = data?.status;
+      if (status === 'started') {
+        setIsListening(true);
+        lastStateChangeRef.current = Date.now();
+      } else if (status === 'stopped') {
+        setIsListening(false);
+        setIsActivelySpeaking(false); // 🔑 hide speaking indicator
         lastStateChangeRef.current = Date.now();
       }
-    );
-
-    nativeStateRef.current = await SpeechRecognition.addListener(
-      'listeningState',
-      (data: any) => {
-        if (!isMountedRef.current) return;
-        const status = data?.status;
-        const now = Date.now();
-        console.log('[PTT] 🎤 State:', status);
-
-        if (status === 'started') {
-          setIsListening(true);
-          lastStateChangeRef.current = now;
-        } else if (status === 'stopped') {
-          setIsListening(false);
-          lastStateChangeRef.current = now;
-        }
-      }
-    );
+    });
   };
 
   const detachNativeListeners = () => {
-    if (nativePartialRef.current) {
-      try { nativePartialRef.current.remove(); } catch {}
-      nativePartialRef.current = null;
-    }
-    if (nativeStateRef.current) {
-      try { nativeStateRef.current.remove(); } catch {}
-      nativeStateRef.current = null;
-    }
+    if (nativePartialRef.current) { try { nativePartialRef.current.remove(); } catch {} nativePartialRef.current = null; }
+    if (nativeStateRef.current) { try { nativeStateRef.current.remove(); } catch {} nativeStateRef.current = null; }
   };
 
   const killRecognition = async () => {
     sessionActiveRef.current = false;
     isRestartingRef.current = false;
-    if (watchdogRef.current) {
-      clearInterval(watchdogRef.current);
-      watchdogRef.current = null;
-    }
+    if (watchdogRef.current) { clearInterval(watchdogRef.current); watchdogRef.current = null; }
+    if (speakingTimerRef.current) { clearTimeout(speakingTimerRef.current); speakingTimerRef.current = null; }
     if (isNative) {
       try { await SpeechRecognition.stop(); } catch {}
       detachNativeListeners();
@@ -188,14 +177,12 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
     const recog = webRecogRef.current;
     webRecogRef.current = null;
     if (recog) {
-      try {
-        recog.onresult = null;
-        recog.onerror = null;
-        recog.onend = null;
-        recog.abort();
-      } catch {}
+      try { recog.onresult = null; recog.onerror = null; recog.onend = null; recog.abort(); } catch {}
     }
-    if (isMountedRef.current) setIsListening(false);
+    if (isMountedRef.current) {
+      setIsListening(false);
+      setIsActivelySpeaking(false);
+    }
   };
 
   const startRecognitionNative = async () => {
@@ -213,7 +200,7 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
 
       await SpeechRecognition.start({
         language: langRef.current,
-        maxResults: 3,
+        maxResults: 1,
         partialResults: true,
         popup: false,
       });
@@ -225,37 +212,21 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
     }
   };
 
-  // 🔑 NEVER call stop() — just try to start() again
   const nativeRestart = async () => {
     if (isRestartingRef.current || !sessionActiveRef.current) return;
     isRestartingRef.current = true;
     try {
-      console.log('[PTT] 🔁 Restart: start() only (no stop)');
+      lastHeardRef.current = '';
       try {
-        await SpeechRecognition.start({
-          language: langRef.current,
-          maxResults: 3,
-          partialResults: true,
-          popup: false,
-        });
-        console.log('[PTT] ✅ start() resolved directly');
-      } catch (e) {
-        console.log('[PTT] Direct start failed, waiting 2s and retrying:', e);
+        await SpeechRecognition.start({ language: langRef.current, maxResults: 1, partialResults: true, popup: false });
+      } catch {
         await new Promise((r) => setTimeout(r, 2000));
         if (!sessionActiveRef.current) return;
-        try {
-          await SpeechRecognition.start({
-            language: langRef.current,
-            maxResults: 3,
-            partialResults: true,
-            popup: false,
-          });
-          console.log('[PTT] ✅ Retry start() resolved');
-        } catch (e2) {
-          console.warn('[PTT] ❌ Retry also failed:', e2);
-        }
+        await SpeechRecognition.start({ language: langRef.current, maxResults: 1, partialResults: true, popup: false });
       }
       lastStateChangeRef.current = Date.now();
+    } catch (err) {
+      console.warn('[PTT] Restart failed:', err);
     } finally {
       isRestartingRef.current = false;
     }
@@ -267,11 +238,8 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
       if (!sessionActiveRef.current) return;
       if (isRestartingRef.current) return;
       const silent = Date.now() - lastStateChangeRef.current;
-      if (silent > 3000) {
-        if (currentUtteranceRef.current.trim()) {
-          console.log('[PTT] 🐕 silence → commit:', currentUtteranceRef.current);
-          commitCurrent();
-        }
+      if (silent > 5000) {
+        if (currentUtteranceRef.current.trim()) commitCurrent();
         nativeRestart();
       }
     }, 1500);
@@ -300,17 +268,19 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
         const res = event.results[i];
         const txt = (res[0]?.transcript || '').trim();
         if (!txt) continue;
-        if (isHallucination(txt)) continue;
+        if (isHallucination(txt) || looksLikeGarbage(txt)) continue;
         if (res.isFinal) finals.push(txt);
         else interim += txt + ' ';
       }
       if (interim) {
         currentUtteranceRef.current = interim.trim();
+        markSpeaking();
         refreshDisplay();
       }
       if (finals.length > 0) {
         currentUtteranceRef.current = finals.join(' ').trim();
         commitCurrent();
+        markSpeaking();
       }
     };
     recog.onerror = (event: any) => {
@@ -319,13 +289,10 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
     recog.onend = () => {
       if (!isMountedRef.current) return;
       setIsListening(false);
+      setIsActivelySpeaking(false);
       commitCurrent();
       if (sessionActiveRef.current) {
-        setTimeout(() => {
-          if (sessionActiveRef.current) {
-            try { recog.start(); setIsListening(true); } catch {}
-          }
-        }, 200);
+        setTimeout(() => { if (sessionActiveRef.current) { try { recog.start(); setIsListening(true); } catch {} } }, 200);
       }
     };
     webRecogRef.current = recog;
@@ -341,6 +308,7 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
+      if (speakingTimerRef.current) clearTimeout(speakingTimerRef.current);
       detachNativeListeners();
     };
   }, []);
@@ -355,6 +323,7 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
       lastHeardRef.current = '';
       userEditedRef.current = false;
       sessionActiveRef.current = false;
+      setIsActivelySpeaking(false);
     } else {
       killRecognition();
     }
@@ -369,6 +338,7 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
     currentUtteranceRef.current = '';
     lastHeardRef.current = '';
     userEditedRef.current = false;
+    setIsActivelySpeaking(false);
     setTimeout(() => startRecognition(), 250);
   };
 
@@ -419,19 +389,14 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
     userEditedRef.current = true;
   };
 
-  const handleResume = () => {
-    startRecognition();
-  };
-
+  const handleResume = () => { startRecognition(); };
   const getQuadrantName = (id: QuadrantId) => t(`quad_${id}`);
 
   return (
     <AnimatePresence>
       {isOpen && (
         <>
-          <motion.div
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            onClick={handleCancel}
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={handleCancel}
             className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-md"
           />
           <motion.div
@@ -441,8 +406,7 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
             transition={{ type: 'spring', stiffness: 400, damping: 28 }}
             className="fixed left-1/2 top-1/2 z-50 w-[88%] max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-[28px] bg-white dark:bg-slate-800 p-7 shadow-[0_30px_80px_rgba(15,23,42,0.4)]"
           >
-            <button
-              onClick={step === 'speak' ? handleBack : handleCancel}
+            <button onClick={step === 'speak' ? handleBack : handleCancel}
               className="absolute left-4 top-4 flex h-7 w-7 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 transition-transform hover:scale-110"
             >
               <X size={16} strokeWidth={2.5} />
@@ -457,9 +421,7 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
                     {QUADRANTS.map((q) => {
                       const Icon = q.icon;
                       return (
-                        <button
-                          key={q.id}
-                          onClick={() => handleSelectQuadrant(q.id)}
+                        <button key={q.id} onClick={() => handleSelectQuadrant(q.id)}
                           className={`flex flex-col items-center gap-2 rounded-2xl border-2 ${q.border} ${q.bg} dark:border-slate-700 dark:bg-slate-900 p-4 transition-all hover:scale-[1.03] active:scale-95`}
                         >
                           <div className={`flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br ${q.gradient} shadow-lg`}>
@@ -484,7 +446,7 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
                   </p>
 
                   <div className="relative mx-auto mb-3 h-[72px] w-[72px]">
-                    {isListening && (
+                    {isActivelySpeaking && (
                       <motion.div
                         animate={{ scale: [0.9, 1.4, 0.9], opacity: [0.5, 0, 0.5] }}
                         transition={{ duration: 1.8, repeat: Infinity }}
@@ -499,14 +461,19 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
                     </button>
                   </div>
 
+                  {/* 🔑 Dynamic indicator: "Listening..." only while speaking; else "Ready..." */}
                   <div className="mb-3 flex justify-center">
                     <div className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-bold ${theme.bg} dark:bg-slate-700 ${theme.border} dark:border-slate-600 ${theme.text} dark:text-white`}>
-                      <span className={`h-1.5 w-1.5 rounded-full ${isListening ? 'animate-pulse bg-red-500' : 'bg-slate-400'}`} />
-                      {isListening ? t('ptt_listening').split('.')[0] + '...' : 'Tap mic'}
+                      <span className={`h-1.5 w-1.5 rounded-full ${
+                        isActivelySpeaking ? 'animate-pulse bg-red-500' :
+                        isListening ? 'bg-emerald-500' : 'bg-slate-400'
+                      }`} />
+                      {isActivelySpeaking ? 'Listening...' : isListening ? 'Ready...' : 'Tap mic'}
                     </div>
                   </div>
 
-                  {isListening && (
+                  {/* Waveform animation only while speaking */}
+                  {isActivelySpeaking && (
                     <div className="mb-3 flex h-[36px] items-center justify-center gap-1">
                       {[12, 28, 18, 38, 24, 44].map((h, i) => (
                         <motion.span
@@ -530,7 +497,10 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
                       className={`w-full resize-none rounded-2xl border-[1.5px] p-3 pr-10 text-left text-[13px] font-medium outline-none ${theme.bg} dark:bg-slate-700/50 ${theme.border} dark:border-slate-600 ${theme.text} dark:text-white`}
                     />
                     {transcript && (
-                      <button onClick={handleClear} className={`absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full ${theme.bg} dark:bg-slate-700 ${theme.text} dark:text-white`} title={t('ptt_clear')}>
+                      <button onClick={handleClear}
+                        className={`absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full ${theme.bg} dark:bg-slate-700 ${theme.text} dark:text-white`}
+                        title={t('ptt_clear')}
+                      >
                         <Eraser size={13} />
                       </button>
                     )}
@@ -539,7 +509,9 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
                   {transcript && (
                     <div className="mb-3 flex items-center justify-center gap-1.5 rounded-full bg-slate-100 dark:bg-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-600 dark:text-slate-200">
                       <Calendar size={12} />
-                      {new Date(parseSpokenTask(transcript).dueDate).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                      {new Date(parseSpokenTask(transcript).dueDate).toLocaleString('en-US', {
+                        month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+                      })}
                     </div>
                   )}
 

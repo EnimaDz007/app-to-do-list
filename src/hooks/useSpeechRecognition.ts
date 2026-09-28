@@ -2,7 +2,6 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { SpeechRecognition } from '@capacitor-community/speech-recognition';
 
-// 🔑 Samsung SpeechRecognizer hallucinates these phrases during silence/noise
 const HALLUCINATIONS = [
   'thank you', 'thanks', 'thank you very much',
   'شكرا', 'شكرا لك', 'شكرا جزيلا',
@@ -11,11 +10,22 @@ const HALLUCINATIONS = [
   'you', 'the', 'a', 'and', 'or', 'so',
   'subtitles by', 'subs by', 'subscribe',
   'okay google', 'hey google', 'alexa',
+  'mama', 'papa', 'call mama', 'call papa',
+  'please', 'yes', 'no', 'ok',
 ];
 
 function isHallucination(text: string): boolean {
   const cleaned = text.toLowerCase().replace(/[.,!?;:]/g, '').trim();
   return HALLUCINATIONS.includes(cleaned);
+}
+
+function looksLikeGarbage(text: string): boolean {
+  const cleaned = text.trim();
+  if (cleaned.length < 3) return true;
+  const hasVowel = /[aeiouyAEIOUYإأآاويى]/.test(cleaned) || /[\u0600-\u06FF]/.test(cleaned);
+  if (!hasVowel) return true;
+  if (!/[a-zA-Z\u0600-\u06FF]/.test(cleaned)) return true;
+  return false;
 }
 
 export interface UseSpeechRecognitionReturn {
@@ -31,8 +41,8 @@ export interface UseSpeechRecognitionReturn {
   setManualTranscript: (text: string) => void;
 }
 
-export function useSpeechRecognition(): UseSpeechRecognitionReturn {
-  console.log('[MIC] 🚀 useSpeechRecognition VERSION 9.0 (HALLUCINATION FILTER)');
+export function useSpeechRecognition(manualMode: boolean = false): UseSpeechRecognitionReturn {
+  console.log(`[MIC] 🚀 useSpeechRecognition VERSION 14.0 (manualMode=${manualMode})`);
 
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
@@ -41,6 +51,9 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
   const [isSupported, setIsSupported] = useState(false);
 
   const modeRef = useRef<'web' | 'native' | 'none'>('none');
+  const manualModeRef = useRef(manualMode);
+  manualModeRef.current = manualMode;
+
   const webRecognitionRef = useRef<any>(null);
   const sessionActiveRef = useRef(false);
   const shouldRestartRef = useRef(false);
@@ -59,39 +72,26 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
       .filter(Boolean)
       .join(' ')
       .trim();
-    console.log('[MIC] 🖼️ display → committed =', JSON.stringify(committedRef.current), '| current =', JSON.stringify(currentUtteranceRef.current));
     setTranscript(combined);
   };
 
-  const commitCurrent = () => {
+  const commitCurrent = useCallback(() => {
     const cur = currentUtteranceRef.current.trim();
-    console.log('[MIC] 💾 commit. cur =', JSON.stringify(cur), '| committed was =', JSON.stringify(committedRef.current));
     currentUtteranceRef.current = '';
     lastHeardRef.current = '';
     if (!cur) return;
+    if (looksLikeGarbage(cur)) return;
 
     const prev = committedRef.current.trim();
-
     if (!prev) {
       committedRef.current = cur;
     } else if (prev.toLowerCase().endsWith(cur.toLowerCase())) {
-      console.log('[MIC] 💾 Skipped (endswith).');
       return;
     } else {
-      const prevWords = prev.toLowerCase().split(/\s+/);
-      const curWords = cur.toLowerCase().split(/\s+/);
-      if (curWords.length <= prevWords.length) {
-        const tailWords = prevWords.slice(-curWords.length);
-        if (tailWords.join(' ') === curWords.join(' ')) {
-          console.log('[MIC] 💾 Skipped (word-level duplicate).');
-          return;
-        }
-      }
       committedRef.current = `${prev} ${cur}`;
     }
-    console.log('[MIC] 💾 Committed now =', JSON.stringify(committedRef.current));
     refreshDisplay();
-  };
+  }, []);
 
   useEffect(() => {
     const w = window as any;
@@ -106,10 +106,9 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
       modeRef.current = 'none';
       setIsSupported(false);
     }
-    console.log('[MIC] Mode:', modeRef.current);
   }, []);
 
-  // ---------- Native listeners (attached once) ----------
+  // Native listeners (attached once)
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
     let partialL: any = null;
@@ -124,15 +123,7 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
 
         const newText = (matches[0] || '').trim();
         if (!newText) return;
-
-        // 🔑 Filter Samsung hallucinations
-        if (isHallucination(newText)) {
-          console.log('[MIC] 🚫 Filtered hallucination:', JSON.stringify(newText));
-          return;
-        }
-
-        // 🔑 Ignore 1-letter partials (pure noise)
-        if (newText.length < 2) return;
+        if (isHallucination(newText) || looksLikeGarbage(newText)) return;
 
         const oldText = lastHeardRef.current;
         if (newText === oldText) return;
@@ -140,21 +131,14 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
 
         const session = currentUtteranceRef.current;
 
-        // 🔑 If the new partial starts with what we already have → cumulative, replace
         if (session && newText.toLowerCase().startsWith(session.toLowerCase())) {
           currentUtteranceRef.current = newText;
-        }
-        // 🔑 If the session contains the new text → keep the longer one
-        else if (session && session.toLowerCase().includes(newText.toLowerCase())) {
+        } else if (session && session.toLowerCase().includes(newText.toLowerCase())) {
           // no-op
-        }
-        // 🔑 Completely new phrase → commit the old, start fresh
-        else if (session) {
+        } else if (session) {
           commitCurrent();
           currentUtteranceRef.current = newText;
-        }
-        // 🔑 No session yet → just set it
-        else {
+        } else {
           currentUtteranceRef.current = newText;
         }
 
@@ -165,16 +149,12 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
       stateL = await SpeechRecognition.addListener('listeningState', (data: any) => {
         if (cancelled) return;
         const status = data?.status;
-        console.log('[MIC] state:', status);
         lastStateChangeRef.current = Date.now();
-
         if (status === 'started') {
           setIsListening(true);
         } else if (status === 'stopped') {
           setIsListening(false);
           setInterimTranscript('');
-          // ⚠️ Don't commit here — Samsung fires 'stopped' aggressively.
-          // The watchdog will commit on real silence.
         }
       });
     };
@@ -185,25 +165,13 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
       partialL?.remove?.();
       stateL?.remove?.();
     };
-  }, []);
+  }, [commitCurrent]);
 
   const nativeRestart = useCallback(async () => {
     if (isRestartingRef.current || !sessionActiveRef.current) return;
     isRestartingRef.current = true;
     try {
-      await SpeechRecognition.start({
-        language: langRef.current,
-        maxResults: 1,
-        partialResults: true,
-        popup: false,
-      });
-      console.log('[MIC] ✅ restarted.');
-      lastStateChangeRef.current = Date.now();
-    } catch (err) {
-      console.log('[MIC] ⚠️ restart failed, retrying...');
-      await SpeechRecognition.stop().catch(() => {});
-      await new Promise((r) => setTimeout(r, 1500));
-      if (!sessionActiveRef.current) return;
+      lastHeardRef.current = '';
       try {
         await SpeechRecognition.start({
           language: langRef.current,
@@ -211,31 +179,46 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
           partialResults: true,
           popup: false,
         });
-        console.log('[MIC] ✅ restarted after retry.');
-      } catch (e) {
-        console.warn('[MIC] ❌ retry failed:', e);
+      } catch {
+        await new Promise((r) => setTimeout(r, 2000));
+        if (!sessionActiveRef.current) return;
+        await SpeechRecognition.start({
+          language: langRef.current,
+          maxResults: 1,
+          partialResults: true,
+          popup: false,
+        });
       }
+      lastStateChangeRef.current = Date.now();
+    } catch (err) {
+      console.warn('[MIC] Restart failed:', err);
     } finally {
       isRestartingRef.current = false;
     }
   }, []);
 
-  // Watchdog: commit on real silence, then restart
+  // Watchdog
   useEffect(() => {
     const interval = setInterval(() => {
       if (!sessionActiveRef.current) return;
       if (isRestartingRef.current) return;
       const silent = Date.now() - lastStateChangeRef.current;
-      if (silent > 3500) {
+      if (silent > 5000) {
         if (currentUtteranceRef.current.trim()) {
-          console.log('[MIC] 🐕 silence → commit:', currentUtteranceRef.current);
           commitCurrent();
         }
-        nativeRestart();
+        if (!manualModeRef.current) {
+          // Auto mode: restart mic
+          nativeRestart();
+        } else {
+          // Manual mode: mark as not listening so user has to tap again
+          sessionActiveRef.current = false;
+          setIsListening(false);
+        }
       }
     }, 1500);
     return () => clearInterval(interval);
-  }, [nativeRestart]);
+  }, [nativeRestart, commitCurrent]);
 
   const startWebRecognition = useCallback(() => {
     const w = window as any;
@@ -256,7 +239,7 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
         const res = event.results[i];
         const txt = (res[0]?.transcript || '').trim();
         if (!txt) continue;
-        if (isHallucination(txt)) continue;
+        if (isHallucination(txt) || looksLikeGarbage(txt)) continue;
         if (res.isFinal) finals.push(txt);
         else interim += txt + ' ';
       }
@@ -269,13 +252,11 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
         commitCurrent();
       }
     };
-    recog.onerror = (event: any) => {
-      if (event.error !== 'no-speech' && event.error !== 'aborted') console.warn('[MIC] web error:', event.error);
-    };
+    recog.onerror = () => {};
     recog.onend = () => {
       setIsListening(false);
       commitCurrent();
-      if (shouldRestartRef.current && sessionActiveRef.current) {
+      if (shouldRestartRef.current && sessionActiveRef.current && !manualModeRef.current) {
         setTimeout(() => {
           if (shouldRestartRef.current && sessionActiveRef.current) startWebRecognition();
         }, 200);
@@ -283,10 +264,9 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
     };
     webRecognitionRef.current = recog;
     try { recog.start(); } catch {}
-  }, []);
+  }, [commitCurrent]);
 
   const startListening = useCallback(async (langCode = 'en-US') => {
-    console.log('[MIC] ▶️ start, mode =', modeRef.current);
     langRef.current = langCode;
     sessionActiveRef.current = true;
     shouldRestartRef.current = true;
@@ -314,24 +294,26 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
         });
         setIsListening(true);
       } catch (err) {
-        console.warn('[MIC] native start failed:', err);
+        console.warn('[MIC] start failed:', err);
         sessionActiveRef.current = false;
       }
     }
   }, [startWebRecognition]);
 
   const stopListening = useCallback(() => {
+    // Commit whatever we have before stopping
+    commitCurrent();
     sessionActiveRef.current = false;
     shouldRestartRef.current = false;
     if (webRecognitionRef.current) { try { webRecognitionRef.current.abort(); } catch {} webRecognitionRef.current = null; }
     if (Capacitor.isNativePlatform()) SpeechRecognition.stop().catch(() => {});
     setIsListening(false);
     setInterimTranscript('');
-  }, []);
+  }, [commitCurrent]);
 
   const restartListening = useCallback(() => {
     stopListening();
-    setTimeout(() => startListening(langRef.current), 800);
+    setTimeout(() => startListening(langRef.current), 400);
   }, [startListening, stopListening]);
 
   const resetTranscript = useCallback(() => {
