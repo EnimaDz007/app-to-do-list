@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Save, Clock, Target, Dumbbell, Mic, MicOff, Sparkles } from 'lucide-react';
-import { Task, QuadrantId, TaskCategory, PriorityLevel } from '../types';
+import { X, Save, Clock, Target, Dumbbell, Mic, MicOff, Sparkles, Repeat, Calendar } from 'lucide-react';
+import { Task, QuadrantId, TaskCategory, PriorityLevel, Recurrence, RecurrenceFrequency } from '../types';
 import { QUADRANT_CONFIGS } from '../data/initialTasks';
 import { triggerHaptic } from '../utils/haptics';
 import { useLanguage } from '../context/LanguageContext';
@@ -29,7 +29,7 @@ function localInputStringToISO(localStr: string): string {
   return new Date(localStr).toISOString();
 }
 
-// ✅ Helper: Detect relative time expressions in the transcript ("in 3 minutes", "dans 5 min", "بعد 10 دقائق")
+// Helper: Detect relative time expressions in the transcript ("in 3 minutes", "dans 5 min", "بعد 10 دقائق")
 function extractRelativeTime(text: string): Date | null {
   const lower = text.toLowerCase();
 
@@ -61,7 +61,7 @@ function extractRelativeTime(text: string): Date | null {
   return null;
 }
 
-// ✅ Helper: Remove the relative time expression from the transcript (so the title stays clean)
+// Helper: Remove the relative time expression from the transcript (so the title stays clean)
 function stripRelativeTime(text: string): string {
   return text
     .replace(/\bin\s+\d+\s*(?:min|minute|minutes|h|hr|hour|hours)\b/i, '')
@@ -69,6 +69,37 @@ function stripRelativeTime(text: string): string {
     .replace(/بعد\s+\d+\s*(?:دقيقة|دقائق|دقيقه|ساعة|ساعات|ساعه)/g, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+// 🔁 Build a Recurrence object from a frequency selection
+function makeRecurrence(freq: RecurrenceFrequency | null, dueDateStr: string): Recurrence | undefined {
+  if (!freq) return undefined;
+  const base: Recurrence = { frequency: freq, interval: 1 };
+  const d = dueDateStr ? new Date(dueDateStr) : new Date();
+  if (freq === 'weekly') {
+    return { ...base, daysOfWeek: [d.getDay()] };
+  }
+  if (freq === 'monthly') {
+    return { ...base, dayOfMonth: d.getDate() };
+  }
+  return base;
+}
+
+// 🔁 Human-readable summary of a recurrence rule
+function describeRecurrence(rec?: Recurrence): string {
+  if (!rec) return 'Never';
+  const n = rec.interval;
+  const every = n === 1 ? 'Every' : `Every ${n}`;
+  switch (rec.frequency) {
+    case 'daily': return n === 1 ? 'Every day' : `Every ${n} days`;
+    case 'weekdays': return 'Every weekday (Mon–Fri)';
+    case 'weekly': {
+      const days = (rec.daysOfWeek || []).map((i) => ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][i]).join(', ');
+      return n === 1 ? `Every week on ${days || '—'}` : `Every ${n} weeks on ${days || '—'}`;
+    }
+    case 'monthly': return n === 1 ? `Every month on day ${rec.dayOfMonth || '—'}` : `Every ${n} months on day ${rec.dayOfMonth || '—'}`;
+    case 'yearly': return n === 1 ? 'Every year' : `Every ${n} years`;
+  }
 }
 
 export const TaskModal: React.FC<TaskModalProps> = ({
@@ -85,11 +116,8 @@ export const TaskModal: React.FC<TaskModalProps> = ({
   const [category, setCategory] = useState<TaskCategory>('Engineering');
   const [estimatedMinutes, setEstimatedMinutes] = useState<number>(30);
 
-  // ✅ Track if the user has manually edited the title.
-  // When true, the voice transcript effect will NOT overwrite it.
   const userEditedTitleRef = useRef(false);
 
-  // Default due date: 15 minutes from now
   const [dueDate, setDueDate] = useState<string>(() => {
     const d = new Date();
     d.setMinutes(d.getMinutes() + 15);
@@ -98,6 +126,9 @@ export const TaskModal: React.FC<TaskModalProps> = ({
 
   const [impactScore, setImpactScore] = useState<number>(4);
   const [effortScore, setEffortScore] = useState<number>(2);
+
+  // 🔁 NEW: recurrence state
+  const [recurrence, setRecurrence] = useState<Recurrence | undefined>(undefined);
 
   const {
     isSupported,
@@ -126,8 +157,6 @@ export const TaskModal: React.FC<TaskModalProps> = ({
   // ✅ Sync speech into title and auto-detect category, quadrant & relative time
   useEffect(() => {
     if (!transcript) return;
-
-    // 🔑 If the user typed something manually, don't overwrite it
     if (userEditedTitleRef.current) {
       console.log('[TaskModal] 🚫 user edited title — skipping voice→title sync');
       return;
@@ -158,7 +187,6 @@ export const TaskModal: React.FC<TaskModalProps> = ({
   useEffect(() => {
     if (!isOpen) return;
 
-    // 🔑 Reset the "user edited" flag when the modal opens fresh
     userEditedTitleRef.current = false;
 
     if (editingTask) {
@@ -167,6 +195,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
       setQuadrant(editingTask.quadrant);
       setCategory(editingTask.category);
       setEstimatedMinutes(editingTask.estimatedMinutes);
+      setRecurrence(editingTask.recurrence); // 🔁 load existing rule
 
       setDueDate(() => {
         const d = editingTask.dueDate
@@ -186,6 +215,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
       setQuadrant(defaultQuadrant);
       setCategory('Engineering');
       setEstimatedMinutes(30);
+      setRecurrence(undefined); // 🔁 new task = no repeat
 
       setDueDate(() => {
         const d = new Date();
@@ -199,7 +229,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, editingTask, defaultQuadrant]);
 
-  // ✅ AUTO-START: Begin always-on listening as soon as the modal opens.
+  // ✅ AUTO-START the mic
   useEffect(() => {
     if (!isOpen) return;
     if (!isSupported) return;
@@ -221,6 +251,28 @@ export const TaskModal: React.FC<TaskModalProps> = ({
   }, [isOpen, isSupported, language]);
 
   if (!isOpen) return null;
+
+  // 🔁 Handlers for the repeat picker
+  const handleFrequencyChange = (freq: RecurrenceFrequency | null) => {
+    triggerHaptic('light');
+    if (!freq) {
+      setRecurrence(undefined);
+      return;
+    }
+    setRecurrence(makeRecurrence(freq, dueDate));
+  };
+
+  const toggleDayOfWeek = (dayIdx: number) => {
+    triggerHaptic('light');
+    setRecurrence((prev) => {
+      if (!prev || prev.frequency !== 'weekly') return prev;
+      const current = prev.daysOfWeek || [];
+      const has = current.includes(dayIdx);
+      const next = has ? current.filter((d) => d !== dayIdx) : [...current, dayIdx].sort();
+      if (next.length === 0) return undefined; // no days selected = no repeat
+      return { ...prev, daysOfWeek: next };
+    });
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -246,6 +298,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
       dueDate: localInputStringToISO(dueDate),
       impactScore,
       effortScore,
+      recurrence, // 🔁 include recurrence in saved data
     });
     onClose();
   };
@@ -267,6 +320,17 @@ export const TaskModal: React.FC<TaskModalProps> = ({
     eliminate: { titleKey: 'matrix_q4_title', subtitleKey: 'matrix_q4_subtitle' },
   };
 
+  const freqChips: { label: string; value: RecurrenceFrequency | null }[] = [
+    { label: 'Never', value: null },
+    { label: 'Daily', value: 'daily' },
+    { label: 'Weekdays', value: 'weekdays' },
+    { label: 'Weekly', value: 'weekly' },
+    { label: 'Monthly', value: 'monthly' },
+    { label: 'Yearly', value: 'yearly' },
+  ];
+
+  const dayLabels = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+
   return (
     <div
       id="task-modal-backdrop"
@@ -276,7 +340,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
         id="task-modal-container"
         className="w-full max-w-lg rounded-t-3xl sm:rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-5 shadow-2xl text-slate-900 dark:text-slate-100 max-h-[90vh] overflow-y-auto"
       >
-        {/* Modal Header */}
+        {/* Header */}
         <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
           <h3 className="text-base font-semibold text-slate-900 dark:text-white">
             {editingTask ? t('modal_title_edit') : t('modal_title_new')}
@@ -290,7 +354,6 @@ export const TaskModal: React.FC<TaskModalProps> = ({
           </button>
         </div>
 
-        {/* Form */}
         <form onSubmit={handleSubmit} className="mt-4 space-y-4 text-xs">
           {/* Title */}
           <div>
@@ -299,7 +362,6 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                 {t('modal_field_title')} <span className="text-rose-500">*</span>
               </label>
 
-              {/* ✅ Tappable mic — tap to restart if auto-restart fails */}
               <button
                 id="btn-taskmodal-mic"
                 type="button"
@@ -330,7 +392,6 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                 required
                 value={title}
                 onChange={(e) => {
-                  // 🔑 Mark that the user manually edited the title
                   userEditedTitleRef.current = true;
                   setTitle(e.target.value);
                 }}
@@ -360,7 +421,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
             />
           </div>
 
-          {/* Quadrant Selector */}
+          {/* Quadrant */}
           <div>
             <label className="block font-medium text-slate-700 dark:text-slate-300 mb-1.5">
               {t('modal_field_quadrant')}
@@ -393,7 +454,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
             </div>
           </div>
 
-          {/* Due Date & Time Picker */}
+          {/* Due Date & Time */}
           <div>
             <label className="block font-medium text-slate-700 dark:text-slate-300 mb-1">
               <span className="flex items-center gap-1">
@@ -408,9 +469,96 @@ export const TaskModal: React.FC<TaskModalProps> = ({
               onChange={(e) => setDueDate(e.target.value)}
               className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500 cursor-pointer"
             />
-            <p className="text-[10px] text-slate-400 mt-1">
-              Tip: Say "remind me in 3 minutes" to auto-set the time. You'll get a silent alert 2 min before, and a loud alarm at the due time.
+          </div>
+
+          {/* 🔁 REPEAT PICKER (NEW) */}
+          <div>
+            <label className="block font-medium text-slate-700 dark:text-slate-300 mb-1">
+              <span className="flex items-center gap-1">
+                <Repeat className="w-3.5 h-3.5 text-indigo-500" />
+                <span>Repeat</span>
+              </span>
+            </label>
+
+            {/* Frequency chips */}
+            <div className="flex flex-wrap gap-1.5">
+              {freqChips.map((chip) => {
+                const active =
+                  (chip.value === null && !recurrence) ||
+                  (chip.value !== null && recurrence?.frequency === chip.value);
+                return (
+                  <button
+                    key={chip.label}
+                    type="button"
+                    onClick={() => handleFrequencyChange(chip.value)}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition cursor-pointer border ${
+                      active
+                        ? 'bg-indigo-600 text-white border-indigo-600'
+                        : 'bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700'
+                    }`}
+                  >
+                    {chip.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Day-of-week picker (only for weekly) */}
+            {recurrence?.frequency === 'weekly' && (
+              <div className="mt-2 flex gap-1">
+                {dayLabels.map((d, i) => {
+                  const selected = (recurrence.daysOfWeek || []).includes(i);
+                  return (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => toggleDayOfWeek(i)}
+                      className={`w-8 h-8 rounded-lg text-[11px] font-bold transition cursor-pointer ${
+                        selected
+                          ? 'bg-indigo-600 text-white'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                      }`}
+                    >
+                      {d}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Interval picker (only for daily / weekly / monthly / yearly) */}
+            {recurrence && recurrence.frequency !== 'weekdays' && (
+              <div className="mt-2 flex items-center gap-2 text-[11px] text-slate-600 dark:text-slate-300">
+                <span>Every</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={30}
+                  value={recurrence.interval}
+                  onChange={(e) => {
+                    const v = Math.max(1, Math.min(30, parseInt(e.target.value) || 1));
+                    setRecurrence({ ...recurrence, interval: v });
+                  }}
+                  className="w-14 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-center text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500"
+                />
+                <span>
+                  {recurrence.frequency === 'daily' ? 'day(s)' :
+                   recurrence.frequency === 'weekly' ? 'week(s)' :
+                   recurrence.frequency === 'monthly' ? 'month(s)' : 'year(s)'}
+                </span>
+              </div>
+            )}
+
+            {/* Summary line */}
+            <p className="text-[10px] text-slate-400 mt-1.5 flex items-center gap-1">
+              <Calendar className="w-3 h-3" />
+              <span>{describeRecurrence(recurrence)}</span>
             </p>
+            {recurrence && (
+              <p className="text-[10px] text-indigo-500 mt-0.5">
+                Next occurrence will be created automatically when you complete this task.
+              </p>
+            )}
           </div>
 
           {/* Category & Minutes */}
@@ -450,7 +598,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
             </div>
           </div>
 
-          {/* Impact (1-5) and Effort (1-5) */}
+          {/* Impact / Effort */}
           <div className="grid grid-cols-2 gap-3 pt-1">
             <div className="bg-slate-50 dark:bg-slate-800/40 p-2.5 rounded-xl border border-slate-200 dark:border-slate-700/60">
               <label className="flex items-center justify-between text-[11px] text-slate-700 dark:text-slate-300 mb-1.5 font-medium">
@@ -503,7 +651,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
             </div>
           </div>
 
-          {/* Submit Button */}
+          {/* Submit */}
           <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex gap-2">
             <button
               type="button"

@@ -13,6 +13,22 @@ export type TaskCategory =
   | 'Marketing' 
   | 'Personal';
 
+// 🔁 Recurrence types
+export type RecurrenceFrequency = 
+  | 'daily'       // every N days
+  | 'weekdays'    // Mon–Fri only
+  | 'weekly'      // specific days of the week
+  | 'monthly'     // specific day of month
+  | 'yearly';     // same date every year
+
+export interface Recurrence {
+  frequency: RecurrenceFrequency;
+  interval: number;             // e.g. 2 for "every 2 days/weeks/months"
+  daysOfWeek?: number[];        // 0=Sun, 1=Mon, ..., 6=Sat (used for 'weekly')
+  dayOfMonth?: number;          // 1–31 (used for 'monthly')
+  endDate?: string;             // ISO date; optional stop date
+}
+
 export interface Subtask {
   id: string;
   title: string;
@@ -23,7 +39,7 @@ export interface Task {
   id: string;
   title: string;
   description: string;
-    archivedAt?: string;
+  archivedAt?: string;
   priority: PriorityLevel;
   category: TaskCategory;
   status: TaskStatus;
@@ -36,6 +52,8 @@ export interface Task {
   completedAt?: string;
   pinned?: boolean;
   subtasks?: Subtask[];
+  // 🔁 NEW: optional recurrence rule
+  recurrence?: Recurrence;
 }
 
 export type TabView = 'matrix' | 'list' | 'timeline' | 'analytics' | 'export' | 'archive';

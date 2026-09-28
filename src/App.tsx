@@ -8,7 +8,7 @@ import { Capacitor, registerPlugin } from '@capacitor/core';
 import { PushNotifications } from '@capacitor/push-notifications';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { useDevicePerformance } from './hooks/useDevicePerformance';
-import { Task, TabView, DeviceFrameMode, QuadrantId } from './types';
+import { Task, TabView, DeviceFrameMode, QuadrantId, Recurrence } from './types';
 import { INITIAL_TASKS } from './data/initialTasks';
 import { Header } from './components/Header';
 import { BottomTabBar } from './components/BottomTabBar';
@@ -60,6 +60,75 @@ const hashTaskId = (taskId: string): number => {
   return Math.abs(hash);
 };
 
+// 🔁 Calculate the next due date for a recurring task
+function computeNextDueDate(fromISO: string, rec: Recurrence): string | null {
+  const from = new Date(fromISO);
+  if (isNaN(from.getTime())) return null;
+  const now = Date.now();
+
+  const advance = (d: Date): Date => {
+    const next = new Date(d.getTime());
+    const interval = Math.max(1, rec.interval || 1);
+    switch (rec.frequency) {
+      case 'daily': {
+        next.setDate(next.getDate() + interval);
+        break;
+      }
+      case 'weekdays': {
+        do {
+          next.setDate(next.getDate() + 1);
+        } while (next.getDay() === 0 || next.getDay() === 6);
+        break;
+      }
+      case 'weekly': {
+        const days = (rec.daysOfWeek && rec.daysOfWeek.length > 0) ? [...rec.daysOfWeek].sort((a,b) => a-b) : [from.getDay()];
+        const curDay = next.getDay();
+        let found: number | null = null;
+        for (const day of days) {
+          if (day > curDay) { found = day; break; }
+        }
+        if (found !== null) {
+          next.setDate(next.getDate() + (found - curDay));
+        } else {
+          const daysUntilNextWeek = 7 - curDay + days[0];
+          next.setDate(next.getDate() + daysUntilNextWeek + (interval - 1) * 7);
+        }
+        break;
+      }
+      case 'monthly': {
+        const target = rec.dayOfMonth || from.getDate();
+        next.setMonth(next.getMonth() + interval);
+        const daysInMonth = new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate();
+        next.setDate(Math.min(target, daysInMonth));
+        break;
+      }
+      case 'yearly': {
+        next.setFullYear(next.getFullYear() + interval);
+        break;
+      }
+    }
+    return next;
+  };
+
+  // Advance until the candidate is in the future
+  let candidate = advance(from);
+  let iterations = 0;
+  while (candidate.getTime() <= now && iterations < 200) {
+    candidate = advance(candidate);
+    iterations++;
+  }
+
+  // Respect optional endDate
+  if (rec.endDate) {
+    const end = new Date(rec.endDate);
+    if (!isNaN(end.getTime()) && candidate.getTime() > end.getTime()) {
+      return null;
+    }
+  }
+
+  return candidate.toISOString();
+}
+
 export default function App() {
   useDevicePerformance();
   const { uiDesign } = useUIDesign();
@@ -94,19 +163,17 @@ export default function App() {
 
     let fireAt: number;
     if (dueTime > now + 3000) {
-      fireAt = dueTime; // <--- Fire EXACTLY at due time for the loud alarm
+      fireAt = dueTime;
     } else {
       console.log('⏭️ Skipping overdue task:', task.title);
       return;
     }
 
-    // 🔍 DEBUG LOGS
     console.log('🔍 DEBUG now =', new Date(now).toLocaleString(), '(' + now + ')');
     console.log('🔍 DEBUG dueTime =', new Date(dueTime).toLocaleString(), '(' + dueTime + ')');
     console.log('🔍 DEBUG fireAt =', new Date(fireAt).toLocaleString(), '(' + fireAt + ')');
     console.log('🔍 DEBUG diff (ms) =', fireAt - now);
 
-    // --- Save pending alarm for tracking ---
     try {
       const pendingAlarms = JSON.parse(localStorage.getItem('taskflow_pending_alarms') || '{}');
       pendingAlarms[hashTaskId(task.id)] = {
@@ -119,30 +186,28 @@ export default function App() {
       console.warn('Failed to save pending alarm:', err);
     }
 
-    // --- Native Android: use ONLY the custom Java AlarmService now ---
     if (Capacitor.isNativePlatform()) {
       try {
         console.log('🔔 Calling AlarmNative.startAlarm with fireAt=' + fireAt);
         await AlarmNative.startAlarm({
           title: task.title,
           taskId: task.id,
-          fireAt: String(fireAt), // <--- Sending as String so Java gets the right number!
+          fireAt: String(fireAt),
         });
         console.log('🔔 AlarmNative call returned successfully');
       } catch (nativeErr) {
         console.warn('Native alarm service not available:', nativeErr);
       }
 
-      // --- Local Notification for 2 minutes BEFORE the due time (SILENT) ---
       try {
-        const notifId = hashTaskId(task.id) + 1; // Different ID from native alarm
+        const notifId = hashTaskId(task.id) + 1;
         await LocalNotifications.schedule({
           notifications: [{
             id: notifId,
             title: '⏰ Task Due Soon: ' + task.title,
             body: 'This task is due in 2 minutes.',
-            schedule: { at: new Date(dueTime - 2 * 60 * 1000) }, // <--- EXACTLY 2 minutes before
-            channelId: 'task-reminders-silent', // <--- Using the silent channel we just created
+            schedule: { at: new Date(dueTime - 2 * 60 * 1000) },
+            channelId: 'task-reminders-silent',
             smallIcon: 'ic_stat_onesignal_default',
             extra: { taskId: task.id },
           }]
@@ -153,7 +218,6 @@ export default function App() {
       }
     }
 
-    // --- Backend backup (for when phone is off) ---
     try {
       const userId = localStorage.getItem('taskflow_user_id') || 'test-user-123';
       const response = await fetch(`${SERVER_URL}/api/schedule-reminder`, {
@@ -183,19 +247,16 @@ export default function App() {
   const cancelTaskReminder = async (taskId: string) => {
     if (!Capacitor.isNativePlatform()) return;
     try {
-      // 1. Cancel the loud ring from Java
       try {
         await AlarmNative.stopAlarm({ taskId });
       } catch (e) {}
 
-      // 2. Cancel the silent Local Notification
       try {
         await LocalNotifications.cancel({
           notifications: [{ id: hashTaskId(taskId) + 1 }]
         });
       } catch (e) {}
 
-      // 3. Cancel the server-side scheduled push
       try {
         await fetch(`${SERVER_URL}/api/cancel-reminder`, {
           method: 'POST',
@@ -220,12 +281,11 @@ export default function App() {
         .then((res) => console.log('LocalNotifications permission:', res))
         .catch((err) => console.warn('LocalNotifications error:', err));
 
-      // ✅ CREATE THE SILENT CHANNEL (This was the missing piece!)
       LocalNotifications.createChannel({
         id: 'task-reminders-silent',
         name: 'Silent Task Reminders',
         description: 'Silent heads-up before a task is due',
-        importance: 2, // 2 = Low importance (No sound)
+        importance: 2,
         visibility: 1,
         vibration: false,
         lights: true,
@@ -239,25 +299,21 @@ export default function App() {
 
     const setupPush = async () => {
       try {
-        // 1. Request permission
         let permStatus = await PushNotifications.checkPermissions();
         if (permStatus.receive === 'prompt') {
           permStatus = await PushNotifications.requestPermissions();
         }
-        
+
         if (permStatus.receive !== 'granted') {
           console.warn('User denied push notification permission!');
           return;
         }
 
-        // 2. Register with FCM
         await PushNotifications.register();
 
-        // 3. Listen for the token
         PushNotifications.addListener('registration', async (token) => {
           console.log('📱 FCM TOKEN RECEIVED:', token.value);
-          
-          // Send token to our server!
+
           try {
             const userId = localStorage.getItem('taskflow_user_id') || 'test-user-123';
             const response = await fetch(`${SERVER_URL}/api/register-device`, {
@@ -274,7 +330,6 @@ export default function App() {
           }
         });
 
-        // 4. Listen for push notifications arriving
         PushNotifications.addListener('pushNotificationReceived', (notification) => {
           console.log('🔔 Push notification received:', notification);
         });
@@ -361,24 +416,53 @@ export default function App() {
     }
   }, []);
 
+  // 🔁 Toggle status + auto-create next occurrence for recurring tasks
   const handleToggleStatus = (taskId: string) => {
     cancelTaskReminder(taskId);
+
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) return;
+
+    const isNowDone = task.status !== 'completed';
+
+    // Update the task status
     setTasks((prev) =>
-      prev.map((task) => {
-        if (task.id === taskId) {
-          const isNowDone = task.status !== 'completed';
-          if (isNowDone) {
-            playAudioChime('success');
-          }
-          return {
-            ...task,
-            status: isNowDone ? 'completed' : 'todo',
-            completedAt: isNowDone ? new Date().toISOString() : undefined,
-          };
-        }
-        return task;
-      })
+      prev.map((t) =>
+        t.id === taskId
+          ? {
+              ...t,
+              status: isNowDone ? 'completed' : 'todo',
+              completedAt: isNowDone ? new Date().toISOString() : undefined,
+            }
+          : t
+      )
     );
+
+    if (isNowDone) {
+      playAudioChime('success');
+
+      // 🔁 If this task has a recurrence rule, auto-create the next occurrence
+      if (task.recurrence) {
+        const nextDue = computeNextDueDate(task.dueDate, task.recurrence);
+        if (nextDue) {
+          const nextTask: Task = {
+            ...task,
+            id: `task-${Date.now()}-recur`,
+            status: 'todo',
+            dueDate: nextDue,
+            createdAt: new Date().toISOString(),
+            completedAt: undefined,
+            archivedAt: undefined,
+          };
+          console.log('🔁 Auto-created next occurrence:', nextTask.title, '→', nextDue);
+          setTasks((prev) => [nextTask, ...prev]);
+          // Schedule reminder for the next occurrence
+          setTimeout(() => scheduleTaskReminder(nextTask), 100);
+        } else {
+          console.log('🔁 Recurrence ended (no more occurrences)');
+        }
+      }
+    }
   };
 
   const handleMoveTaskQuadrant = (taskId: string, targetQuadrant: QuadrantId) => {

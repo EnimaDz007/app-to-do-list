@@ -31,6 +31,75 @@ app.use(express.json());
 // 3. Timer management
 const scheduledTimers = {};
 
+// 🔁 Compute the next due date from a recurrence rule (mirrors client logic)
+function computeNextDueDate(fromISO, rec) {
+  if (!rec || !rec.frequency) return null;
+  const from = new Date(fromISO);
+  if (isNaN(from.getTime())) return null;
+  const now = Date.now();
+
+  const advance = (d) => {
+    const next = new Date(d.getTime());
+    const interval = Math.max(1, rec.interval || 1);
+    switch (rec.frequency) {
+      case 'daily':
+        next.setDate(next.getDate() + interval);
+        break;
+      case 'weekdays':
+        do { next.setDate(next.getDate() + 1); }
+        while (next.getDay() === 0 || next.getDay() === 6);
+        break;
+      case 'weekly': {
+        const days = (rec.daysOfWeek && rec.daysOfWeek.length > 0)
+          ? [...rec.daysOfWeek].sort((a, b) => a - b)
+          : [from.getDay()];
+        const curDay = next.getDay();
+        let found = null;
+        for (const day of days) {
+          if (day > curDay) { found = day; break; }
+        }
+        if (found !== null) {
+          next.setDate(next.getDate() + (found - curDay));
+        } else {
+          const daysUntilNextWeek = 7 - curDay + days[0];
+          next.setDate(next.getDate() + daysUntilNextWeek + (interval - 1) * 7);
+        }
+        break;
+      }
+      case 'monthly': {
+        const target = rec.dayOfMonth || from.getDate();
+        next.setMonth(next.getMonth() + interval);
+        const daysInMonth = new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate();
+        next.setDate(Math.min(target, daysInMonth));
+        break;
+      }
+      case 'yearly':
+        next.setFullYear(next.getFullYear() + interval);
+        break;
+      default:
+        return null;
+    }
+    return next;
+  };
+
+  let candidate = advance(from);
+  let iterations = 0;
+  while (candidate.getTime() <= now && iterations < 200) {
+    candidate = advance(candidate);
+    iterations++;
+  }
+
+  if (rec.endDate) {
+    const end = new Date(rec.endDate);
+    if (!isNaN(end.getTime()) && candidate.getTime() > end.getTime()) {
+      return null;
+    }
+  }
+
+  return candidate.toISOString();
+}
+
+// 4. Send push for a task, then reschedule if recurring
 async function sendPushForTask(taskId) {
   console.log(`🔔 Timer fired for task: ${taskId}`);
   try {
@@ -41,34 +110,55 @@ async function sendPushForTask(taskId) {
     }
     const task = taskDoc.data();
 
+    // Send the push
     const tokenDoc = await tokensCollection.doc(task.externalId).get();
-    if (!tokenDoc.exists) {
-      console.log(`❌ No FCM token found for user ${task.externalId}`);
-      await tasksCollection.doc(taskId).delete();
-      return;
-    }
-    const fcmToken = tokenDoc.data().fcmToken;
-
-    const response = await getMessaging().send({
-      token: fcmToken,
-      notification: {
-        title: '⏰ ' + task.title,
-        body: 'Your task is due now!'
-      },
-      android: {
-        priority: 'high',
-        notification: { channelId: 'task-reminders-critical' }
+    if (tokenDoc.exists) {
+      const fcmToken = tokenDoc.data().fcmToken;
+      try {
+        const response = await getMessaging().send({
+          token: fcmToken,
+          notification: {
+            title: '⏰ ' + task.title,
+            body: 'Your task is due now!'
+          },
+          android: {
+            priority: 'high',
+            notification: { channelId: 'task-reminders-critical' }
+          }
+        });
+        console.log(`🚀 Auto-push sent for "${task.title}":`, response);
+      } catch (err) {
+        console.error('❌ Error sending push:', err);
       }
-    });
-    console.log(`🚀 Auto-push sent for "${task.title}":`, response);
-  } catch (error) {
-    console.error('❌ Error sending auto-push:', error);
-  }
+    } else {
+      console.log(`❌ No FCM token for user ${task.externalId}`);
+    }
 
-  try {
+    // 🔁 If task has a recurrence, compute + schedule the next occurrence
+    if (task.recurrence && task.recurrence.frequency) {
+      const nextDue = computeNextDueDate(task.dueTime, task.recurrence);
+      if (nextDue) {
+        const nextTaskId = `${taskId}-next-${Date.now()}`;
+        const nextTask = {
+          externalId: task.externalId,
+          title: task.title,
+          dueTime: nextDue,
+          taskId: nextTaskId,
+          recurrence: task.recurrence,
+        };
+        await tasksCollection.doc(nextTaskId).set(nextTask);
+        console.log(`🔁 Auto-created next occurrence: "${task.title}" → ${nextDue}`);
+        // Recursively schedule the new occurrence
+        scheduleTask(nextTask);
+      } else {
+        console.log(`🔁 Recurrence ended for "${task.title}"`);
+      }
+    }
+
+    // Delete the fired task
     await tasksCollection.doc(taskId).delete();
-  } catch (err) {
-    console.error('Failed to delete task from Firestore:', err);
+  } catch (error) {
+    console.error('❌ sendPushForTask error:', error);
   }
   delete scheduledTimers[taskId];
 }
@@ -97,7 +187,7 @@ function scheduleTask(task) {
   return true;
 }
 
-// 4. On boot: reload all pending tasks from Firestore
+// 5. On boot: reload all pending tasks from Firestore
 async function rescheduleAll() {
   try {
     const snapshot = await tasksCollection.get();
@@ -125,7 +215,7 @@ async function rescheduleAll() {
 
 rescheduleAll();
 
-// 5. ROUTE: Register device token
+// 6. ROUTE: Register device token
 app.post('/api/register-device', async (req, res) => {
   const { userId, fcmToken } = req.body;
   if (!userId || !fcmToken) {
@@ -144,10 +234,10 @@ app.post('/api/register-device', async (req, res) => {
   }
 });
 
-// 6. ROUTE: Schedule a reminder
+// 7. ROUTE: Schedule a reminder (with optional recurrence)
 app.post('/api/schedule-reminder', async (req, res) => {
-  const { externalId, title, dueTime, taskId } = req.body;
-  console.log("✅ Reminder request:", { externalId, title, dueTime, taskId });
+  const { externalId, title, dueTime, taskId, recurrence } = req.body;
+  console.log("✅ Reminder request:", { externalId, title, dueTime, taskId, recurrence: recurrence?.frequency || 'none' });
 
   if (!externalId || !dueTime || !taskId) {
     return res.status(400).json({ error: 'Missing required fields' });
@@ -159,8 +249,12 @@ app.post('/api/schedule-reminder', async (req, res) => {
   }
 
   try {
-    await tasksCollection.doc(taskId).set({ externalId, title, dueTime, taskId });
-    scheduleTask({ externalId, title, dueTime, taskId });
+    const taskRecord = { externalId, title, dueTime, taskId };
+    if (recurrence && recurrence.frequency) {
+      taskRecord.recurrence = recurrence;
+    }
+    await tasksCollection.doc(taskId).set(taskRecord);
+    scheduleTask(taskRecord);
     res.json({ success: true, message: "Reminder scheduled", fireInMs: dueTimestamp - Date.now() });
   } catch (err) {
     console.error('Failed to schedule reminder:', err);
@@ -168,7 +262,7 @@ app.post('/api/schedule-reminder', async (req, res) => {
   }
 });
 
-// 7. ROUTE: Cancel a reminder
+// 8. ROUTE: Cancel a reminder
 app.post('/api/cancel-reminder', async (req, res) => {
   const { taskId } = req.body;
   if (!taskId) return res.status(400).json({ error: 'taskId is required' });
@@ -188,12 +282,12 @@ app.post('/api/cancel-reminder', async (req, res) => {
   res.json({ success: true, message: "Reminder cancelled" });
 });
 
-// 8. Health check route
+// 9. Health check
 app.get('/', (req, res) => {
   res.send('Task Priority Server is alive! 🚀');
 });
 
-// 9. Start the server
+// 10. Start
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Backend server is running on port ${PORT}`);
