@@ -228,6 +228,7 @@ export default function App() {
           title: task.title,
           dueTime: task.dueDate,
           taskId: task.id,
+          recurrence: task.recurrence, // 🔑 NEW: send recurrence rule to server
         }),
       });
 
@@ -425,7 +426,6 @@ export default function App() {
 
     const isNowDone = task.status !== 'completed';
 
-    // Update the task status
     setTasks((prev) =>
       prev.map((t) =>
         t.id === taskId
@@ -441,7 +441,6 @@ export default function App() {
     if (isNowDone) {
       playAudioChime('success');
 
-      // 🔁 If this task has a recurrence rule, auto-create the next occurrence
       if (task.recurrence) {
         const nextDue = computeNextDueDate(task.dueDate, task.recurrence);
         if (nextDue) {
@@ -456,7 +455,6 @@ export default function App() {
           };
           console.log('🔁 Auto-created next occurrence:', nextTask.title, '→', nextDue);
           setTasks((prev) => [nextTask, ...prev]);
-          // Schedule reminder for the next occurrence
           setTimeout(() => scheduleTaskReminder(nextTask), 100);
         } else {
           console.log('🔁 Recurrence ended (no more occurrences)');
