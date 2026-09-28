@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { PushNotifications } from '@capacitor/push-notifications';
 import { LocalNotifications } from '@capacitor/local-notifications';
@@ -63,6 +63,10 @@ const hashTaskId = (taskId: string): number => {
 export default function App() {
   useDevicePerformance();
   const { uiDesign } = useUIDesign();
+
+  // 🎯 Refs to prevent duplicate syncs on every mount/render
+  const hasSyncedHabitsRef = useRef(false);
+  const hasSyncedTasksRef = useRef(false);
 
   const [tasks, setTasks] = useState<Task[]>(() => {
     try {
@@ -180,13 +184,13 @@ export default function App() {
     return null;
   };
 
-  // ---------- Habit reminders on server ----------
+  // ---------- Habit reminder sync ----------
   const syncHabitReminderToServer = async (habit: Habit) => {
     if (!Capacitor.isNativePlatform()) return;
     const userId = localStorage.getItem('taskflow_user_id') || 'test-user-123';
     try {
       if (habit.reminderEnabled && habit.reminderTime) {
-        const tzOffset = new Date().getTimezoneOffset(); // minutes behind UTC (e.g. -60 for GMT+1)
+        const tzOffset = new Date().getTimezoneOffset();
         await fetch(`${SERVER_URL}/api/schedule-habit-reminder`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -224,7 +228,7 @@ export default function App() {
     } catch {}
   };
 
-  // ---------- Effects ----------
+  // ---------- Notification setup ----------
   useEffect(() => {
     if (Capacitor.isNativePlatform()) {
       LocalNotifications.requestPermissions().catch(() => {});
@@ -302,9 +306,12 @@ export default function App() {
     };
   }, []);
 
-  // Re-sync ALL habit reminders on boot (in case timezone changed)
+  // 🎯 Re-sync ALL habit reminders on boot — ONLY ONCE per app session
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
+    if (hasSyncedHabitsRef.current) return; // 🔑 Skip if already synced this session
+    hasSyncedHabitsRef.current = true;
+
     const active = habits.filter((h) => !h.archivedAt);
     active.forEach((h) => {
       if (h.reminderEnabled && h.reminderTime) {
@@ -314,13 +321,18 @@ export default function App() {
     // eslint-disable-next-line
   }, []);
 
+  // Schedule reminders for existing tasks — only once per session
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
+    if (hasSyncedTasksRef.current) return;
+    hasSyncedTasksRef.current = true;
+
     tasks.forEach((task) => {
       if (task.quadrant === 'do_first' && task.status !== 'completed' && task.dueDate) {
         scheduleTaskReminder(task);
       }
     });
+    // eslint-disable-next-line
   }, []);
 
   useEffect(() => {
@@ -451,13 +463,10 @@ export default function App() {
   // ---------- Habit handlers ----------
   const handleSaveHabit = (habitData: Omit<Habit, 'id' | 'createdAt'> & { id?: string }) => {
     if (habitData.id) {
-      // Update existing
       const updatedHabit = { ...habitData, id: habitData.id } as Habit;
       setHabits((prev) => prev.map((h) => (h.id === habitData.id ? updatedHabit : h)));
-      // Sync reminder with server
       syncHabitReminderToServer(updatedHabit);
     } else {
-      // Create new
       const newHabit: Habit = {
         ...habitData,
         id: `habit-${Date.now()}`,
