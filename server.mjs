@@ -29,6 +29,31 @@ app.use(cors({ origin: '*' }));
 app.use(express.json());
 
 // ============================================================
+//                STALE TOKEN CLEANUP HELPER
+// ============================================================
+/**
+ * FCM error codes that mean the token is permanently dead.
+ * We should delete it from Firestore so we stop retrying it.
+ */
+const STALE_TOKEN_CODES = [
+  'messaging/registration-token-not-registered',
+  'messaging/invalid-registration-token',
+  'messaging/invalid-argument', // sometimes returned when token format is wrong
+];
+
+async function handleStaleToken(externalId, err) {
+  const code = err?.code || err?.errorInfo?.code;
+  if (!STALE_TOKEN_CODES.includes(code)) return false;
+  try {
+    await tokensCollection.doc(externalId).delete();
+    console.log(`🧹 Deleted stale FCM token for user: ${externalId}`);
+  } catch (cleanupErr) {
+    console.error('Failed to delete stale token:', cleanupErr);
+  }
+  return true;
+}
+
+// ============================================================
 //                    TASK TIMERS
 // ============================================================
 const scheduledTimers = {};
@@ -160,7 +185,11 @@ async function sendPushForTask(taskId) {
         });
         console.log(`🚀 Auto-push sent for "${task.title}":`, response);
       } catch (err) {
-        console.error('❌ Error sending push:', err);
+        // 🆕 Clean up dead tokens so we stop hammering FCM
+        const cleaned = await handleStaleToken(task.externalId, err);
+        if (!cleaned) {
+          console.error('❌ Error sending push:', err);
+        }
       }
     }
 
@@ -215,10 +244,8 @@ async function rescheduleAllTasks() {
 // ============================================================
 const scheduledHabitTimers = {};
 
-// Compute the next UTC timestamp at which this habit should fire
 function computeNextHabitFire(habit, fromTimeMs = Date.now()) {
   const offsetMs = (habit.timezoneOffsetMinutes || 0) * 60000;
-  // "User local now" represented as a pseudo-UTC date
   const userLocalNow = new Date(fromTimeMs - offsetMs);
   const [hh, mm] = (habit.reminderTime || '09:00').split(':').map(Number);
   const days = (habit.daysOfWeek && habit.daysOfWeek.length > 0)
@@ -264,11 +291,14 @@ async function sendHabitPush(habitId) {
         });
         console.log(`🚀 Habit push sent for "${habit.name}":`, response);
       } catch (err) {
-        console.error('❌ Habit push error:', err);
+        // 🆕 Clean up dead tokens so we stop hammering FCM
+        const cleaned = await handleStaleToken(habit.externalId, err);
+        if (!cleaned) {
+          console.error('❌ Habit push error:', err);
+        }
       }
     }
 
-    // Reschedule for next occurrence
     scheduleHabitReminder(habit);
   } catch (err) {
     console.error('sendHabitPush error:', err);
