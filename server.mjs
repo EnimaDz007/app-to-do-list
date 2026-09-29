@@ -23,6 +23,7 @@ const db = getFirestore();
 const tokensCollection = db.collection('tokens');
 const tasksCollection = db.collection('tasks');
 const habitRemindersCollection = db.collection('habitReminders');
+const delegateCollection = db.collection('delegates');
 
 const app = express();
 app.use(cors({ origin: '*' }));
@@ -31,14 +32,10 @@ app.use(express.json());
 // ============================================================
 //                STALE TOKEN CLEANUP HELPER
 // ============================================================
-/**
- * FCM error codes that mean the token is permanently dead.
- * We should delete it from Firestore so we stop retrying it.
- */
 const STALE_TOKEN_CODES = [
   'messaging/registration-token-not-registered',
   'messaging/invalid-registration-token',
-  'messaging/invalid-argument', // sometimes returned when token format is wrong
+  'messaging/invalid-argument',
 ];
 
 async function handleStaleToken(externalId, err) {
@@ -185,7 +182,6 @@ async function sendPushForTask(taskId) {
         });
         console.log(`🚀 Auto-push sent for "${task.title}":`, response);
       } catch (err) {
-        // 🆕 Clean up dead tokens so we stop hammering FCM
         const cleaned = await handleStaleToken(task.externalId, err);
         if (!cleaned) {
           console.error('❌ Error sending push:', err);
@@ -291,7 +287,6 @@ async function sendHabitPush(habitId) {
         });
         console.log(`🚀 Habit push sent for "${habit.name}":`, response);
       } catch (err) {
-        // 🆕 Clean up dead tokens so we stop hammering FCM
         const cleaned = await handleStaleToken(habit.externalId, err);
         if (!cleaned) {
           console.error('❌ Habit push error:', err);
@@ -485,6 +480,222 @@ app.post('/api/cancel-habit-reminder', async (req, res) => {
   try { await habitRemindersCollection.doc(habitId).delete(); } catch {}
   console.log(`🗑️ Cancelled habit reminder: ${habitId}`);
   res.json({ success: true });
+});
+
+// ============================================================
+//                    DELEGATE HUB
+// ============================================================
+
+/**
+ * POST /api/delegate/create
+ * Creates a public-shareable delegate record.
+ */
+app.post('/api/delegate/create', async (req, res) => {
+  const { taskId, title, description, dueDate, externalId, senderName } = req.body;
+  if (!taskId || !title) return res.status(400).json({ error: 'Missing taskId or title' });
+  try {
+    const delegateId = `del-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    await delegateCollection.doc(delegateId).set({
+      delegateId,
+      taskId,
+      title,
+      description: description || '',
+      dueDate: dueDate || null,
+      externalId: externalId || '',
+      senderName: senderName || 'A teammate',
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    console.log(`🤝 Delegate created: ${delegateId} — "${title}"`);
+    res.json({ success: true, delegateId });
+  } catch (err) {
+    console.error('delegate/create error:', err);
+    res.status(500).json({ error: 'Failed to create delegate' });
+  }
+});
+
+/**
+ * GET /api/delegate/:delegateId
+ * Returns the current status and info.
+ */
+app.get('/api/delegate/:delegateId', async (req, res) => {
+  const { delegateId } = req.params;
+  try {
+    const doc = await delegateCollection.doc(delegateId).get();
+    if (!doc.exists) return res.status(404).json({ error: 'Not found' });
+    res.json({ success: true, task: doc.data() });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch' });
+  }
+});
+
+/**
+ * POST /api/delegate/:delegateId/complete
+ */
+app.post('/api/delegate/:delegateId/complete', async (req, res) => {
+  const { delegateId } = req.params;
+  const { completedBy } = req.body || {};
+  try {
+    const doc = await delegateCollection.doc(delegateId).get();
+    if (!doc.exists) return res.status(404).json({ error: 'Not found' });
+    await delegateCollection.doc(delegateId).update({
+      status: 'completed',
+      completedBy: completedBy || 'Anonymous',
+      completedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    console.log(`✅ Delegate completed: ${delegateId}`);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('delegate/complete error:', err);
+    res.status(500).json({ error: 'Failed to complete' });
+  }
+});
+
+/**
+ * POST /api/delegate/:delegateId/reject
+ */
+app.post('/api/delegate/:delegateId/reject', async (req, res) => {
+  const { delegateId } = req.params;
+  const { reason } = req.body || {};
+  try {
+    const doc = await delegateCollection.doc(delegateId).get();
+    if (!doc.exists) return res.status(404).json({ error: 'Not found' });
+    await delegateCollection.doc(delegateId).update({
+      status: 'rejected',
+      rejectionReason: reason || '',
+      updatedAt: new Date().toISOString(),
+    });
+    console.log(`❌ Delegate rejected: ${delegateId}`);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to reject' });
+  }
+});
+
+/**
+ * GET /delegate/:delegateId
+ * Public HTML page shown to the recipient.
+ */
+app.get('/delegate/:delegateId', async (req, res) => {
+  const { delegateId } = req.params;
+  let task = null;
+  try {
+    const doc = await delegateCollection.doc(delegateId).get();
+    if (doc.exists) task = doc.data();
+  } catch {}
+
+  if (!task) {
+    return res.status(404).type('html').send(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Task not found</title><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="font-family:-apple-system,sans-serif;padding:40px;text-align:center;color:#334155;background:#f8fafc"><div style="font-size:60px;margin-bottom:20px">🔍</div><h1 style="margin:0 0 8px">Task not found</h1><p style="color:#64748b">This link may have been revoked or never existed.</p></body></html>`);
+  }
+
+  const status = task.status;
+  const statusColor = status === 'completed' ? '#059669' : status === 'rejected' ? '#E11D48' : '#4F46E5';
+  const statusLabel = status === 'completed' ? 'Completed' : status === 'rejected' ? 'Declined' : 'Pending';
+  const dueLine = task.dueDate
+    ? new Date(task.dueDate).toLocaleString('en-US', { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+    : 'No specific time';
+
+  // simple HTML escape
+  const esc = (s) => String(s || '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>${esc(task.title)} — Delegated task</title>
+  <style>
+    *{box-sizing:border-box}
+    body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f1f5f9;color:#0f172a;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+    .card{max-width:480px;width:100%;background:#fff;border-radius:24px;box-shadow:0 20px 60px rgba(15,23,42,0.1);overflow:hidden}
+    .head{padding:24px;background:linear-gradient(135deg,#6366F1,#7C3AED);color:#fff}
+    .head .eyebrow{margin:0;font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;opacity:0.9}
+    .head h1{margin:8px 0 0;font-size:20px;font-weight:800;line-height:1.25}
+    .body{padding:24px}
+    .status{display:inline-block;padding:5px 12px;border-radius:100px;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1px;background:${statusColor}20;color:${statusColor};margin-bottom:16px}
+    .field{margin:16px 0}
+    .label{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;color:#94a3b8;margin-bottom:4px}
+    .value{font-size:14px;color:#0f172a;line-height:1.5;white-space:pre-wrap}
+    .actions{display:flex;gap:10px;margin-top:24px}
+    .btn{flex:1;padding:14px;border-radius:14px;border:none;font-size:14px;font-weight:800;cursor:pointer;font-family:inherit;transition:opacity 0.15s,transform 0.1s}
+    .btn:active{transform:scale(0.97)}
+    .btn:disabled{opacity:0.6;cursor:not-allowed}
+    .btn-primary{background:#4F46E5;color:#fff}
+    .btn-secondary{background:#e2e8f0;color:#334155}
+    .note{margin-top:18px;font-size:11px;color:#94a3b8;text-align:center;line-height:1.6}
+    .done{padding:36px 24px;text-align:center}
+    .done-emoji{font-size:56px;margin-bottom:14px}
+    .done h2{margin:0 0 8px;font-size:19px;color:#059669}
+    .done p{margin:0;font-size:13px;color:#64748b;line-height:1.5}
+    .footer{padding:16px 24px;border-top:1px solid #f1f5f9;background:#f8fafc;text-align:center}
+    .footer p{margin:0;font-size:10px;color:#94a3b8;font-weight:600;letter-spacing:1px;text-transform:uppercase}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="head">
+      <p class="eyebrow">Delegated task</p>
+      <h1>${esc(task.title)}</h1>
+    </div>
+    <div class="body">
+      <span class="status">${statusLabel}</span>
+      <div class="field">
+        <div class="label">From</div>
+        <div class="value">${esc(task.senderName || 'A teammate')}</div>
+      </div>
+      ${task.description ? `<div class="field"><div class="label">Notes</div><div class="value">${esc(task.description)}</div></div>` : ''}
+      <div class="field">
+        <div class="label">Due</div>
+        <div class="value">${esc(dueLine)}</div>
+      </div>
+      ${status === 'pending' ? `
+        <div class="actions">
+          <button class="btn btn-secondary" id="rejectBtn">Can't do</button>
+          <button class="btn btn-primary" id="completeBtn">Mark as done</button>
+        </div>
+      ` : ''}
+      <p class="note">Takes a second — no account needed.</p>
+    </div>
+    <div class="footer">
+      <p>Powered by Task Priority</p>
+    </div>
+  </div>
+  <script>
+    const did = ${JSON.stringify(delegateId)};
+    const api = ${JSON.stringify((req.protocol || 'https') + '://' + req.get('host'))};
+    const complete = document.getElementById('completeBtn');
+    const reject = document.getElementById('rejectBtn');
+    if (complete) complete.addEventListener('click', async () => {
+      complete.textContent = 'Saving...';
+      complete.disabled = true;
+      try {
+        const r = await fetch(api + '/api/delegate/' + did + '/complete', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({}) });
+        if (!r.ok) throw new Error('bad');
+        document.querySelector('.body').innerHTML = '<div class="done"><div class="done-emoji">🎉</div><h2>Thank you!</h2><p>The sender has been notified.</p></div>';
+      } catch (e) {
+        complete.textContent = 'Try again';
+        complete.disabled = false;
+      }
+    });
+    if (reject) reject.addEventListener('click', async () => {
+      reject.textContent = 'Sending...';
+      reject.disabled = true;
+      try {
+        const r = await fetch(api + '/api/delegate/' + did + '/reject', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({}) });
+        if (!r.ok) throw new Error('bad');
+        document.querySelector('.body').innerHTML = '<div class="done"><div class="done-emoji">👋</div><h2>Declined</h2><p>They\\'ll see your reply in the app.</p></div>';
+      } catch (e) {
+        reject.textContent = 'Try again';
+        reject.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>`;
+
+  res.set('Content-Type', 'text/html; charset=utf-8').send(html);
 });
 
 // Health check
