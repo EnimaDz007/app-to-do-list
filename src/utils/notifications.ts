@@ -1,355 +1,343 @@
-/**
- * Browser Notification & Audio Chime Utilities (Native JavaScript Web Audio API)
- */
-
+import { Capacitor } from '@capacitor/core';
+import { LocalNotifications } from '@capacitor/local-notifications';
 import { Task } from '../types';
 
-export type SoundAlertId = 'crystal' | 'modern' | 'triumph' | 'marimba' | 'radar' | 'classic';
+/* ============================================================
+   SOUND ENGINE — singleton AudioContext
+   ============================================================ */
 
-export interface SoundAlertOption {
+let audioCtx: AudioContext | null = null;
+
+function getAudioContext(): AudioContext | null {
+  if (typeof window === 'undefined') return null;
+  const Ctor: typeof AudioContext | undefined =
+    window.AudioContext || (window as any).webkitAudioContext;
+  if (!Ctor) return null;
+  if (!audioCtx) {
+    try { audioCtx = new Ctor(); } catch { return null; }
+  }
+  if (audioCtx.state === 'suspended') {
+    audioCtx.resume().catch(() => {});
+  }
+  return audioCtx;
+}
+
+export function unlockAudio(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  try {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    gain.gain.value = 0.0001;
+    osc.connect(gain).connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.01);
+  } catch { /* noop */ }
+}
+
+interface ToneSpec {
+  freq: number;
+  start: number;
+  duration: number;
+  type?: OscillatorType;
+  volume?: number;
+}
+
+function playTones(tones: ToneSpec[]): void {
+  const ctx = getAudioContext();
+  if (!ctx || tones.length === 0) return;
+  const now = ctx.currentTime;
+  for (const { freq, start, duration, type = 'sine', volume = 0.18 } of tones) {
+    try {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const t0 = now + start;
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, t0);
+      gain.gain.setValueAtTime(0.0001, t0);
+      gain.gain.exponentialRampToValueAtTime(volume, t0 + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(t0);
+      osc.stop(t0 + duration + 0.05);
+    } catch { /* noop */ }
+  }
+}
+
+/* ============================================================
+   SOUND OPTIONS
+   ============================================================ */
+
+export type SoundAlertId = 'none' | 'beep' | 'chime' | 'success' | 'alert';
+
+export const SOUND_ALERT_OPTIONS: {
   id: SoundAlertId;
   name: string;
-  description: string;
   tag: string;
-}
-
-export const SOUND_ALERT_OPTIONS: SoundAlertOption[] = [
-  {
-    id: 'crystal',
-    name: 'Crystal Bell',
-    description: 'Serene, crystalline chime with pure overtones',
-    tag: 'Calm & Zen',
-  },
-  {
-    id: 'modern',
-    name: 'Modern Ding',
-    description: 'Crisp, snappy high-frequency pop for fast tasks',
-    tag: 'Minimal',
-  },
-  {
-    id: 'triumph',
-    name: 'Ascending Triumph',
-    description: 'Warm multi-note chord celebrating completion',
-    tag: 'Reward',
-  },
-  {
-    id: 'marimba',
-    name: 'Warm Marimba',
-    description: 'Acoustic double wood-tap resonance',
-    tag: 'Acoustic',
-  },
-  {
-    id: 'radar',
-    name: 'Pulse Radar',
-    description: 'Dual futuristic smartwatch electronic ping',
-    tag: 'Digital',
-  },
-  {
-    id: 'classic',
-    name: 'Classic Desk Bell',
-    description: 'Traditional two-tone harmonic bell ring',
-    tag: 'Classic',
-  },
+  description: string;
+}[] = [
+  { id: 'none',    name: 'Silent',       tag: 'Off',     description: 'Visual banner only, no sound' },
+  { id: 'beep',    name: 'Classic Beep', tag: 'Default', description: 'Short single tone' },
+  { id: 'chime',   name: 'Soft Chime',   tag: 'Gentle',  description: 'Pleasant two-note chime' },
+  { id: 'success', name: 'Success',      tag: 'Upbeat',  description: 'Rising three-note arpeggio' },
+  { id: 'alert',   name: 'Urgent Alert', tag: 'Loud',    description: 'Double high-pitched alert' },
 ];
 
-const SOUND_STORAGE_KEY = 'taskflow_selected_sound_alert';
+const SOUND_PATTERNS: Record<SoundAlertId, ToneSpec[]> = {
+  none: [],
+  beep: [{ freq: 880, start: 0, duration: 0.18, type: 'square', volume: 0.15 }],
+  chime: [
+    { freq: 660, start: 0,    duration: 0.35, type: 'sine', volume: 0.16 },
+    { freq: 990, start: 0.16, duration: 0.5,  type: 'sine', volume: 0.14 },
+  ],
+  success: [
+    { freq: 523.25, start: 0,    duration: 0.18, type: 'sine', volume: 0.16 },
+    { freq: 659.25, start: 0.12, duration: 0.18, type: 'sine', volume: 0.16 },
+    { freq: 783.99, start: 0.24, duration: 0.35, type: 'sine', volume: 0.16 },
+  ],
+  alert: [
+    { freq: 1000, start: 0,    duration: 0.12, type: 'square', volume: 0.14 },
+    { freq: 1000, start: 0.18, duration: 0.12, type: 'square', volume: 0.14 },
+    { freq: 1200, start: 0.36, duration: 0.22, type: 'square', volume: 0.14 },
+  ],
+};
 
-/**
- * Gets currently active alert sound preference
- */
+export type ChimeType = 'beep' | 'success' | 'error' | 'timer';
+
+export function playAudioAlert(soundId: SoundAlertId): void {
+  if (soundId === 'none') return;
+  playTones(SOUND_PATTERNS[soundId] ?? SOUND_PATTERNS.beep);
+}
+
+export function previewAlertSound(soundId?: SoundAlertId | string): void {
+  const id = (soundId as SoundAlertId) || getSelectedAlertSound();
+  if (id === 'none') return;
+  playAudioAlert(id);
+}
+
+export function playAudioChime(type: ChimeType = 'beep'): void {
+  if (type === 'success') {
+    playAudioAlert('success');
+  } else if (type === 'error') {
+    playAudioAlert('alert');
+  } else if (type === 'timer') {
+    playTones([
+      { freq: 587.33, start: 0,    duration: 0.25, type: 'sine', volume: 0.18 },
+      { freq: 880,    start: 0.18, duration: 0.30, type: 'sine', volume: 0.16 },
+      { freq: 1174.66,start: 0.38, duration: 0.55, type: 'sine', volume: 0.15 },
+    ]);
+  } else {
+    playAudioAlert('beep');
+  }
+}
+
+/* ============================================================
+   PERSISTED SOUND CHOICE
+   ============================================================ */
+
+const SOUND_STORAGE_KEY = 'task-priority-alert-sound';
+
 export function getSelectedAlertSound(): SoundAlertId {
   try {
-    const saved = localStorage.getItem(SOUND_STORAGE_KEY) as SoundAlertId;
-    if (saved && SOUND_ALERT_OPTIONS.some((o) => o.id === saved)) {
-      return saved;
-    }
-  } catch {
-    // fallback if localStorage unavailable
-  }
-  return 'crystal';
+    const v = localStorage.getItem(SOUND_STORAGE_KEY);
+    if (v && v in SOUND_PATTERNS) return v as SoundAlertId;
+  } catch { /* noop */ }
+  return 'chime';
 }
 
-/**
- * Saves alert sound preference to localStorage
- */
-export function setSelectedAlertSound(soundId: SoundAlertId): void {
-  try {
-    localStorage.setItem(SOUND_STORAGE_KEY, soundId);
-  } catch {
-    // ignore
-  }
+export function setSelectedAlertSound(id: SoundAlertId): void {
+  try { localStorage.setItem(SOUND_STORAGE_KEY, id); } catch { /* noop */ }
 }
 
-/**
- * Plays a rich synthesizer alert sound using Web Audio API
- */
-export function playAudioAlert(soundId?: SoundAlertId, volume = 0.18): void {
-  try {
-    const AudioContextClass =
-      window.AudioContext ||
-      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    if (!AudioContextClass) return;
+/* ============================================================
+   NOTIFICATIONS — native-first, web fallback
+   ============================================================ */
 
-    const ctx = new AudioContextClass();
-    if (ctx.state === 'suspended') {
-      ctx.resume();
-    }
-    const now = ctx.currentTime;
-    const targetSound = soundId || getSelectedAlertSound();
-
-    switch (targetSound) {
-      case 'crystal': {
-        // Serene Crystal Bell (A5 + overtone A6 + gentle 5th E6)
-        const notes = [
-          { freq: 880, gain: volume, decay: 0.6 },
-          { freq: 1760, gain: volume * 0.45, decay: 0.4 },
-          { freq: 1318.5, gain: volume * 0.25, decay: 0.5 },
-        ];
-        notes.forEach(({ freq, gain: g, decay }) => {
-          const osc = ctx.createOscillator();
-          const gainNode = ctx.createGain();
-          osc.type = 'sine';
-          osc.frequency.setValueAtTime(freq, now);
-          gainNode.gain.setValueAtTime(g, now);
-          gainNode.gain.exponentialRampToValueAtTime(0.0001, now + decay);
-          osc.connect(gainNode);
-          gainNode.connect(ctx.destination);
-          osc.start(now);
-          osc.stop(now + decay + 0.05);
-        });
-        break;
-      }
-
-      case 'modern': {
-        // Modern crisp ding / snappy sweep
-        const osc = ctx.createOscillator();
-        const gainNode = ctx.createGain();
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(640, now);
-        osc.frequency.exponentialRampToValueAtTime(1320, now + 0.08);
-        gainNode.gain.setValueAtTime(volume * 1.1, now);
-        gainNode.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
-        osc.connect(gainNode);
-        gainNode.connect(ctx.destination);
-        osc.start(now);
-        osc.stop(now + 0.25);
-        break;
-      }
-
-      case 'triumph': {
-        // Ascending major chord (C5, E5, G5, C6)
-        const chord = [523.25, 659.25, 783.99, 1046.5];
-        chord.forEach((freq, idx) => {
-          const osc = ctx.createOscillator();
-          const gainNode = ctx.createGain();
-          const start = now + idx * 0.07;
-          osc.type = 'triangle';
-          osc.frequency.setValueAtTime(freq, start);
-          gainNode.gain.setValueAtTime(volume * 0.85, start);
-          gainNode.gain.exponentialRampToValueAtTime(0.0001, start + 0.35);
-          osc.connect(gainNode);
-          gainNode.connect(ctx.destination);
-          osc.start(start);
-          osc.stop(start + 0.38);
-        });
-        break;
-      }
-
-      case 'marimba': {
-        // Warm acoustic marimba double-tap (wood attack + warm tone)
-        const strikes = [
-          { f: 440, delay: 0 },
-          { f: 554.37, delay: 0.1 },
-        ];
-        strikes.forEach(({ f, delay }) => {
-          const osc = ctx.createOscillator();
-          const gainNode = ctx.createGain();
-          const start = now + delay;
-          osc.type = 'triangle';
-          osc.frequency.setValueAtTime(f, start);
-          gainNode.gain.setValueAtTime(volume * 1.2, start);
-          gainNode.gain.exponentialRampToValueAtTime(0.0001, start + 0.25);
-          osc.connect(gainNode);
-          gainNode.connect(ctx.destination);
-          osc.start(start);
-          osc.stop(start + 0.28);
-        });
-        break;
-      }
-
-      case 'radar': {
-        // Dual smartwatch electronic ping
-        const pings = [
-          { freq: 950, start: now, dur: 0.07 },
-          { freq: 1250, start: now + 0.09, dur: 0.12 },
-        ];
-        pings.forEach(({ freq, start, dur }) => {
-          const osc = ctx.createOscillator();
-          const gainNode = ctx.createGain();
-          osc.type = 'sine';
-          osc.frequency.setValueAtTime(freq, start);
-          gainNode.gain.setValueAtTime(volume * 0.9, start);
-          gainNode.gain.exponentialRampToValueAtTime(0.0001, start + dur);
-          osc.connect(gainNode);
-          gainNode.connect(ctx.destination);
-          osc.start(start);
-          osc.stop(start + dur + 0.02);
-        });
-        break;
-      }
-
-      case 'classic': {
-        // Classic Desk Bell (Two harmonizing tones with long resonance)
-        const freqs = [1046.5, 783.99]; // C6 then G5
-        freqs.forEach((freq, idx) => {
-          const osc = ctx.createOscillator();
-          const gainNode = ctx.createGain();
-          const start = now + idx * 0.12;
-          osc.type = 'sine';
-          osc.frequency.setValueAtTime(freq, start);
-          gainNode.gain.setValueAtTime(volume, start);
-          gainNode.gain.exponentialRampToValueAtTime(0.0001, start + 0.5);
-          osc.connect(gainNode);
-          gainNode.connect(ctx.destination);
-          osc.start(start);
-          osc.stop(start + 0.52);
-        });
-        break;
-      }
-    }
-  } catch {
-    // AudioContext may be blocked before first user gesture
-  }
-}
-
-/**
- * Plays a pleasant audio cue when activating or releasing the push-to-talk microphone
- */
-export function playVoiceCue(mode: 'start' | 'stop' | 'success'): void {
-  try {
-    const AudioContextClass =
-      window.AudioContext ||
-      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    if (!AudioContextClass) return;
-
-    const ctx = new AudioContextClass();
-    if (ctx.state === 'suspended') {
-      ctx.resume();
-    }
-    const now = ctx.currentTime;
-
-    if (mode === 'start') {
-      // Crisp subtle double chirp (440Hz -> 880Hz)
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(520, now);
-      osc.frequency.exponentialRampToValueAtTime(880, now + 0.08);
-      gain.gain.setValueAtTime(0.12, now);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.1);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(now);
-      osc.stop(now + 0.11);
-    } else if (mode === 'stop') {
-      // Soft gentle tone (880Hz -> 520Hz)
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(880, now);
-      osc.frequency.exponentialRampToValueAtTime(520, now + 0.09);
-      gain.gain.setValueAtTime(0.1, now);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.11);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(now);
-      osc.stop(now + 0.12);
-    } else if (mode === 'success') {
-      // Warm chord confirmation
-      [659.25, 880].forEach((f, i) => {
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(f, now + i * 0.05);
-        gain.gain.setValueAtTime(0.12, now + i * 0.05);
-        gain.gain.exponentialRampToValueAtTime(0.0001, now + i * 0.05 + 0.2);
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.start(now + i * 0.05);
-        osc.stop(now + i * 0.05 + 0.22);
-      });
-    }
-  } catch {
-    // AudioContext blocked
-  }
-}
-
-/**
- * Backward compatibility wrapper that triggers audio alert
- */
-export function playAudioChime(type: 'beep' | 'success' | 'timer' = 'beep'): void {
-  if (type === 'success') {
-    playAudioAlert('triumph');
-  } else if (type === 'timer') {
-    playAudioAlert(undefined);
-  } else {
-    playAudioAlert(undefined);
-  }
-}
-
-/**
- * Checks if browser notifications are supported
- */
 export function isNotificationSupported(): boolean {
-  return typeof window !== 'undefined' && 'Notification' in window;
+  if (typeof window === 'undefined') return false;
+  if (Capacitor.isNativePlatform()) return true;
+  return 'Notification' in window;
 }
 
-/**
- * Request permission from user
- */
-export async function requestNotificationPermission(): Promise<NotificationPermission> {
-  if (!isNotificationSupported()) {
-    return 'denied';
+export function getNotificationPermissionStatus(): string {
+  if (Capacitor.isNativePlatform()) {
+    return typeof Notification !== 'undefined' ? Notification.permission : 'prompt';
   }
+  if (typeof Notification === 'undefined') return 'unsupported';
+  return Notification.permission;
+}
+
+export async function requestNotificationPermission(): Promise<string> {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      let perm = await LocalNotifications.checkPermissions();
+      if (perm.display !== 'granted') {
+        perm = await LocalNotifications.requestPermissions();
+      }
+      return perm.display === 'granted' ? 'granted' : 'denied';
+    } catch {
+      return 'denied';
+    }
+  }
+
+  if (typeof Notification === 'undefined') return 'unsupported';
+  if (Notification.permission === 'granted') return 'granted';
+  if (Notification.permission === 'denied') return 'denied';
   try {
-    const perm = await Notification.requestPermission();
-    return perm;
+    return await Notification.requestPermission();
   } catch {
     return 'denied';
   }
 }
 
-/**
- * Show a browser notification
- */
-export function sendBrowserNotification(title: string, options?: NotificationOptions): boolean {
-  if (!isNotificationSupported()) return false;
+export function sendBrowserNotification(
+  title: string,
+  options?: { body?: string }
+): boolean {
+  if (Capacitor.isNativePlatform()) {
+    (async () => {
+      try {
+        let perm = await LocalNotifications.checkPermissions();
+        if (perm.display !== 'granted') {
+          perm = await LocalNotifications.requestPermissions();
+          if (perm.display !== 'granted') return;
+        }
+        await LocalNotifications.schedule({
+          notifications: [
+            {
+              id: Math.floor(Math.random() * 1_000_000),
+              title,
+              body: options?.body ?? '',
+              schedule: { at: new Date(Date.now() + 200) },
+            },
+          ],
+        });
+      } catch { /* noop */ }
+    })();
+    return true;
+  }
 
-  if (Notification.permission === 'granted') {
+  if (typeof Notification === 'undefined') return false;
+  if (Notification.permission !== 'granted') return false;
+  try {
+    new Notification(title, { body: options?.body });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/* ============================================================
+   TEST NOTIFICATION HELPERS
+   ============================================================ */
+
+/**
+ * Schedule a test reminder that fires 5 seconds from now.
+ * Optionally pass a task so the notification's `extra.taskId`
+ * lets the app jump to it when tapped.
+ */
+export async function scheduleTestReminder(task?: Task | null): Promise<boolean> {
+  const FIRE_IN_SECONDS = 5;
+  const title = 'Task Priority · Test Reminder';
+  const body = task
+    ? `Tap to open "${task.title}" 🎯`
+    : 'If you see this, notifications are working. 🎯';
+
+  if (Capacitor.isNativePlatform()) {
     try {
-      new Notification(title, {
-        icon: '/pwa-192x192.png',
-        badge: '/apple-touch-icon.png',
-        ...options,
+      let perm = await LocalNotifications.checkPermissions();
+      if (perm.display !== 'granted') {
+        perm = await LocalNotifications.requestPermissions();
+      }
+      if (perm.display !== 'granted') return false;
+
+      await LocalNotifications.schedule({
+        notifications: [
+          {
+            id: Math.floor(Math.random() * 1_000_000),
+            title,
+            body,
+            schedule: { at: new Date(Date.now() + FIRE_IN_SECONDS * 1000) },
+            channelId: 'task-reminders-silent',
+            actionTypeId: 'TASK_ACTIONS',
+            extra: task
+              ? { taskId: task.id, quadrant: task.quadrant, type: 'test' }
+              : { type: 'test' },
+          },
+        ],
       });
       return true;
     } catch {
       return false;
     }
   }
-  return false;
+
+  if (typeof Notification === 'undefined') return false;
+  if (Notification.permission !== 'granted') {
+    try {
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') return false;
+    } catch {
+      return false;
+    }
+  }
+  try {
+    new Notification(title, { body });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-/**
- * Scans active tasks and returns those due today or overdue
- */
-export function getDueTasks(tasks: Task[]): Task[] {
-  const now = new Date();
-  const todayStr = now.toISOString().split('T')[0];
+export const scheduleTestNotification = scheduleTestReminder;
 
-  return tasks.filter((t) => {
-    if (t.status === 'completed') return false;
+/* ============================================================
+   NOTIFICATION ACTIONS
+   ============================================================ */
+
+export const TASK_ACTION_TYPE = 'TASK_ACTIONS';
+export const ACTION_SNOOZE = 'SNOOZE';
+export const ACTION_DONE = 'DONE';
+
+export function registerNotificationActions(): void {
+  if (!Capacitor.isNativePlatform()) return;
+  // Action registration is done via `actionTypeId` on individual notifications.
+  // This function exists as a safe no-op so App.tsx's useEffect calls don't break.
+}
+
+export async function snoozeTaskReminder(task: Task, minutes = 10): Promise<void> {
+  if (!Capacitor.isNativePlatform()) return;
+  try {
+    await LocalNotifications.schedule({
+      notifications: [
+        {
+          id: Math.floor(Math.random() * 1_000_000),
+          title: `⏰ Reminder: ${task.title}`,
+          body: `Snoozed for ${minutes} minutes.`,
+          schedule: { at: new Date(Date.now() + minutes * 60 * 1000) },
+          channelId: 'task-reminders-silent',
+          actionTypeId: TASK_ACTION_TYPE,
+          extra: { taskId: task.id, quadrant: task.quadrant },
+        },
+      ],
+    });
+  } catch { /* noop */ }
+}
+
+/* ============================================================
+   DUE-TASK HELPER
+   ============================================================ */
+
+export function getDueTasks(tasks: Task[]): Task[] {
+  const endOfToday = new Date();
+  endOfToday.setHours(23, 59, 59, 999);
+  const cutoff = endOfToday.getTime();
+
+  return tasks.filter((t: any) => {
+    if (t.completed || t.status === 'completed') return false;
     if (!t.dueDate) return false;
-    return t.dueDate <= todayStr;
+    const due = new Date(t.dueDate);
+    if (isNaN(due.getTime())) return false;
+    return due.getTime() <= cutoff;
   });
 }

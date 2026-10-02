@@ -8,7 +8,8 @@ export type UIDesign =
   | 'tarot'
   | 'hive'
   | 'vending'
-  | 'detective';
+  | 'detective'
+  | 'kanban';
 
 export const UI_DESIGNS: { id: UIDesign; name: string; desc: string; emoji: string }[] = [
   { id: 'classic',    name: 'Classic Matrix',   desc: 'Your current layout',  emoji: '◈' },
@@ -19,6 +20,7 @@ export const UI_DESIGNS: { id: UIDesign; name: string; desc: string; emoji: stri
   { id: 'hive',       name: 'Honeycomb Hive',   desc: 'Hex grid + bees',      emoji: '⬢' },
   { id: 'vending',    name: 'Vending Machine',  desc: 'Arcade dispenser',     emoji: '▮' },
   { id: 'detective',  name: 'Detective Board',  desc: 'Cork + red strings',   emoji: '📌' },
+  { id: 'kanban',     name: 'Priority Board',   desc: 'Drag between quadrants', emoji: '▥' },
 ];
 
 const STORAGE_KEY = 'taskflow_ui_design';

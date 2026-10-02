@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X } from 'lucide-react';
-import { Task, QuadrantId } from '../types';
+import { Task, QuadrantId, Subtask } from '../types';
 import { useLanguage } from '../context/LanguageContext';
 import { useStreak } from '../hooks/useStreak';
 import { useAchievements } from '../hooks/useAchievements';
@@ -16,6 +16,7 @@ interface PriorityMatrixViewProps {
   onToggleStatus: (taskId: string) => void;
   onDeleteTask?: (taskId: string) => void;
   onQuadrantSelect?: (q: QuadrantId) => void;
+  onUpdateSubtasks?: (taskId: string, nextSubtasks: Subtask[]) => void;
 }
 
 interface CategoryConfig {
@@ -62,9 +63,10 @@ export const PriorityMatrixView: React.FC<PriorityMatrixViewProps> = ({
   onToggleStatus,
   onDeleteTask,
   onQuadrantSelect,
+  onUpdateSubtasks,
 }) => {
+  const { t } = useLanguage();
   const completedTasks = tasks.filter((t) => t.status === 'completed').length;
-  // ✅ Read tier from HTML class (set by useDevicePerformance hook in App.tsx)
   const [tier, setTier] = useState<'low' | 'mid' | 'high'>('mid');
   useEffect(() => {
     const root = document.documentElement;
@@ -74,17 +76,16 @@ export const PriorityMatrixView: React.FC<PriorityMatrixViewProps> = ({
       return 'mid';
     };
     setTier(readTier());
-    // Re-check after 2 seconds (when FPS measurement finishes)
-    const t = setTimeout(() => setTier(readTier()), 2500);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setTier(readTier()), 2500);
+    return () => clearTimeout(timer);
   }, []);
   const isLow = tier === 'low';
   const [deletedTask, setDeletedTask] = useState<Task | null>(null);
   const [deletedTaskIndex, setDeletedTaskIndex] = useState<number>(-1);
-  const { t } = useLanguage();
   const streakData = useStreak(completedTasks);
   const { newlyUnlocked } = useAchievements(completedTasks, streakData.currentStreak);
   const [openQuadrant, setOpenQuadrant] = useState<QuadrantId | null>(null);
+  const [highlightedTaskId, setHighlightedTaskId] = useState<string | null>(null);
   const [pulseQuadrant, setPulseQuadrant] = useState<QuadrantId | null>(null);
   const prevCountsRef = useRef<Record<QuadrantId, number>>({
     do_first: 0, schedule: 0, delegate: 0, eliminate: 0,
@@ -94,7 +95,6 @@ export const PriorityMatrixView: React.FC<PriorityMatrixViewProps> = ({
   const victoryMsgRef = useRef<HTMLDivElement>(null);
 
   const totalTasks = tasks.length;
-
   const completionPct = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
 
   const quadrantTasks = (qId: QuadrantId) => tasks.filter((t) => t.quadrant === qId);
@@ -103,9 +103,7 @@ export const PriorityMatrixView: React.FC<PriorityMatrixViewProps> = ({
     quadrantTasks(qId).filter((t) => t.status === 'completed').length;
 
   useEffect(() => {
-    if (openQuadrant && onQuadrantSelect) {
-      onQuadrantSelect(openQuadrant);
-    }
+    if (openQuadrant && onQuadrantSelect) onQuadrantSelect(openQuadrant);
   }, [openQuadrant, onQuadrantSelect]);
 
   useEffect(() => {
@@ -119,6 +117,38 @@ export const PriorityMatrixView: React.FC<PriorityMatrixViewProps> = ({
       prevCountsRef.current[qId] = current;
     });
   }, [tasks]);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as
+        | { quadrant?: QuadrantId; taskId?: string }
+        | undefined;
+      if (!detail?.quadrant) return;
+      setOpenQuadrant(detail.quadrant);
+      if (detail.taskId) {
+        setHighlightedTaskId(detail.taskId);
+        setTimeout(() => setHighlightedTaskId(null), 5000);
+      }
+    };
+    window.addEventListener('open-quadrant', handler as EventListener);
+    return () => window.removeEventListener('open-quadrant', handler as EventListener);
+  }, []);
+
+  useEffect(() => {
+    if (!highlightedTaskId || !openQuadrant) return;
+    const timer = setTimeout(() => {
+      const el = document.querySelector(
+        `[data-task-id="${highlightedTaskId}"]`
+      ) as HTMLElement | null;
+      if (!el) return;
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.classList.add('ring-4', 'ring-amber-400', 'animate-pulse', 'rounded-2xl');
+      setTimeout(() => {
+        el.classList.remove('ring-4', 'ring-amber-400', 'animate-pulse', 'rounded-2xl');
+      }, 4000);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [highlightedTaskId, openQuadrant]);
 
   const appendFx = (el: HTMLDivElement, ttl: number) => {
     if (!fxLayerRef.current) return;
@@ -421,25 +451,6 @@ export const PriorityMatrixView: React.FC<PriorityMatrixViewProps> = ({
     } catch (e) {}
   };
 
-  const handleToggleSubtask = (taskId: string, subtaskId: string) => {
-    const saved = localStorage.getItem('taskflow_tasks_list');
-    if (!saved) return;
-    try {
-      const parsed = JSON.parse(saved);
-      const updated = parsed.map((t: Task) => {
-        if (t.id !== taskId) return t;
-        return {
-          ...t,
-          subtasks: (t.subtasks || []).map((s) =>
-            s.id === subtaskId ? { ...s, done: !s.done } : s
-          ),
-        };
-      });
-      localStorage.setItem('taskflow_tasks_list', JSON.stringify(updated));
-      window.dispatchEvent(new CustomEvent('tasks-updated'));
-    } catch (e) {}
-  };
-
   const handleDeleteWithUndo = (taskId: string) => {
     const index = tasks.findIndex((t) => t.id === taskId);
     const task = tasks[index];
@@ -488,7 +499,7 @@ export const PriorityMatrixView: React.FC<PriorityMatrixViewProps> = ({
       setTimeout(fireMegaVictory, 800);
     }
 
-        setTimeout(() => {
+    setTimeout(() => {
       onToggleStatus(taskId);
     }, 600);
   };
@@ -505,7 +516,7 @@ export const PriorityMatrixView: React.FC<PriorityMatrixViewProps> = ({
     <div className="relative w-full flex flex-col overflow-hidden" style={{ minHeight: 'calc(100dvh - 130px)' }}>
 
       <div className="absolute inset-0 pointer-events-none z-0 overflow-hidden" aria-hidden="true">
-     <div className="absolute inset-0 bg-gradient-to-b from-[#FDFBFF] via-[#F5F3FF] to-[#FDFBFF] dark:from-[#0F172A] dark:via-[#1E1B4B] dark:to-[#0F172A]" />
+        <div className="absolute inset-0 bg-gradient-to-b from-[#FDFBFF] via-[#F5F3FF] to-[#FDFBFF] dark:from-[#0F172A] dark:via-[#1E1B4B] dark:to-[#0F172A]" />
         <div className="absolute left-[-50%] w-[200%] h-[60px] opacity-35 blur-[8px]"
           style={{ top: '5%', background: 'linear-gradient(90deg, transparent, #8B5CF6, #6366F1, transparent)', transform: 'rotate(-12deg)', animation: 'prismFloat1 6s ease-in-out infinite' }} />
         <div className="absolute left-[-50%] w-[200%] h-[60px] opacity-35 blur-[8px]"
@@ -529,8 +540,8 @@ export const PriorityMatrixView: React.FC<PriorityMatrixViewProps> = ({
         <div className="flex-shrink-0 pt-4 pb-2 px-4 text-center">
           <div className="inline-flex items-center gap-1.5 rounded-full border border-violet-300/60 bg-white/80 dark:bg-slate-800/80 backdrop-blur-xl px-3 py-1">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" style={{ boxShadow: '0 0 8px #10B981' }} />
-            <span className="text-[9px] font-extrabold tracking-[2px] uppercase text-violet-600 dark:text-violet-300 dark:text-violet-300">
-              {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }).toUpperCase()}
+            <span className="text-[9px] font-extrabold tracking-[2px] uppercase text-violet-600 dark:text-violet-300">
+              {t('tab_matrix')}
             </span>
           </div>
           <h1 className="mt-3 text-[28px] font-extrabold tracking-tight text-slate-900 dark:text-white leading-none">
@@ -561,13 +572,13 @@ export const PriorityMatrixView: React.FC<PriorityMatrixViewProps> = ({
               <line x1="50" y1="50" x2="84" y2="84" stroke="url(#connGrad)" strokeWidth="0.3" strokeDasharray="1.2 1.2" style={{ animation: 'dashMove 3s linear infinite' }} />
             </svg>
 
-            <div className="absolute left-1/2 top-[8%] -translate-x-1/2 inline-flex items-center gap-1 rounded-full border border-violet-300/40 dark:border-violet-500/40 dark:border-violet-500/40 bg-white/90 dark:bg-slate-800/90 dark:bg-slate-800/90 dark:bg-slate-800/90 backdrop-blur-md px-2.5 py-1 z-10 whitespace-nowrap">
+            <div className="absolute left-1/2 top-[8%] -translate-x-1/2 inline-flex items-center gap-1 rounded-full border border-violet-300/40 dark:border-violet-500/40 bg-white/90 dark:bg-slate-800/90 backdrop-blur-md px-2.5 py-1 z-10 whitespace-nowrap">
               <span className="w-1 h-1 rounded-full bg-violet-600" />
-              <span className="text-[8px] font-extrabold text-violet-600 dark:text-violet-300 dark:text-violet-300 tracking-wider">{t('streak_label')} · {streakData.currentStreak}{t('streak_days')} 🔥</span>
+              <span className="text-[8px] font-extrabold text-violet-600 dark:text-violet-300 tracking-wider">{t('streak_label')} · {streakData.currentStreak}{t('streak_days')} 🔥</span>
             </div>
-            <div className="absolute left-1/2 bottom-[8%] -translate-x-1/2 inline-flex items-center gap-1 rounded-full border border-violet-300/40 dark:border-violet-500/40 dark:border-violet-500/40 bg-white/90 dark:bg-slate-800/90 dark:bg-slate-800/90 backdrop-blur-md px-2.5 py-1 z-10 whitespace-nowrap">
+            <div className="absolute left-1/2 bottom-[8%] -translate-x-1/2 inline-flex items-center gap-1 rounded-full border border-violet-300/40 dark:border-violet-500/40 bg-white/90 dark:bg-slate-800/90 backdrop-blur-md px-2.5 py-1 z-10 whitespace-nowrap">
               <span className="w-1 h-1 rounded-full bg-emerald-500" />
-              <span className="text-[8px] font-extrabold text-violet-600 dark:text-violet-300 dark:text-violet-300 tracking-wider">{completedTasks} {t('done_today')}</span>
+              <span className="text-[8px] font-extrabold text-violet-600 dark:text-violet-300 tracking-wider">{completedTasks} {t('done_today')}</span>
             </div>
 
             <motion.div
@@ -575,12 +586,12 @@ export const PriorityMatrixView: React.FC<PriorityMatrixViewProps> = ({
               initial={isLow ? false : { scale: 0.95 }}
               animate={{ scale: 1 }}
               transition={isLow ? { duration: 0 } : { type: 'spring', stiffness: 300, damping: 20 }}
-             className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full flex flex-col items-center justify-center z-10 bg-white/95 dark:bg-slate-800/95 backdrop-blur-xl"
-              style={{ width: '40%', aspectRatio: '1',boxShadow: '0 12px 32px rgba(15,23,42,0.08), 0 0 0 1px rgba(255,255,255,0.8)' }}
+              className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full flex flex-col items-center justify-center z-10 bg-white/95 dark:bg-slate-800/95 backdrop-blur-xl"
+              style={{ width: '40%', aspectRatio: '1', boxShadow: '0 12px 32px rgba(15,23,42,0.08), 0 0 0 1px rgba(255,255,255,0.8)' }}
             >
               <span className="text-[8px] font-extrabold tracking-[2.5px] text-slate-900 dark:text-white uppercase">{t('total')}</span>
-                              <motion.span
-              key={totalTasks}
+              <motion.span
+                key={totalTasks}
                 initial={isLow ? false : { scale: 1.4, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
                 transition={isLow ? { duration: 0 } : { type: 'spring', stiffness: 500, damping: 15 }}
@@ -622,7 +633,7 @@ export const PriorityMatrixView: React.FC<PriorityMatrixViewProps> = ({
                   whileTap={isLow ? undefined : { scale: 0.97 }}
                   animate={isLow ? { scale: 1 } : (isPulsing ? { scale: [1, 1.12, 1] } : { scale: 1 })}
                   transition={isLow ? { duration: 0 } : (isPulsing ? { duration: 0.7, ease: 'easeInOut' } : { type: 'spring', stiffness: 400, damping: 25 })}
-                 className={`absolute ${positions[quadrantId]} z-[8] text-left rounded-2xl bg-white/95 dark:bg-slate-800/95 dark:bg-slate-800/95 backdrop-blur-xl p-2.5`}
+                  className={`absolute ${positions[quadrantId]} z-[8] text-left rtl:text-right rounded-2xl bg-white/95 dark:bg-slate-800/95 backdrop-blur-xl p-2.5`}
                   style={{
                     width: '30%', maxWidth: '130px',
                     boxShadow: isPulsing ? `0 12px 40px ${config.color}66, 0 0 0 12px ${config.color}22` : '0 12px 32px rgba(139,92,246,0.15), 0 0 0 1px rgba(255,255,255,0.8)',
@@ -721,18 +732,19 @@ export const PriorityMatrixView: React.FC<PriorityMatrixViewProps> = ({
                 ) : (
                   <div className="flex flex-col gap-2">
                     {currentTasks.map((task) => (
-                      <SwipeableTaskItem
-                        key={task.id}
-                        task={task}
-                        categoryColor={currentCfg.color}
-                        categoryLight={currentCfg.colorLight}
-                        categoryPale={currentCfg.colorPale}
-                        categoryGradient={currentCfg.gradient}
-                        onComplete={(id) => handleTaskDestroy(id, openQuadrant)}
-                        onDelete={(id) => handleDeleteWithUndo(id)}
-                        onTogglePin={handleTogglePin}
-                        onToggleSubtask={handleToggleSubtask}
-                      />
+                      <div key={task.id} data-task-id={task.id}>
+                        <SwipeableTaskItem
+                          task={task}
+                          categoryColor={currentCfg.color}
+                          categoryLight={currentCfg.colorLight}
+                          categoryPale={currentCfg.colorPale}
+                          categoryGradient={currentCfg.gradient}
+                          onComplete={(id) => handleTaskDestroy(id, openQuadrant)}
+                          onDelete={(id) => handleDeleteWithUndo(id)}
+                          onTogglePin={handleTogglePin}
+                          onUpdateSubtasks={onUpdateSubtasks}
+                        />
+                      </div>
                     ))}
                   </div>
                 )}

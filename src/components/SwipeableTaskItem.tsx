@@ -1,7 +1,8 @@
 import React, { useRef, useState } from 'react';
 import { motion, useMotionValue, useTransform } from 'framer-motion';
 import { CheckCircle2, Pin, PinOff, ChevronDown, ChevronUp } from 'lucide-react';
-import { Task } from '../types';
+import { Task, Subtask } from '../types';
+import { SubtaskList } from './SubtaskList';
 
 interface SwipeableTaskItemProps {
   task: Task;
@@ -12,7 +13,8 @@ interface SwipeableTaskItemProps {
   onComplete: (taskId: string) => void;
   onDelete: (taskId: string) => void;
   onTogglePin: (taskId: string) => void;
-  onToggleSubtask: (taskId: string, subtaskId: string) => void;
+  /** NEW — writes the updated nested subtask tree back to App state */
+  onUpdateSubtasks?: (taskId: string, nextSubtasks: Subtask[]) => void;
 }
 
 const SWIPE_THRESHOLD = 100;
@@ -26,7 +28,7 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
   onComplete,
   onDelete,
   onTogglePin,
-  onToggleSubtask,
+  onUpdateSubtasks,
 }) => {
   const x = useMotionValue(0);
   const rotate = useTransform(x, [-200, 200], [-6, 6]);
@@ -52,7 +54,7 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
       isDragging.current = false;
       return;
     }
-    if (subtasks.length > 0) {
+    if (subtasks.length > 0 || onUpdateSubtasks) {
       setShowSubtasks((prev) => !prev);
     }
   };
@@ -127,14 +129,16 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
                 {task.pinned && <Pin size={12} className="text-amber-500 fill-amber-500 shrink-0" />}
               </div>
 
-              {subtasks.length > 0 && (
+              {(subtasks.length > 0 || onUpdateSubtasks) && (
                 <div className="flex items-center gap-2 mt-1.5">
-                  <span
-                    className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold"
-                    style={{ background: categoryPale, color: categoryColor }}
-                  >
-                    📋 {doneSubtasks} / {subtasks.length}
-                  </span>
+                  {subtasks.length > 0 && (
+                    <span
+                      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold"
+                      style={{ background: categoryPale, color: categoryColor }}
+                    >
+                      📋 {doneSubtasks} / {subtasks.length}
+                    </span>
+                  )}
                   {showSubtasks ? (
                     <ChevronUp size={12} className="text-slate-400" />
                   ) : (
@@ -143,35 +147,15 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({
                 </div>
               )}
 
-              {showSubtasks && subtasks.length > 0 && (
-                <div className="mt-3 pt-3 border-t border-dashed border-slate-200 flex flex-col gap-1.5">
-                  {subtasks.map((sub) => (
-                    <button
-                      key={sub.id}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onToggleSubtask(task.id, sub.id);
-                      }}
-                      className="flex items-center gap-2 text-left"
-                    >
-                      <span
-                        className="w-3.5 h-3.5 rounded flex items-center justify-center text-white text-[9px] shrink-0"
-                        style={{
-                          background: sub.done ? '#10B981' : 'transparent',
-                          border: sub.done ? 'none' : '1.5px solid #CBD5E1',
-                        }}
-                      >
-                        {sub.done && '✓'}
-                      </span>
-                      <span
-                        className={`text-xs font-medium ${
-                          sub.done ? 'text-slate-400 line-through' : 'text-slate-600'
-                        }`}
-                      >
-                        {sub.title}
-                      </span>
-                    </button>
-                  ))}
+              {showSubtasks && onUpdateSubtasks && (
+                <div
+                  className="mt-3 pt-3 border-t border-dashed border-slate-200"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <SubtaskList
+                    subtasks={subtasks}
+                    onChange={(next) => onUpdateSubtasks(task.id, next)}
+                  />
                 </div>
               )}
             </div>

@@ -1,9 +1,10 @@
-import { useLanguage } from '../context/LanguageContext';
 import React, { useState, useEffect, useRef } from 'react';
 import { Play, Pause, RotateCcw, CheckCircle2, X, Minimize2, Maximize2, Flame, Bell } from 'lucide-react';
 import { Task } from '../types';
 import { triggerHaptic } from '../utils/haptics';
 import { playAudioChime, sendBrowserNotification } from '../utils/notifications';
+import { useLanguage } from '../context/LanguageContext';
+import { logSession, emitPomodoroCompleted } from '../utils/pomodoroHistory';
 
 interface FocusTimerWidgetProps {
   isOpen: boolean;
@@ -12,7 +13,15 @@ interface FocusTimerWidgetProps {
   onCompleteTask?: (taskId: string) => void;
 }
 
-type TimerPreset = 25 | 50 | 5 | 0; // 0 = stopwatch mode
+type TimerPreset = 25 | 50 | 5 | 0;
+
+type LocalLang = 'en' | 'fr' | 'ar';
+
+const LOCAL: Record<LocalLang, { engine: string; min: string }> = {
+  en: { engine: 'Interval Engine', min: 'm' },
+  fr: { engine: 'Moteur d’intervalles', min: 'min' },
+  ar: { engine: 'محرك الفواصل', min: 'د' },
+};
 
 export const FocusTimerWidget: React.FC<FocusTimerWidgetProps> = ({
   isOpen,
@@ -20,7 +29,10 @@ export const FocusTimerWidget: React.FC<FocusTimerWidgetProps> = ({
   activeTask,
   onCompleteTask,
 }) => {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
+  const lang = (language as LocalLang) || 'en';
+  const local = LOCAL[lang];
+
   const [selectedPreset, setSelectedPreset] = useState<TimerPreset>(25);
   const [secondsLeft, setSecondsLeft] = useState<number>(25 * 60);
   const [stopwatchSeconds, setStopwatchSeconds] = useState<number>(0);
@@ -28,7 +40,10 @@ export const FocusTimerWidget: React.FC<FocusTimerWidgetProps> = ({
   const [isMinimized, setIsMinimized] = useState<boolean>(false);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Initialize or change preset
+  const sessionStartRef = useRef<Date | null>(null);
+  const sessionLoggedRef = useRef<boolean>(false);
+  const wasRunningRef = useRef<boolean>(false);
+
   const handleSelectPreset = (minutes: TimerPreset) => {
     setIsRunning(false);
     setSelectedPreset(minutes);
@@ -40,15 +55,12 @@ export const FocusTimerWidget: React.FC<FocusTimerWidgetProps> = ({
     triggerHaptic('light');
   };
 
-  // Timer Tick
   useEffect(() => {
     if (isRunning) {
       intervalRef.current = setInterval(() => {
         if (selectedPreset === 0) {
-          // Stopwatch mode: counts up
           setStopwatchSeconds((prev) => prev + 1);
         } else {
-          // Countdown mode
           setSecondsLeft((prev) => {
             if (prev <= 1) {
               clearInterval(intervalRef.current!);
@@ -57,8 +69,8 @@ export const FocusTimerWidget: React.FC<FocusTimerWidgetProps> = ({
               playAudioChime('timer');
 
               const taskTitle = activeTask ? activeTask.title : t('timer_focus_session');
-              sendBrowserNotification('Focus Interval Complete! 🎉', {
-                body: `Great job on: ${taskTitle}. Take a short break or start the next task!`,
+              sendBrowserNotification(t('timer_focus_session'), {
+                body: taskTitle,
               });
 
               return 0;
@@ -68,17 +80,71 @@ export const FocusTimerWidget: React.FC<FocusTimerWidgetProps> = ({
         }
       }, 1000);
     } else {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
+      if (intervalRef.current) clearInterval(intervalRef.current);
     }
-
     return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
+      if (intervalRef.current) clearInterval(intervalRef.current);
     };
   }, [isRunning, selectedPreset, activeTask, t]);
+
+  useEffect(() => {
+    if (selectedPreset === 0) return;
+    if (secondsLeft !== 0) return;
+    if (sessionLoggedRef.current) return;
+    if (!sessionStartRef.current) return;
+
+    const startedAt = sessionStartRef.current;
+    const minutes = selectedPreset;
+
+    logSession({
+      id: `pomo_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      taskId: activeTask?.id,
+      taskTitle: activeTask?.title ?? t('timer_focus_session'),
+      minutes,
+      completed: true,
+      startedAt: startedAt.toISOString(),
+      endedAt: new Date().toISOString(),
+    });
+    emitPomodoroCompleted(minutes, true);
+
+    sessionLoggedRef.current = true;
+    sessionStartRef.current = null;
+    // eslint-disable-next-line
+  }, [secondsLeft, selectedPreset]);
+
+  useEffect(() => {
+    if (isRunning && !wasRunningRef.current) {
+      sessionStartRef.current = new Date();
+      sessionLoggedRef.current = false;
+      wasRunningRef.current = true;
+      return;
+    }
+    if (!isRunning && wasRunningRef.current) {
+      wasRunningRef.current = false;
+      if (sessionLoggedRef.current) {
+        sessionStartRef.current = null;
+        return;
+      }
+      if (sessionStartRef.current) {
+        const elapsedMs = Date.now() - sessionStartRef.current.getTime();
+        const mins = Math.round(elapsedMs / 60000);
+        if (mins >= 1) {
+          logSession({
+            id: `pomo_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            taskId: activeTask?.id,
+            taskTitle: activeTask?.title ?? t('timer_focus_session'),
+            minutes: mins,
+            completed: false,
+            startedAt: sessionStartRef.current.toISOString(),
+            endedAt: new Date().toISOString(),
+          });
+          emitPomodoroCompleted(mins, false);
+        }
+        sessionStartRef.current = null;
+      }
+    }
+    // eslint-disable-next-line
+  }, [isRunning]);
 
   if (!isOpen) return null;
 
@@ -97,9 +163,7 @@ export const FocusTimerWidget: React.FC<FocusTimerWidgetProps> = ({
 
   const toggleRun = () => {
     triggerHaptic(isRunning ? 'medium' : 'success');
-    if (!isRunning) {
-      playAudioChime('beep');
-    }
+    if (!isRunning) playAudioChime('beep');
     setIsRunning((prev) => !prev);
   };
 
@@ -122,7 +186,6 @@ export const FocusTimerWidget: React.FC<FocusTimerWidgetProps> = ({
     }
   };
 
-  // Minimized Floating Pill View
   if (isMinimized) {
     return (
       <div
@@ -133,10 +196,7 @@ export const FocusTimerWidget: React.FC<FocusTimerWidgetProps> = ({
         <span className={`w-2 h-2 rounded-full ${isRunning ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
         <span className="font-mono text-xs font-bold">{displayTime}</span>
         <button
-          onClick={(e) => {
-            e.stopPropagation();
-            toggleRun();
-          }}
+          onClick={(e) => { e.stopPropagation(); toggleRun(); }}
           className="p-1 hover:bg-slate-800 rounded-full transition"
         >
           {isRunning ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5 fill-current" />}
@@ -146,14 +206,12 @@ export const FocusTimerWidget: React.FC<FocusTimerWidgetProps> = ({
     );
   }
 
-  // Expanded View Modal
   return (
     <div
       id="focus-timer-modal"
       className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-150"
     >
       <div className="w-full max-w-sm rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-150">
-        {/* Header */}
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-100 dark:border-slate-800">
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">
@@ -164,7 +222,7 @@ export const FocusTimerWidget: React.FC<FocusTimerWidgetProps> = ({
                 {t('timer_focus_session')}
               </h3>
               <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
-                {t('timer_pomodoro')} · Interval Engine
+                {t('timer_pomodoro')} · {local.engine}
               </p>
             </div>
           </div>
@@ -173,23 +231,19 @@ export const FocusTimerWidget: React.FC<FocusTimerWidgetProps> = ({
             <button
               onClick={() => setIsMinimized(true)}
               className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
-              title="Minimize to floating pill"
             >
               <Minimize2 className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={onClose}
               className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
-              title="Close"
             >
               <X className="w-4 h-4" />
             </button>
           </div>
         </div>
 
-        {/* Body */}
         <div className="p-5 text-center space-y-4">
-          {/* Active Task Name if present */}
           {activeTask ? (
             <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 text-left rtl:text-right">
               <div className="text-[10px] uppercase font-bold text-indigo-600 dark:text-indigo-400 tracking-wider">
@@ -205,7 +259,6 @@ export const FocusTimerWidget: React.FC<FocusTimerWidgetProps> = ({
             </div>
           )}
 
-          {/* Preset Buttons */}
           <div className="flex items-center justify-center gap-1.5 bg-slate-100 dark:bg-slate-800 p-1 rounded-2xl text-xs font-medium">
             <button
               onClick={() => handleSelectPreset(25)}
@@ -215,7 +268,7 @@ export const FocusTimerWidget: React.FC<FocusTimerWidgetProps> = ({
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
               }`}
             >
-              25m
+              25{local.min}
             </button>
             <button
               onClick={() => handleSelectPreset(50)}
@@ -225,7 +278,7 @@ export const FocusTimerWidget: React.FC<FocusTimerWidgetProps> = ({
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
               }`}
             >
-              50m
+              50{local.min}
             </button>
             <button
               onClick={() => handleSelectPreset(5)}
@@ -235,7 +288,7 @@ export const FocusTimerWidget: React.FC<FocusTimerWidgetProps> = ({
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
               }`}
             >
-              5m
+              5{local.min}
             </button>
             <button
               onClick={() => handleSelectPreset(0)}
@@ -249,7 +302,6 @@ export const FocusTimerWidget: React.FC<FocusTimerWidgetProps> = ({
             </button>
           </div>
 
-          {/* Big Digital Display */}
           <div className="py-3 flex flex-col items-center justify-center">
             <div className="relative flex items-center justify-center">
               <div className="text-5xl font-mono font-bold tracking-tight text-slate-900 dark:text-white">
@@ -267,7 +319,6 @@ export const FocusTimerWidget: React.FC<FocusTimerWidgetProps> = ({
             )}
           </div>
 
-          {/* Primary Controls */}
           <div className="flex items-center justify-center gap-3 pt-1">
             <button
               onClick={handleReset}
@@ -302,7 +353,7 @@ export const FocusTimerWidget: React.FC<FocusTimerWidgetProps> = ({
               <button
                 onClick={handleMarkDone}
                 className="p-3 rounded-2xl bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/60 dark:hover:bg-emerald-900/60 text-emerald-600 dark:text-emerald-400 transition cursor-pointer"
-                title="Mark Task as Done"
+                title={t('card_mark_complete')}
               >
                 <CheckCircle2 className="w-5 h-5" />
               </button>
@@ -310,17 +361,13 @@ export const FocusTimerWidget: React.FC<FocusTimerWidgetProps> = ({
           </div>
         </div>
 
-        {/* Footer info */}
         <div className="px-5 py-2.5 bg-slate-50 dark:bg-slate-800/40 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
           <span className="flex items-center gap-1">
             <Bell className="w-3 h-3 text-indigo-500" />
             <span>{t('settings_tab_notifications')}</span>
           </span>
           <button
-            onClick={() => {
-              triggerHaptic('light');
-              playAudioChime('timer');
-            }}
+            onClick={() => { triggerHaptic('light'); playAudioChime('timer'); }}
             className="text-indigo-600 dark:text-indigo-400 font-medium hover:underline cursor-pointer"
           >
             {t('settings_sound_title')}

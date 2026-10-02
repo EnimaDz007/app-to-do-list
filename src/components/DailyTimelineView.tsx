@@ -10,12 +10,25 @@ interface DailyTimelineViewProps {
   onToggleStatus: (taskId: string) => void;
 }
 
+type LocalLang = 'en' | 'fr' | 'ar';
+
+const COPY: Record<LocalLang, {
+  minSuffix: string;
+  slotHours: string[];
+}> = {
+  en: { minSuffix: 'm', slotHours: ['08:00 AM','09:00 AM','10:30 AM','11:30 AM','01:00 PM','02:00 PM','03:30 PM','04:30 PM'] },
+  fr: { minSuffix: 'min', slotHours: ['08:00','09:00','10:30','11:30','13:00','14:00','15:30','16:30'] },
+  ar: { minSuffix: 'د', slotHours: ['٠٨:٠٠ ص','٠٩:٠٠ ص','١٠:٣٠ ص','١١:٣٠ ص','٠١:٠٠ م','٠٢:٠٠ م','٠٣:٣٠ م','٠٤:٣٠ م'] },
+};
+
 export const DailyTimelineView: React.FC<DailyTimelineViewProps> = ({
   tasks,
   onToggleStatus,
 }) => {
-  const { t, isRTL } = useLanguage();
-  // Focus Timer state (25 minutes = 1500 seconds)
+  const { t, isRTL, language } = useLanguage();
+  const lang = (language as LocalLang) || 'en';
+  const copy = COPY[lang] ?? COPY.en;
+
   const [timerSeconds, setTimerSeconds] = useState(25 * 60);
   const [isRunning, setIsRunning] = useState(false);
   const [activeTimerTask, setActiveTimerTask] = useState<Task | null>(
@@ -47,23 +60,26 @@ export const DailyTimelineView: React.FC<DailyTimelineViewProps> = ({
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // 8 AM to 5 PM hourly blocks
-  const timeSlots: { hour: string; labelKey: TranslationKey }[] = [
-    { hour: '08:00 AM', labelKey: 'timeline_slot_morning' },
-    { hour: '09:00 AM', labelKey: 'timeline_slot_deepwork' },
-    { hour: '10:30 AM', labelKey: 'timeline_slot_tactical' },
-    { hour: '11:30 AM', labelKey: 'timeline_slot_tactical' },
-    { hour: '01:00 PM', labelKey: 'timeline_slot_lunch' },
-    { hour: '02:00 PM', labelKey: 'timeline_slot_deepwork' },
-    { hour: '03:30 PM', labelKey: 'timeline_slot_admin' },
-    { hour: '04:30 PM', labelKey: 'timeline_slot_evening' },
+  const slotLabelKeys: TranslationKey[] = [
+    'timeline_slot_morning',
+    'timeline_slot_deepwork',
+    'timeline_slot_tactical',
+    'timeline_slot_tactical',
+    'timeline_slot_lunch',
+    'timeline_slot_deepwork',
+    'timeline_slot_admin',
+    'timeline_slot_evening',
   ];
+
+  const timeSlots = copy.slotHours.map((hour, i) => ({
+    hour,
+    labelKey: slotLabelKeys[i],
+  }));
 
   const completedCount = tasks.filter((t) => t.status === 'completed').length;
 
   return (
     <div id="daily-timeline-view" className="space-y-4 pb-4">
-      {/* Interactive Mobile Focus Timer Widget */}
       <div className="rounded-2xl bg-gradient-to-br from-indigo-900/90 via-indigo-950 to-slate-900 dark:from-indigo-950/70 dark:via-slate-900 dark:to-slate-900 border border-indigo-500/30 p-4 shadow-lg text-slate-100">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -122,7 +138,6 @@ export const DailyTimelineView: React.FC<DailyTimelineViewProps> = ({
         </div>
       </div>
 
-      {/* Hourly Timeline Schedule */}
       <div className="rounded-2xl bg-white/80 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 shadow-xs">
         <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
           <div className="flex items-center gap-2">
@@ -143,12 +158,10 @@ export const DailyTimelineView: React.FC<DailyTimelineViewProps> = ({
 
             return (
               <div key={slot.hour} className="relative flex items-start gap-3 text-base">
-                {/* Time label */}
-                <div className="w-12 text-base font-mono text-slate-500 dark:text-slate-400 pt-1 shrink-0 text-right rtl:text-left">
-                  {slot.hour.split(' ')[0]}
+                <div className="w-14 text-base font-mono text-slate-500 dark:text-slate-400 pt-1 shrink-0 text-right rtl:text-left">
+                  {slot.hour}
                 </div>
 
-                {/* Node indicator */}
                 <div
                   className={`w-3 h-3 rounded-full mt-1.5 shrink-0 border-2 transition z-10 ${
                     isDone
@@ -157,7 +170,6 @@ export const DailyTimelineView: React.FC<DailyTimelineViewProps> = ({
                   }`}
                 />
 
-                {/* Slot Card */}
                 <div
                   onClick={() => {
                     if (assignedTask) {
@@ -204,7 +216,7 @@ export const DailyTimelineView: React.FC<DailyTimelineViewProps> = ({
                         <span className="px-1.5 py-0.2 rounded bg-slate-200 dark:bg-slate-700/60 font-medium text-slate-700 dark:text-slate-300">
                           {t(`cat_${assignedTask.category}` as TranslationKey) || assignedTask.category}
                         </span>
-                        <span>{assignedTask.estimatedMinutes}m {t('timeline_est_suffix')}</span>
+                        <span>{assignedTask.estimatedMinutes}{copy.minSuffix} {t('timeline_est_suffix')}</span>
                       </div>
                     </div>
                   ) : (

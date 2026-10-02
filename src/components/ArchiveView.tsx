@@ -10,12 +10,70 @@ interface ArchiveViewProps {
   onDelete: (taskId: string) => void;
 }
 
+type LocalLang = 'en' | 'fr' | 'ar';
+
+const COPY: Record<LocalLang, {
+  locale: string;
+  badge: string;
+  yourLabel: string;   // "Your"
+  archiveWord: string; // italic word
+  totalDone: string;
+  thisWeek: string;
+  avgPerDay: string;
+  emptyTitle: string;
+  emptyDesc: string;
+  restore: string;
+  deleteForever: string;
+}> = {
+  en: {
+    locale: 'en-US',
+    badge: 'ARCHIVE',
+    yourLabel: 'Your',
+    archiveWord: 'archive',
+    totalDone: 'Total Done',
+    thisWeek: 'This Week',
+    avgPerDay: 'Avg / Day',
+    emptyTitle: 'No archived tasks yet',
+    emptyDesc: 'Completed tasks will appear here',
+    restore: 'Restore',
+    deleteForever: 'Delete forever',
+  },
+  fr: {
+    locale: 'fr-FR',
+    badge: 'ARCHIVES',
+    yourLabel: 'Vos',
+    archiveWord: 'archives',
+    totalDone: 'Total terminées',
+    thisWeek: 'Cette semaine',
+    avgPerDay: 'Moy. / jour',
+    emptyTitle: 'Aucune tâche archivée',
+    emptyDesc: 'Les tâches terminées apparaîtront ici',
+    restore: 'Restaurer',
+    deleteForever: 'Supprimer définitivement',
+  },
+  ar: {
+    locale: 'ar-EG',
+    badge: 'الأرشيف',
+    yourLabel: 'أرشيفك',
+    archiveWord: '',
+    totalDone: 'إجمالي المنجزة',
+    thisWeek: 'هذا الأسبوع',
+    avgPerDay: 'المعدل / يوم',
+    emptyTitle: 'لا توجد مهام مؤرشفة بعد',
+    emptyDesc: 'ستظهر المهام المكتملة هنا',
+    restore: 'استعادة',
+    deleteForever: 'حذف نهائي',
+  },
+};
+
 export const ArchiveView: React.FC<ArchiveViewProps> = ({
   tasks,
   onRestore,
   onDelete,
 }) => {
-  const { t } = useLanguage();
+  const { language } = useLanguage();
+  const lang = (language as LocalLang) || 'en';
+  const copy = COPY[lang] ?? COPY.en;
 
   const archivedTasks = tasks.filter((task) => task.archivedAt);
   const thisWeekTasks = archivedTasks.filter((task) => {
@@ -33,23 +91,28 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
       <div className="px-6 pt-6 pb-4 text-center">
         <div className="inline-flex items-center gap-1.5 rounded-full border border-violet-300/60 dark:border-violet-500/40 bg-white/80 dark:bg-slate-800/80 backdrop-blur-xl px-3 py-1">
           <span className="text-[9px] font-extrabold tracking-[2px] uppercase text-violet-600 dark:text-violet-300">
-            {t('tab_archive') || 'ARCHIVE'}
+            {copy.badge}
           </span>
         </div>
         <h1 className="mt-3 text-[28px] font-extrabold tracking-tight text-slate-900 dark:text-white leading-none">
-          Your{' '}
-          <em
-            className="font-normal italic"
-            style={{
-              fontFamily: "'Instrument Serif', serif",
-              background: 'linear-gradient(135deg, #7C3AED, #6366F1)',
-              WebkitBackgroundClip: 'text',
-              WebkitTextFillColor: 'transparent',
-              backgroundClip: 'text',
-            }}
-          >
-            archive
-          </em>
+          {copy.yourLabel}
+          {copy.archiveWord && (
+            <>
+              {' '}
+              <em
+                className="font-normal italic"
+                style={{
+                  fontFamily: "'Instrument Serif', serif",
+                  background: 'linear-gradient(135deg, #7C3AED, #6366F1)',
+                  WebkitBackgroundClip: 'text',
+                  WebkitTextFillColor: 'transparent',
+                  backgroundClip: 'text',
+                }}
+              >
+                {copy.archiveWord}
+              </em>
+            </>
+          )}
         </h1>
       </div>
 
@@ -61,7 +124,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
               {archivedTasks.length}
             </div>
             <div className="text-[9px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider mt-1">
-              Total Done
+              {copy.totalDone}
             </div>
           </div>
           <div className="flex-1 rounded-2xl bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 shadow-sm p-3 text-center">
@@ -69,7 +132,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
               {thisWeekTasks.length}
             </div>
             <div className="text-[9px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider mt-1">
-              This Week
+              {copy.thisWeek}
             </div>
           </div>
           <div className="flex-1 rounded-2xl bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 shadow-sm p-3 text-center">
@@ -77,7 +140,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
               {avgPerDay}
             </div>
             <div className="text-[9px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider mt-1">
-              Avg / Day
+              {copy.avgPerDay}
             </div>
           </div>
         </div>
@@ -91,10 +154,10 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
               <Archive className="w-9 h-9 text-violet-400 dark:text-violet-500" />
             </div>
             <p className="text-sm font-semibold text-slate-500 dark:text-slate-400">
-              {t('archive_empty') || 'No archived tasks yet'}
+              {copy.emptyTitle}
             </p>
             <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">
-              {t('archive_empty_desc') || 'Completed tasks will appear here'}
+              {copy.emptyDesc}
             </p>
           </div>
         ) : (
@@ -107,7 +170,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
               })
               .map((task, idx) => {
                 const archivedDate = task.archivedAt
-                  ? new Date(task.archivedAt).toLocaleDateString(undefined, {
+                  ? new Date(task.archivedAt).toLocaleDateString(copy.locale, {
                       month: 'short',
                       day: 'numeric',
                       hour: '2-digit',
@@ -129,7 +192,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
                       </svg>
                     </div>
 
-                    <div className="flex-1 min-w-0">
+                    <div className="flex-1 min-w-0 text-start">
                       <div className="text-sm font-semibold text-slate-400 dark:text-slate-500 line-through truncate">
                         {task.title}
                       </div>
@@ -140,16 +203,16 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
 
                     <button
                       onClick={() => onRestore(task.id)}
-                      className="shrink-0 flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-violet-100 dark:hover:bg-violet-950/60 hover:text-violet-600 dark:hover:text-violet-300 transition-colors active:scale-90"
-                      title={t('archive_restore') || 'Restore'}
+                      className="shrink-0 flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-violet-100 dark:hover:bg-violet-950/60 hover:text-violet-600 dark:hover:text-violet-300 transition-colors active:scale-90 cursor-pointer"
+                      title={copy.restore}
                     >
                       <RotateCcw className="w-3.5 h-3.5" />
                     </button>
 
                     <button
                       onClick={() => onDelete(task.id)}
-                      className="shrink-0 flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-rose-100 dark:hover:bg-rose-950/60 hover:text-rose-600 dark:hover:text-rose-300 transition-colors active:scale-90"
-                      title={t('archive_delete') || 'Delete forever'}
+                      className="shrink-0 flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-rose-100 dark:hover:bg-rose-950/60 hover:text-rose-600 dark:hover:text-rose-300 transition-colors active:scale-90 cursor-pointer"
+                      title={copy.deleteForever}
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>

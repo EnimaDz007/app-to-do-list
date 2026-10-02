@@ -1,478 +1,693 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
-  Apple,
-  Smartphone,
-  Copy,
-  Check,
-  Download,
-  ExternalLink,
-  ShieldCheck,
-  Terminal,
-  FileCode,
-  Layers,
-  Sparkles,
-  Globe,
-  UploadCloud,
-  GitBranch,
+  Smartphone, Bell, BellOff, Database, Download, Check, Copy,
+  ChevronDown, ChevronUp, Activity, HardDrive, RefreshCw,
+  Settings as SettingsIcon, Calendar, Target, Trophy, Sparkles,
+  Terminal, Shield, AlertTriangle, Trash2,
 } from 'lucide-react';
+import { Capacitor } from '@capacitor/core';
 import { triggerHaptic } from '../utils/haptics';
+import { Task, Habit, HabitCheckIn, Milestone } from '../types';
 import { useLanguage } from '../context/LanguageContext';
+import {
+  getNotificationPermissionStatus,
+  playAudioChime,
+  scheduleTestReminder,
+  previewAlertSound,
+} from '../utils/notifications';
+import { exportTasksToJSON, exportTasksToCSV } from '../utils/dataTransfer';
+import { generateICS, downloadICS } from '../utils/calendarSync';
 
 interface NativePackagingHubProps {
+  tasks: Task[];
+  habits: Habit[];
+  checkIns: HabitCheckIn[];
+  milestones: Milestone[];
   onOpenInstallModal: () => void;
+  onOpenSettings: () => void;
 }
 
-export const NativePackagingHub: React.FC<NativePackagingHubProps> = ({ onOpenInstallModal }) => {
-  const { t } = useLanguage();
-  const [activePlatform, setActivePlatform] = useState<'ios' | 'android' | 'pwa' | 'vercel' | 'config'>('vercel');
-  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+type LocalLang = 'en' | 'fr' | 'ar';
 
-  const handleCopy = (text: string, key: string) => {
-    triggerHaptic('light');
-    navigator.clipboard.writeText(text);
-    setCopiedKey(key);
-    setTimeout(() => setCopiedKey(null), 2000);
-  };
-
-  const capacitorConfigCode = `import { CapacitorConfig } from '@capacitor/cli';
-
-const config: CapacitorConfig = {
-  appId: 'com.merakicreation.taskpriority',
-  appName: 'Task Priority',
-  webDir: 'dist',
-  server: {
-    androidScheme: 'https',
-    // In development or remote live update mode:
-    // url: 'https://meraki-creation-website-2.vercel.app',
-    // cleartext: false
+const COPY: Record<LocalLang, {
+  title: string;
+  subtitle: string;
+  refresh: string;
+  platform: string;
+  alerts: string;
+  storage: string;
+  tasks: string;
+  habits: string;
+  targets: string;
+  doneSuffix: string;
+  checkInsSuffix: string;
+  keysStoredSuffix: string;
+  quickActions: string;
+  testNotification: string;
+  testNotificationDesc: string;
+  testFired: string;
+  backupJson: string;
+  backupDesc: string;
+  exportIcs: string;
+  exportIcsDesc: string;
+  openSettings: string;
+  openSettingsDesc: string;
+  installTitle: string;
+  installDesc: string;
+  installBtn: string;
+  hardReloadTitle: string;
+  hardReloadDesc: string;
+  hardReloadBtn: string;
+  hardReloadBusy: string;
+  hardReloadConfirm: string;
+  buildRefTitle: string;
+  buildRefDesc: string;
+  buildIntroPrefix: string;
+  buildIntroSuffix: string;
+  android: string;
+  ios: string;
+  copied: string;
+  copy: string;
+  privacyBold: string;
+  privacyRest: string;
+  platformWeb: string;
+  platformIos: string;
+  platformAndroid: string;
+  permGranted: string;
+  permDenied: string;
+  permPrompt: string;
+}> = {
+  en: {
+    title: 'App Diagnostics',
+    subtitle: 'Live status of your device and data',
+    refresh: 'Refresh',
+    platform: 'Platform',
+    alerts: 'Alerts',
+    storage: 'Storage',
+    tasks: 'Tasks',
+    habits: 'Habits',
+    targets: 'Targets',
+    doneSuffix: '{n} done',
+    checkInsSuffix: '{n} check-ins',
+    keysStoredSuffix: '{n} keys stored',
+    quickActions: 'Quick Actions',
+    testNotification: 'Test notification',
+    testNotificationDesc: 'Fires in 5 seconds',
+    testFired: '⏱️ Notification in 5s — lock the phone to see it',
+    backupJson: 'Backup JSON',
+    backupDesc: 'Full data export',
+    exportIcs: 'Export .ics',
+    exportIcsDesc: 'Google Calendar',
+    openSettings: 'Open settings',
+    openSettingsDesc: 'All preferences',
+    installTitle: 'Install on this device',
+    installDesc: 'Add to home screen for full-screen mode',
+    installBtn: 'Install',
+    hardReloadTitle: 'Hard reload',
+    hardReloadDesc: 'Clears service worker cache & reloads',
+    hardReloadBtn: 'Reload',
+    hardReloadBusy: '…',
+    hardReloadConfirm: 'Reload the app? Unsaved changes will be lost.',
+    buildRefTitle: 'Build & package reference',
+    buildRefDesc: 'iOS & Android CLI commands',
+    buildIntroPrefix: 'These commands scaffold a native wrapper around the same web build. Change the domain in ',
+    buildIntroSuffix: ' to your own.',
+    android: '🤖 Android',
+    ios: '🍎 iOS',
+    copied: 'Copied',
+    copy: 'Copy',
+    privacyBold: '100% offline.',
+    privacyRest: ' All your tasks, habits, and milestones stay on this device. No accounts, no tracking.',
+    platformWeb: '🌐 Web',
+    platformIos: '🍎 iOS',
+    platformAndroid: '🤖 Android',
+    permGranted: 'Granted',
+    permDenied: 'Denied',
+    permPrompt: 'Not yet',
   },
-  plugins: {
-    SplashScreen: {
-      launchShowDuration: 2000,
-      backgroundColor: '#0f172a',
-      showSpinner: false,
-      androidSplashResourceName: 'splash',
-      iosSplashResourceName: 'Default',
-    },
-    StatusBar: {
-      style: 'dark',
-      backgroundColor: '#0f172a',
-    },
-    Haptics: {
-      enabled: true,
-    },
+  fr: {
+    title: 'Diagnostic de l’app',
+    subtitle: 'État en direct de votre appareil et de vos données',
+    refresh: 'Actualiser',
+    platform: 'Plateforme',
+    alerts: 'Alertes',
+    storage: 'Stockage',
+    tasks: 'Tâches',
+    habits: 'Habitudes',
+    targets: 'Objectifs',
+    doneSuffix: '{n} terminées',
+    checkInsSuffix: '{n} enregistrements',
+    keysStoredSuffix: '{n} clés stockées',
+    quickActions: 'Actions rapides',
+    testNotification: 'Tester la notification',
+    testNotificationDesc: 'Se déclenche dans 5 secondes',
+    testFired: '⏱️ Notification dans 5 s — verrouillez le téléphone pour la voir',
+    backupJson: 'Sauvegarde JSON',
+    backupDesc: 'Export complet des données',
+    exportIcs: 'Exporter .ics',
+    exportIcsDesc: 'Google Agenda',
+    openSettings: 'Ouvrir les paramètres',
+    openSettingsDesc: 'Toutes les préférences',
+    installTitle: 'Installer sur cet appareil',
+    installDesc: 'Ajouter à l’écran d’accueil pour le mode plein écran',
+    installBtn: 'Installer',
+    hardReloadTitle: 'Rechargement forcé',
+    hardReloadDesc: 'Vide le cache du service worker et recharge',
+    hardReloadBtn: 'Recharger',
+    hardReloadBusy: '…',
+    hardReloadConfirm: 'Recharger l’application ? Les modifications non enregistrées seront perdues.',
+    buildRefTitle: 'Référence build & packaging',
+    buildRefDesc: 'Commandes CLI iOS & Android',
+    buildIntroPrefix: 'Ces commandes génèrent un wrapper natif autour du même build web. Remplacez le domaine dans ',
+    buildIntroSuffix: ' par le vôtre.',
+    android: '🤖 Android',
+    ios: '🍎 iOS',
+    copied: 'Copié',
+    copy: 'Copier',
+    privacyBold: '100 % hors ligne.',
+    privacyRest: ' Toutes vos tâches, habitudes et jalons restent sur cet appareil. Aucun compte, aucun suivi.',
+    platformWeb: '🌐 Web',
+    platformIos: '🍎 iOS',
+    platformAndroid: '🤖 Android',
+    permGranted: 'Accordée',
+    permDenied: 'Refusée',
+    permPrompt: 'Pas encore',
+  },
+  ar: {
+    title: 'تشخيص التطبيق',
+    subtitle: 'حالة جهازك وبياناتك المباشرة',
+    refresh: 'تحديث',
+    platform: 'المنصة',
+    alerts: 'التنبيهات',
+    storage: 'التخزين',
+    tasks: 'المهام',
+    habits: 'العادات',
+    targets: 'الأهداف',
+    doneSuffix: '{n} منجزة',
+    checkInsSuffix: '{n} تسجيل',
+    keysStoredSuffix: '{n} مفتاح مخزّن',
+    quickActions: 'إجراءات سريعة',
+    testNotification: 'اختبار الإشعار',
+    testNotificationDesc: 'يُطلق خلال ٥ ثوانٍ',
+    testFired: '⏱️ إشعار خلال ٥ ثوانٍ — اقفل الهاتف لرؤيته',
+    backupJson: 'نسخة احتياطية JSON',
+    backupDesc: 'تصدير كامل للبيانات',
+    exportIcs: 'تصدير .ics',
+    exportIcsDesc: 'تقويم Google',
+    openSettings: 'فتح الإعدادات',
+    openSettingsDesc: 'جميع التفضيلات',
+    installTitle: 'تثبيت على هذا الجهاز',
+    installDesc: 'أضف إلى الشاشة الرئيسية لوضع ملء الشاشة',
+    installBtn: 'تثبيت',
+    hardReloadTitle: 'إعادة تحميل قوية',
+    hardReloadDesc: 'يمسح ذاكرة service worker ويعيد التحميل',
+    hardReloadBtn: 'إعادة تحميل',
+    hardReloadBusy: '…',
+    hardReloadConfirm: 'إعادة تحميل التطبيق؟ ستفقد التغييرات غير المحفوظة.',
+    buildRefTitle: 'مرجع البناء والتغليف',
+    buildRefDesc: 'أوامر iOS & Android CLI',
+    buildIntroPrefix: 'هذه الأوامر تُنشئ غلافاً أصلياً حول نفس بناء الويب. غيّر النطاق في ',
+    buildIntroSuffix: ' إلى نطاقك.',
+    android: '🤖 أندرويد',
+    ios: '🍎 iOS',
+    copied: 'تم النسخ',
+    copy: 'نسخ',
+    privacyBold: 'يعمل دون اتصال ١٠٠٪.',
+    privacyRest: ' تبقى كل مهامك وعاداتك وأهدافك على هذا الجهاز. لا حسابات، لا تتبّع.',
+    platformWeb: '🌐 ويب',
+    platformIos: '🍎 iOS',
+    platformAndroid: '🤖 أندرويد',
+    permGranted: 'ممنوح',
+    permDenied: 'مرفوض',
+    permPrompt: 'لم يُطلب بعد',
   },
 };
 
-export default config;`;
+function permLabel(status: string, copy: typeof COPY.en): string {
+  if (status === 'granted') return copy.permGranted;
+  if (status === 'denied') return copy.permDenied;
+  return copy.permPrompt;
+}
 
-  const iosCommands = `# 1. Install Capacitor iOS dependencies
-npm install @capacitor/core @capacitor/cli @capacitor/ios
-
-# 2. Initialize Capacitor project
-npx cap init "Task Priority" "com.merakicreation.taskpriority" --web-dir dist
-
-# 3. Build the production web bundle
+const BUILD_COMMANDS = {
+  android: `npm install @capacitor/core @capacitor/cli @capacitor/android
+npx cap init "Task Priority" "com.yourdomain.taskpriority" --web-dir dist
 npm run build
-
-# 4. Add the iOS native platform
-npx cap add ios
-
-# 5. Open Xcode to build, test on iPhone simulator & submit to App Store
-npx cap open ios`;
-
-  const androidCommands = `# 1. Install Capacitor Android dependencies
-npm install @capacitor/core @capacitor/cli @capacitor/android
-
-# 2. Initialize Capacitor project
-npx cap init "Task Priority" "com.merakicreation.taskpriority" --web-dir dist
-
-# 3. Build the production web bundle
-npm run build
-
-# 4. Add the Android native platform
 npx cap add android
+npx cap open android`,
+  ios: `npm install @capacitor/core @capacitor/cli @capacitor/ios
+npx cap init "Task Priority" "com.yourdomain.taskpriority" --web-dir dist
+npm run build
+npx cap add ios
+npx cap open ios`,
+};
 
-# 5. Open Android Studio to build APK / AAB for Google Play
-npx cap open android`;
+function getStorageSize(): { bytes: number; keys: number } {
+  let bytes = 0;
+  let keys = 0;
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k) continue;
+      const v = localStorage.getItem(k) || '';
+      bytes += k.length + v.length;
+      keys++;
+    }
+  } catch { /* noop */ }
+  return { bytes, keys };
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+export const NativePackagingHub: React.FC<NativePackagingHubProps> = ({
+  tasks,
+  habits,
+  checkIns,
+  milestones,
+  onOpenInstallModal,
+  onOpenSettings,
+}) => {
+  const { language } = useLanguage();
+  const lang = (language as LocalLang) || 'en';
+  const copy = COPY[lang] ?? COPY.en;
+
+  const [permStatus, setPermStatus] = useState<string>('prompt');
+  const [storage, setStorage] = useState<{ bytes: number; keys: number }>({ bytes: 0, keys: 0 });
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [showBuild, setShowBuild] = useState(false);
+  const [showAndroid, setShowAndroid] = useState(true);
+  const [testMsg, setTestMsg] = useState<string | null>(null);
+  const [clearing, setClearing] = useState(false);
+
+  const refresh = () => {
+    setPermStatus(getNotificationPermissionStatus());
+    setStorage(getStorageSize());
+  };
+
+  useEffect(() => {
+    refresh();
+    const id = setInterval(refresh, 3000);
+    return () => clearInterval(id);
+  }, []);
+
+  const platform = Capacitor.getPlatform();
+  const isNative = Capacitor.isNativePlatform();
+
+  const platformLabel =
+    platform === 'web' ? copy.platformWeb :
+    platform === 'ios' ? copy.platformIos :
+    copy.platformAndroid;
+
+  const activeTasks = tasks.filter((t) => t.status !== 'completed' && !t.archivedAt).length;
+  const doneTasks = tasks.filter((t) => t.status === 'completed').length;
+  const activeHabits = habits.filter((h) => !h.archivedAt).length;
+  const activeMilestones = milestones.filter((m) => !m.archivedAt).length;
+
+  const handleCopy = (text: string, key: string) => {
+    triggerHaptic('light');
+    try {
+      navigator.clipboard.writeText(text);
+      setCopiedKey(key);
+      setTimeout(() => setCopiedKey(null), 2000);
+    } catch { /* noop */ }
+  };
+
+  const handleTestNotification = () => {
+    triggerHaptic('medium');
+    previewAlertSound('chime');
+    const candidate = tasks.find(
+      (t) => t.quadrant === 'do_first' && t.status !== 'completed' && !t.archivedAt
+    );
+    scheduleTestReminder(candidate || null);
+    setTestMsg(copy.testFired);
+    setTimeout(() => setTestMsg(null), 5000);
+  };
+
+  const handleExportAll = () => {
+    triggerHaptic('success');
+    try {
+      exportTasksToJSON(tasks);
+      playAudioChime('success');
+    } catch { /* noop */ }
+  };
+
+  const handleExportICS = () => {
+    triggerHaptic('success');
+    try {
+      const content = generateICS(tasks);
+      downloadICS(content, 'task-priority.ics');
+      playAudioChime('beep');
+    } catch { /* noop */ }
+  };
+
+  const handleHardReload = async () => {
+    if (!window.confirm(copy.hardReloadConfirm)) return;
+    triggerHaptic('medium');
+    setClearing(true);
+    try {
+      if ('serviceWorker' in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map((r) => r.update().catch(() => {})));
+      }
+    } catch { /* noop */ }
+    setTimeout(() => {
+      window.location.reload();
+    }, 300);
+  };
 
   return (
-    <div id="native-packaging-hub" className="space-y-4 pb-6">
-      {/* Header Banner */}
-      <div className="rounded-2xl bg-gradient-to-br from-indigo-900/80 via-slate-900 to-slate-900 border border-indigo-500/30 p-4 shadow-md text-slate-100">
+    <div id="app-diagnostics" className="space-y-3.5 pb-6">
+
+      {/* ===== Status Card ===== */}
+      <div className="rounded-2xl bg-gradient-to-br from-slate-900 via-slate-900 to-indigo-950 border border-slate-800 p-4 shadow-md text-slate-100">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-indigo-600/30 border border-indigo-500/40 flex items-center justify-center text-indigo-400 shrink-0">
-            <Smartphone className="w-5 h-5" />
+            <Activity className="w-5 h-5" />
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h3 className="text-sm sm:text-base font-semibold text-white">
-                {t('hub_title')}
-              </h3>
-              <span className="px-1.5 py-0.2 rounded text-[10px] bg-emerald-500/20 text-emerald-400 font-medium">
-                Production Ready
-              </span>
-            </div>
-            <p className="text-xs text-slate-300 mt-0.5">
-              {t('hub_subtitle')}
+          <div className="flex-1 min-w-0 text-start">
+            <h3 className="text-sm font-bold text-white">{copy.title}</h3>
+            <p className="text-[11px] text-slate-400 mt-0.5">
+              {copy.subtitle}
             </p>
           </div>
+          <button
+            onClick={() => { refresh(); triggerHaptic('light'); }}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+            title={copy.refresh}
+          >
+            <RefreshCw className="w-4 h-4" />
+          </button>
         </div>
 
-        <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-2 pt-3 border-t border-slate-800 text-xs">
-          <div className="bg-slate-950/40 rounded-lg p-2 border border-slate-800/80">
-            <div className="text-[10px] text-slate-400 uppercase font-mono">App ID</div>
-            <div className="font-mono text-slate-200 text-[11px] truncate">com.merakicreation.taskpriority</div>
+        <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+          <div className="bg-slate-950/60 rounded-lg p-2 border border-slate-800/80">
+            <div className="text-[9px] text-slate-500 uppercase font-mono tracking-wider">{copy.platform}</div>
+            <div className="text-slate-200 text-[11px] font-semibold mt-0.5">
+              {platformLabel}
+            </div>
           </div>
-          <div className="bg-slate-950/40 rounded-lg p-2 border border-slate-800/80">
-            <div className="text-[10px] text-slate-400 uppercase font-mono">Container</div>
-            <div className="text-slate-200 text-[11px]">Capacitor 6.x + PWA</div>
+          <div className="bg-slate-950/60 rounded-lg p-2 border border-slate-800/80">
+            <div className="text-[9px] text-slate-500 uppercase font-mono tracking-wider">{copy.alerts}</div>
+            <div className={`text-[11px] font-semibold mt-0.5 flex items-center gap-1 ${
+              permStatus === 'granted' ? 'text-emerald-400' :
+              permStatus === 'denied' ? 'text-rose-400' : 'text-amber-400'
+            }`}>
+              {permStatus === 'granted' ? <Bell className="w-3 h-3" /> : <BellOff className="w-3 h-3" />}
+              <span>{permLabel(permStatus, copy)}</span>
+            </div>
           </div>
-          <div className="bg-slate-950/40 rounded-lg p-2 border border-slate-800/80">
-            <div className="text-[10px] text-slate-400 uppercase font-mono">iOS Target</div>
-            <div className="text-slate-200 text-[11px]">iOS 14.0+ (Xcode 15+)</div>
-          </div>
-          <div className="bg-slate-950/40 rounded-lg p-2 border border-slate-800/80">
-            <div className="text-[10px] text-slate-400 uppercase font-mono">Android Target</div>
-            <div className="text-slate-200 text-[11px]">API 24+ (Android 7 - 15)</div>
+          <div className="bg-slate-950/60 rounded-lg p-2 border border-slate-800/80">
+            <div className="text-[9px] text-slate-500 uppercase font-mono tracking-wider">{copy.storage}</div>
+            <div className="text-slate-200 text-[11px] font-semibold mt-0.5 flex items-center gap-1">
+              <HardDrive className="w-3 h-3 text-indigo-400" />
+              {formatBytes(storage.bytes)}
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Navigation Pills */}
-      <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5 text-xs">
-        <button
-          id="btn-tab-ios"
-          onClick={() => {
-            triggerHaptic('light');
-            setActivePlatform('ios');
-          }}
-          className={`flex items-center gap-1.5 px-3 py-2 rounded-xl transition cursor-pointer font-medium whitespace-nowrap ${
-            activePlatform === 'ios'
-              ? 'bg-indigo-600 text-white shadow-xs'
-              : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-          }`}
-        >
-          <Apple className="w-4 h-4" />
-          <span>{t('hub_tab_ios')}</span>
-        </button>
+      {/* ===== Data Summary ===== */}
+      <div className="grid grid-cols-3 gap-2">
+        <div className="p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+          <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+            <Sparkles className="w-3 h-3" />
+            {copy.tasks}
+          </div>
+          <div className="mt-1 text-xl font-black text-slate-900 dark:text-white leading-none">
+            {activeTasks}
+          </div>
+          <div className="text-[10px] text-slate-400 mt-1">
+            {copy.doneSuffix.replace('{n}', String(doneTasks))}
+          </div>
+        </div>
 
-        <button
-          id="btn-tab-android"
-          onClick={() => {
-            triggerHaptic('light');
-            setActivePlatform('android');
-          }}
-          className={`flex items-center gap-1.5 px-3 py-2 rounded-xl transition cursor-pointer font-medium whitespace-nowrap ${
-            activePlatform === 'android'
-              ? 'bg-indigo-600 text-white shadow-xs'
-              : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-          }`}
-        >
-          <Smartphone className="w-4 h-4" />
-          <span>{t('hub_tab_android')}</span>
-        </button>
+        <div className="p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+          <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+            <Target className="w-3 h-3" />
+            {copy.habits}
+          </div>
+          <div className="mt-1 text-xl font-black text-slate-900 dark:text-white leading-none">
+            {activeHabits}
+          </div>
+          <div className="text-[10px] text-slate-400 mt-1">
+            {copy.checkInsSuffix.replace('{n}', String(checkIns.length))}
+          </div>
+        </div>
 
-        <button
-          id="btn-tab-pwa"
-          onClick={() => {
-            triggerHaptic('light');
-            setActivePlatform('pwa');
-          }}
-          className={`flex items-center gap-1.5 px-3 py-2 rounded-xl transition cursor-pointer font-medium whitespace-nowrap ${
-            activePlatform === 'pwa'
-              ? 'bg-indigo-600 text-white shadow-xs'
-              : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-          }`}
-        >
-          <Layers className="w-4 h-4" />
-          <span>{t('hub_tab_pwa')}</span>
-        </button>
-
-        <button
-          id="btn-tab-vercel"
-          onClick={() => {
-            triggerHaptic('light');
-            setActivePlatform('vercel');
-          }}
-          className={`flex items-center gap-1.5 px-3 py-2 rounded-xl transition cursor-pointer font-medium whitespace-nowrap ${
-            activePlatform === 'vercel'
-              ? 'bg-indigo-600 text-white shadow-xs'
-              : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-          }`}
-        >
-          <Globe className="w-4 h-4" />
-          <span>{t('hub_tab_vercel')}</span>
-        </button>
-
-        <button
-          id="btn-tab-config"
-          onClick={() => {
-            triggerHaptic('light');
-            setActivePlatform('config');
-          }}
-          className={`flex items-center gap-1.5 px-3 py-2 rounded-xl transition cursor-pointer font-medium whitespace-nowrap ${
-            activePlatform === 'config'
-              ? 'bg-indigo-600 text-white shadow-xs'
-              : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-          }`}
-        >
-          <FileCode className="w-4 h-4" />
-          <span>{t('hub_tab_config')}</span>
-        </button>
+        <div className="p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+          <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+            <Trophy className="w-3 h-3" />
+            {copy.targets}
+          </div>
+          <div className="mt-1 text-xl font-black text-slate-900 dark:text-white leading-none">
+            {activeMilestones}
+          </div>
+          <div className="text-[10px] text-slate-400 mt-1">
+            {copy.keysStoredSuffix.replace('{n}', String(storage.keys))}
+          </div>
+        </div>
       </div>
 
-      {/* Platform Content: iOS */}
-      {activePlatform === 'ios' && (
-        <div className="space-y-4 text-slate-800 dark:text-slate-200 animate-in fade-in duration-150">
-          <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 space-y-3 shadow-xs">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Apple className="w-5 h-5 text-slate-900 dark:text-white" />
-                <h4 className="text-sm font-semibold text-slate-900 dark:text-white">iOS Native App Build Steps</h4>
+      {/* ===== Quick Actions ===== */}
+      <div className="p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3">
+        <h4 className="text-[11px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500 text-start">
+          {copy.quickActions}
+        </h4>
+
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            onClick={handleTestNotification}
+            className="flex items-center gap-2 p-3 rounded-xl bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/40 dark:hover:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-900/60 text-start transition cursor-pointer"
+          >
+            <div className="w-8 h-8 rounded-lg bg-indigo-500 text-white flex items-center justify-center shrink-0">
+              <Bell className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <div className="text-[11px] font-bold text-indigo-900 dark:text-indigo-200 leading-tight">
+                {copy.testNotification}
               </div>
-              <button
-                onClick={() => handleCopy(iosCommands, 'ios-cli')}
-                className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-xs text-indigo-600 dark:text-indigo-400 font-medium transition cursor-pointer"
-              >
-                {copiedKey === 'ios-cli' ? <Check className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                <span>{copiedKey === 'ios-cli' ? 'Copied!' : 'Copy Commands'}</span>
-              </button>
+              <div className="text-[10px] text-indigo-600 dark:text-indigo-400 truncate">
+                {copy.testNotificationDesc}
+              </div>
             </div>
+          </button>
 
-            <div className="relative rounded-xl bg-slate-950 p-3 font-mono text-xs text-indigo-300 overflow-x-auto border border-slate-800/80">
-              <pre>{iosCommands}</pre>
+          <button
+            onClick={handleExportAll}
+            className="flex items-center gap-2 p-3 rounded-xl bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:hover:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-900/60 text-start transition cursor-pointer"
+          >
+            <div className="w-8 h-8 rounded-lg bg-emerald-500 text-white flex items-center justify-center shrink-0">
+              <Download className="w-4 h-4" />
             </div>
+            <div className="min-w-0">
+              <div className="text-[11px] font-bold text-emerald-900 dark:text-emerald-200 leading-tight">
+                {copy.backupJson}
+              </div>
+              <div className="text-[10px] text-emerald-600 dark:text-emerald-400 truncate">
+                {copy.backupDesc}
+              </div>
+            </div>
+          </button>
 
-            <div className="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-2">
-              <div className="text-xs font-semibold text-slate-900 dark:text-white">Apple App Store Approval Guidelines:</div>
-              <ul className="text-xs text-slate-600 dark:text-slate-400 space-y-1.5">
-                <li className="flex items-start gap-2">
-                  <ShieldCheck className="w-4 h-4 text-emerald-500 dark:text-emerald-400 shrink-0 mt-0.5" />
-                  <span><strong>Guideline 4.2 Minimum Functionality:</strong> Passed. The app features local offline caching, tactile haptic feedback, customizable time-blocks, and interactive matrix gestures.</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <ShieldCheck className="w-4 h-4 text-emerald-500 dark:text-emerald-400 shrink-0 mt-0.5" />
-                  <span><strong>Safe Areas & Notch:</strong> Full support for Dynamic Island and Home Bar indicators using CSS <code className="text-indigo-600 dark:text-indigo-300">viewport-fit=cover</code>.</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <ShieldCheck className="w-4 h-4 text-emerald-500 dark:text-emerald-400 shrink-0 mt-0.5" />
-                  <span><strong>App Store Icon:</strong> 180x180 and 1024x1024 generated and included in assets.</span>
-                </li>
-              </ul>
+          <button
+            onClick={handleExportICS}
+            className="flex items-center gap-2 p-3 rounded-xl bg-sky-50 hover:bg-sky-100 dark:bg-sky-950/40 dark:hover:bg-sky-950/60 border border-sky-200 dark:border-sky-900/60 text-start transition cursor-pointer"
+          >
+            <div className="w-8 h-8 rounded-lg bg-sky-500 text-white flex items-center justify-center shrink-0">
+              <Calendar className="w-4 h-4" />
             </div>
+            <div className="min-w-0">
+              <div className="text-[11px] font-bold text-sky-900 dark:text-sky-200 leading-tight">
+                {copy.exportIcs}
+              </div>
+              <div className="text-[10px] text-sky-600 dark:text-sky-400 truncate">
+                {copy.exportIcsDesc}
+              </div>
+            </div>
+          </button>
+
+          <button
+            onClick={() => { triggerHaptic('light'); onOpenSettings(); }}
+            className="flex items-center gap-2 p-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800/60 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700 text-start transition cursor-pointer"
+          >
+            <div className="w-8 h-8 rounded-lg bg-slate-700 dark:bg-slate-600 text-white flex items-center justify-center shrink-0">
+              <SettingsIcon className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <div className="text-[11px] font-bold text-slate-900 dark:text-slate-200 leading-tight">
+                {copy.openSettings}
+              </div>
+              <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
+                {copy.openSettingsDesc}
+              </div>
+            </div>
+          </button>
+        </div>
+
+        {testMsg && (
+          <div className="p-2.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 text-[11px] flex items-center gap-2">
+            <Bell className="w-3.5 h-3.5 shrink-0" />
+            <span>{testMsg}</span>
+          </div>
+        )}
+      </div>
+
+      {/* ===== PWA Install (only when applicable) ===== */}
+      {!isNative && (
+        <div className="p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-2">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-violet-500 text-white flex items-center justify-center shrink-0">
+              <Smartphone className="w-4 h-4" />
+            </div>
+            <div className="flex-1 min-w-0 text-start">
+              <h4 className="text-[12px] font-bold text-slate-900 dark:text-white">
+                {copy.installTitle}
+              </h4>
+              <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                {copy.installDesc}
+              </p>
+            </div>
+            <button
+              onClick={() => { triggerHaptic('medium'); onOpenInstallModal(); }}
+              className="px-2.5 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-[11px] font-bold transition cursor-pointer shrink-0"
+            >
+              {copy.installBtn}
+            </button>
           </div>
         </div>
       )}
 
-      {/* Platform Content: Android */}
-      {activePlatform === 'android' && (
-        <div className="space-y-4 text-slate-800 dark:text-slate-200 animate-in fade-in duration-150">
-          <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 space-y-3 shadow-xs">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Smartphone className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
-                <h4 className="text-sm font-semibold text-slate-900 dark:text-white">Android Google Play Build Steps</h4>
+      {/* ===== Safety ===== */}
+      <div className="p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-2">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded-lg bg-amber-500 text-white flex items-center justify-center shrink-0">
+            <AlertTriangle className="w-4 h-4" />
+          </div>
+          <div className="flex-1 min-w-0 text-start">
+            <h4 className="text-[12px] font-bold text-slate-900 dark:text-white">
+              {copy.hardReloadTitle}
+            </h4>
+            <p className="text-[10px] text-slate-500 dark:text-slate-400">
+              {copy.hardReloadDesc}
+            </p>
+          </div>
+          <button
+            onClick={handleHardReload}
+            disabled={clearing}
+            className="px-2.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-60 text-white text-[11px] font-bold transition cursor-pointer shrink-0"
+          >
+            {clearing ? copy.hardReloadBusy : copy.hardReloadBtn}
+          </button>
+        </div>
+      </div>
+
+      {/* ===== Build Reference (collapsed) ===== */}
+      <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 overflow-hidden">
+        <button
+          onClick={() => { triggerHaptic('light'); setShowBuild((v) => !v); }}
+          className="w-full flex items-center justify-between p-3.5 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition cursor-pointer"
+        >
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-slate-900 dark:bg-slate-800 text-slate-100 flex items-center justify-center shrink-0">
+              <Terminal className="w-4 h-4" />
+            </div>
+            <div className="text-start">
+              <div className="text-[12px] font-bold text-slate-900 dark:text-white">
+                {copy.buildRefTitle}
               </div>
-              <button
-                onClick={() => handleCopy(androidCommands, 'android-cli')}
-                className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-xs text-indigo-600 dark:text-indigo-400 font-medium transition cursor-pointer"
-              >
-                {copiedKey === 'android-cli' ? <Check className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                <span>{copiedKey === 'android-cli' ? 'Copied!' : 'Copy Commands'}</span>
-              </button>
-            </div>
-
-            <div className="relative rounded-xl bg-slate-950 p-3 font-mono text-xs text-emerald-300 overflow-x-auto border border-slate-800/80">
-              <pre>{androidCommands}</pre>
-            </div>
-
-            <div className="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-2">
-              <div className="text-xs font-semibold text-slate-900 dark:text-white">Google Play Store Submission Checklist:</div>
-              <ul className="text-xs text-slate-600 dark:text-slate-400 space-y-1.5">
-                <li className="flex items-start gap-2">
-                  <ShieldCheck className="w-4 h-4 text-emerald-500 dark:text-emerald-400 shrink-0 mt-0.5" />
-                  <span><strong>Target SDK:</strong> Supports Android API 34+ (modern Android requirements).</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <ShieldCheck className="w-4 h-4 text-emerald-500 dark:text-emerald-400 shrink-0 mt-0.5" />
-                  <span><strong>Adaptive & Maskable Icons:</strong> Android safe-zone 512x512 maskable icon included.</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <ShieldCheck className="w-4 h-4 text-emerald-500 dark:text-emerald-400 shrink-0 mt-0.5" />
-                  <span><strong>Format:</strong> Generates Android App Bundle (.aab) with automatic dynamic feature optimization.</span>
-                </li>
-              </ul>
+              <div className="text-[10px] text-slate-500 dark:text-slate-400">
+                {copy.buildRefDesc}
+              </div>
             </div>
           </div>
-        </div>
-      )}
+          {showBuild ? (
+            <ChevronUp className="w-4 h-4 text-slate-400" />
+          ) : (
+            <ChevronDown className="w-4 h-4 text-slate-400" />
+          )}
+        </button>
 
-      {/* Platform Content: PWA & TWA */}
-      {activePlatform === 'pwa' && (
-        <div className="space-y-4 text-slate-800 dark:text-slate-200 animate-in fade-in duration-150">
-          <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 space-y-3 shadow-xs">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Layers className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
-                <h4 className="text-sm font-semibold text-slate-900 dark:text-white">Progressive Web App (PWA) & TWA</h4>
-              </div>
-              <button
-                onClick={onOpenInstallModal}
-                className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition cursor-pointer flex items-center gap-1.5"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>Test Install Prompt</span>
-              </button>
-            </div>
-
-            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-              Your website is already equipped with a full Web App Manifest, Service Worker, and offline caching. Users can install it directly without App Store fees, or you can package it into Google Play using Trusted Web Activities (TWA).
+        {showBuild && (
+          <div className="px-3.5 pb-3.5 space-y-3 border-t border-slate-100 dark:border-slate-800">
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 pt-3 leading-relaxed text-start">
+              {copy.buildIntroPrefix}
+              <code className="text-indigo-600 dark:text-indigo-400">appId</code>
+              {copy.buildIntroSuffix}
             </p>
 
-            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 space-y-2 text-xs">
-              <div className="font-semibold text-slate-900 dark:text-white flex items-center gap-1.5">
-                <Sparkles className="w-4 h-4 text-amber-500 dark:text-amber-400" />
-                <span>Publish to Stores with PWABuilder (No Code)</span>
-              </div>
-              <p className="text-slate-600 dark:text-slate-400 text-[11px] leading-relaxed">
-                Microsoft PWABuilder can automatically wrap your live URL <code className="text-indigo-600 dark:text-indigo-300">https://meraki-creation-website-2.vercel.app</code> into ready-to-publish Google Play and iOS packages.
-              </p>
-              <a
-                href="https://www.pwabuilder.com"
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1.5 text-indigo-600 dark:text-indigo-400 hover:text-indigo-500 dark:hover:text-indigo-300 text-xs font-medium pt-1"
-              >
-                <span>Open PWABuilder Tool</span>
-                <ExternalLink className="w-3.5 h-3.5" />
-              </a>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Platform Content: Vercel Web Deployment */}
-      {activePlatform === 'vercel' && (
-        <div className="space-y-4 text-slate-800 dark:text-slate-200 animate-in fade-in duration-150">
-          <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 space-y-4 shadow-xs">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
-              <div className="flex items-center gap-2">
-                <Globe className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
-                <div>
-                  <h4 className="text-sm font-semibold text-slate-900 dark:text-white">
-                    Live Production Target
-                  </h4>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                    Your Vercel deployment website
-                  </p>
-                </div>
-              </div>
-              <a
-                href="https://meraki-creation-website-2.vercel.app"
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/40 text-xs font-medium transition cursor-pointer"
-              >
-                <span>Visit Site</span>
-                <ExternalLink className="w-3.5 h-3.5" />
-              </a>
-            </div>
-
-            {/* Target URL highlight card */}
-            <div className="p-3 rounded-xl bg-slate-950 text-slate-200 font-mono text-xs flex items-center justify-between border border-slate-800">
-              <div className="truncate text-indigo-300">
-                https://meraki-creation-website-2.vercel.app
-              </div>
+            {/* Android */}
+            <div className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
               <button
-                onClick={() => handleCopy('https://meraki-creation-website-2.vercel.app', 'vercel-url')}
-                className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition shrink-0 ml-2 cursor-pointer"
-                title="Copy URL"
+                onClick={() => { triggerHaptic('light'); setShowAndroid(true); }}
+                className={`w-full flex items-center justify-between px-3 py-2 text-[11px] font-bold transition cursor-pointer ${
+                  showAndroid
+                    ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300'
+                    : 'bg-slate-50 dark:bg-slate-800/60 text-slate-600 dark:text-slate-300'
+                }`}
               >
-                {copiedKey === 'vercel-url' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-              </button>
-            </div>
-
-            {/* Step 1: Automatic sync via GitHub */}
-            <div className="space-y-2 text-xs">
-              <div className="font-semibold text-slate-900 dark:text-white flex items-center gap-1.5">
-                <GitBranch className="w-4 h-4 text-emerald-500" />
-                <span>Method 1: Automatic Deploy via GitHub (Recommended)</span>
-              </div>
-              <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
-                If your Vercel project is linked to your GitHub repository:
-              </p>
-              <ol className="list-decimal list-inside space-y-1.5 text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-800/60 p-3 rounded-xl border border-slate-200 dark:border-slate-800">
-                <li>In Google AI Studio, click the project menu in the top bar and select <strong>Export to GitHub</strong> (or download the ZIP).</li>
-                <li>Push the updated files (including the newly generated <code className="text-indigo-600 dark:text-indigo-400">manifest.json</code> and <code className="text-indigo-600 dark:text-indigo-400">vercel.json</code>) to your repository branch.</li>
-                <li>Vercel will detect the new commit and automatically trigger an instant production build and deployment to <strong className="text-slate-900 dark:text-white">https://meraki-creation-website-2.vercel.app</strong>.</li>
-              </ol>
-            </div>
-
-            {/* Step 2: Vercel CLI */}
-            <div className="space-y-2 text-xs pt-2 border-t border-slate-200 dark:border-slate-800">
-              <div className="flex items-center justify-between">
-                <div className="font-semibold text-slate-900 dark:text-white flex items-center gap-1.5">
-                  <UploadCloud className="w-4 h-4 text-indigo-500" />
-                  <span>Method 2: Direct Deploy via Vercel CLI</span>
-                </div>
+                <span>{copy.android}</span>
                 <button
-                  onClick={() => handleCopy('npx vercel --prod', 'vercel-cli')}
-                  className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-[11px] text-indigo-600 dark:text-indigo-400 font-medium transition cursor-pointer"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleCopy(BUILD_COMMANDS.android, 'android-cmd');
+                  }}
+                  className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-white/60 dark:bg-slate-900/60 hover:bg-white dark:hover:bg-slate-900 transition cursor-pointer"
                 >
-                  {copiedKey === 'vercel-cli' ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
-                  <span>{copiedKey === 'vercel-cli' ? 'Copied!' : 'Copy Command'}</span>
+                  {copiedKey === 'android-cmd' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                  {copiedKey === 'android-cmd' ? copy.copied : copy.copy}
                 </button>
-              </div>
-              <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
-                Run this command in your local project folder to deploy directly to production:
-              </p>
-              <div className="rounded-xl bg-slate-950 p-3 font-mono text-xs text-indigo-300 border border-slate-800">
-                npx vercel --prod
-              </div>
-            </div>
-
-            {/* Pre-configured features */}
-            <div className="p-3 rounded-xl bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-200/60 dark:border-indigo-800/60 space-y-1.5 text-xs text-slate-700 dark:text-slate-300">
-              <div className="font-semibold text-indigo-950 dark:text-indigo-200 flex items-center gap-1.5">
-                <ShieldCheck className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                <span>Ready for Vercel</span>
-              </div>
-              <ul className="list-disc list-inside space-y-0.5 text-[11px] text-slate-600 dark:text-slate-400">
-                <li><strong className="text-slate-800 dark:text-slate-200">vercel.json</strong> created with clean SPA routing rewrites</li>
-                <li><strong className="text-slate-800 dark:text-slate-200">Web App Manifest (manifest.json)</strong> with icons & shortcuts configured</li>
-                <li><strong className="text-slate-800 dark:text-slate-200">Service Worker (sw.js)</strong> with offline caching headers configured</li>
-                <li><strong className="text-slate-800 dark:text-slate-200">dist/</strong> production bundle successfully built and validated</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Platform Content: Config */}
-      {activePlatform === 'config' && (
-        <div className="space-y-4 text-slate-800 dark:text-slate-200 animate-in fade-in duration-150">
-          <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 space-y-3 shadow-xs">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <FileCode className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
-                <h4 className="text-sm font-semibold text-slate-900 dark:text-white">capacitor.config.ts</h4>
-              </div>
-              <button
-                onClick={() => handleCopy(capacitorConfigCode, 'config-ts')}
-                className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-xs text-indigo-600 dark:text-indigo-400 font-medium transition cursor-pointer"
-              >
-                {copiedKey === 'config-ts' ? <Check className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                <span>{copiedKey === 'config-ts' ? 'Copied!' : 'Copy Config'}</span>
               </button>
+              {showAndroid && (
+                <div dir="ltr" className="bg-slate-950 p-3 font-mono text-[10.5px] text-emerald-300 overflow-x-auto">
+                  <pre>{BUILD_COMMANDS.android}</pre>
+                </div>
+              )}
             </div>
 
-            <div className="relative rounded-xl bg-slate-950 p-3 font-mono text-xs text-slate-300 overflow-x-auto border border-slate-800/80 max-h-72">
-              <pre>{capacitorConfigCode}</pre>
+            {/* iOS */}
+            <div className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+              <button
+                onClick={() => { triggerHaptic('light'); setShowAndroid(false); }}
+                className={`w-full flex items-center justify-between px-3 py-2 text-[11px] font-bold transition cursor-pointer ${
+                  !showAndroid
+                    ? 'bg-sky-50 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300'
+                    : 'bg-slate-50 dark:bg-slate-800/60 text-slate-600 dark:text-slate-300'
+                }`}
+              >
+                <span>{copy.ios}</span>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleCopy(BUILD_COMMANDS.ios, 'ios-cmd');
+                  }}
+                  className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-white/60 dark:bg-slate-900/60 hover:bg-white dark:hover:bg-slate-900 transition cursor-pointer"
+                >
+                  {copiedKey === 'ios-cmd' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                  {copiedKey === 'ios-cmd' ? copy.copied : copy.copy}
+                </button>
+              </button>
+              {!showAndroid && (
+                <div dir="ltr" className="bg-slate-950 p-3 font-mono text-[10.5px] text-sky-300 overflow-x-auto">
+                  <pre>{BUILD_COMMANDS.ios}</pre>
+                </div>
+              )}
             </div>
           </div>
+        )}
+      </div>
+
+      {/* ===== Privacy notice ===== */}
+      <div className="p-3 rounded-2xl bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-900/60 flex items-start gap-2.5">
+        <Shield className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0 mt-0.5" />
+        <div className="text-[11px] text-indigo-900 dark:text-indigo-200 leading-snug text-start">
+          <span className="font-bold">{copy.privacyBold}</span>
+          {copy.privacyRest}
         </div>
-      )}
+      </div>
     </div>
   );
 };

@@ -13,7 +13,6 @@ export type TaskCategory =
   | 'Marketing' 
   | 'Personal';
 
-// 🔁 Recurrence types (Phase 7)
 export type RecurrenceFrequency = 
   | 'daily'
   | 'weekdays'
@@ -29,41 +28,53 @@ export interface Recurrence {
   endDate?: string;
 }
 
-// 🎯 Habit Tracker types (Phase 8)
 export type HabitFrequency = 'daily' | 'weekly' | 'custom';
 
-export type HabitGoalType = 'check' | 'count'; // check = done/not done, count = target number per day
+export type HabitGoalType = 'check' | 'count';
 
 export interface Habit {
   id: string;
   name: string;
   description?: string;
-  emoji: string;                 // e.g. "🏃", "📚"
-  color: string;                 // hex color, e.g. "#8b5cf6"
+  emoji: string;
+  color: string;
   frequency: HabitFrequency;
-  daysOfWeek?: number[];         // 0=Sun..6=Sat (used for 'weekly' and 'custom')
-  goalType: HabitGoalType;       // check or count
-  goalCount?: number;            // e.g. 8 glasses of water
-  reminderTime?: string;         // "HH:MM" (24h) or undefined
+  daysOfWeek?: number[];
+  goalType: HabitGoalType;
+  goalCount?: number;
+  reminderTime?: string;
   reminderEnabled: boolean;
   createdAt: string;
   archivedAt?: string;
 }
 
 export interface HabitCheckIn {
-  id: string;                    // `${habitId}_${YYYY-MM-DD}`
+  id: string;
   habitId: string;
-  date: string;                  // 'YYYY-MM-DD' in LOCAL timezone
-  count: number;                 // >= 1; for goalType 'check' it stays 1
+  date: string;
+  count: number;
   note?: string;
-  completedAt: string;           // ISO timestamp
+  completedAt: string;
 }
 
 export interface Subtask {
   id: string;
   title: string;
   done: boolean;
+  subtasks?: Subtask[];   // recursive — enables unlimited nesting
 }
+
+export interface Milestone {
+  id: string;
+  name: string;
+  emoji: string;
+  targetDate: string;
+  color: string;
+  createdAt: string;
+  archivedAt?: string;
+}
+
+export type DelegateStatus = 'pending' | 'completed' | 'rejected';
 
 export interface Task {
   id: string;
@@ -83,9 +94,51 @@ export interface Task {
   pinned?: boolean;
   subtasks?: Subtask[];
   recurrence?: Recurrence;
+  contexts?: string[];
+  milestoneId?: string;
+  delegateId?: string;
+  delegateStatus?: DelegateStatus;
+  delegateCompletedBy?: string;
+  delegateCompletedAt?: string;
 }
 
-export type TabView = 'matrix' | 'list' | 'timeline' | 'analytics' | 'habits' | 'export' | 'archive';
+/* ─────────────────────────────────────────────────────────
+   NEW — Task Templates
+   ───────────────────────────────────────────────────────── */
+
+export interface Template {
+  id: string;
+  name: string;
+  emoji: string;
+  description?: string;
+  /** Preset fields applied to the new task */
+  preset: {
+    category?: TaskCategory;
+    quadrant?: QuadrantId;
+    estimatedMinutes?: number;
+    impactScore?: number;
+    effortScore?: number;
+    contexts?: string[];
+    priority?: PriorityLevel;
+  };
+  /** The full nested subtask tree to clone into the new task */
+  subtasks: Subtask[];
+  createdAt: string;
+  /** true for the 3 shipped templates — can't be deleted, only duplicated */
+  isBuiltIn?: boolean;
+}
+
+export type TabView =
+  | 'matrix'
+  | 'list'
+  | 'timeline'
+  | 'calendar'
+  | 'flow'
+  | 'analytics'
+  | 'habits'
+  | 'review'
+  | 'export'
+  | 'archive';
 
 export type DeviceFrameMode = 'iphone' | 'android' | 'responsive';
 
@@ -99,3 +152,19 @@ export interface QuadrantInfo {
   badgeText: string;
   borderColor: string;
 }
+
+export interface ContextDefinition {
+  id: string;
+  emoji: string;
+  label: string;
+  keywords: string[];
+}
+
+export const CONTEXT_DEFINITIONS: ContextDefinition[] = [
+  { id: 'home',     emoji: '🏠', label: 'Home',      keywords: ['home', 'house', 'kitchen', 'bedroom', 'garage', 'garden', 'laundry', 'dishes', 'maison', 'بيت', 'منزل'] },
+  { id: 'work',     emoji: '💼', label: 'Work',      keywords: ['work', 'office', 'meeting', 'standup', 'client', 'boss', 'team', 'bureau', 'réunion', 'عمل', 'اجتماع'] },
+  { id: 'call',     emoji: '📞', label: 'Call',      keywords: ['call', 'phone', 'text', 'whatsapp', 'dm', 'message', 'appeler', 'téléphone', 'اتصال', 'مكالمة', 'هاتف'] },
+  { id: 'computer', emoji: '💻', label: 'Deep Work', keywords: ['code', 'coding', 'email', 'deep work', 'focus', 'writing', 'docs', 'ordi', 'écrire', 'برمجة', 'كتابة'] },
+  { id: 'errand',   emoji: '🛒', label: 'Errand',    keywords: ['buy', 'pick up', 'drop off', 'store', 'market', 'mall', 'supermarket', 'grocery', 'courses', 'acheter', 'تسوق', 'بقالة'] },
+  { id: 'health',   emoji: '🏋️', label: 'Health',    keywords: ['gym', 'workout', 'run', 'yoga', 'doctor', 'medical', 'therapy', 'dentist', 'sport', 'santé', 'طبيب', 'رياضة'] },
+];

@@ -9,6 +9,7 @@ export interface ParsedVoiceTask {
   priority: PriorityLevel;
   estimatedMinutes: number;
   dueDate: string;
+  contexts: string[];
   confidenceScore: number;
 }
 
@@ -48,7 +49,7 @@ const CATEGORY_KEYWORDS: Record<TaskCategory, string[]> = {
     'demo', 'account', 'partner', 'partnership', 'meeting with client',
     'sponsor', 'prospect', 'lead',
     'عميل', 'زبون', 'عرض تقديمي', 'اجتماع عميل', 'مقترح', 'مبيعات', 'صفقة', 'شريك',
-    'client', 'prospect', 'devis', 'rendez-vous client', 'vente', 'partenaire'
+    'prospect', 'devis', 'rendez-vous client', 'vente', 'partenaire'
   ],
   Marketing: [
     'marketing', 'ad', 'ads', 'campaign', 'promo', 'promotion', 'seo',
@@ -63,7 +64,7 @@ const CATEGORY_KEYWORDS: Record<TaskCategory, string[]> = {
     'health', 'walk', 'cook', 'dinner', 'lunch', 'breakfast', 'clean',
     'cleaning', 'house', 'home', 'family', 'call mom', 'shopping', 'haircut',
     'شخصي', 'تسوق', 'بقالة', 'نادي', 'رياضة', 'طبيب', 'أسنان', 'دواء', 'صيدلية', 'صحة', 'بيت', 'تنظيف', 'غداء', 'عشاء', 'عائلة', 'شراء',
-    'courses', 'supermarché', 'sport', 'gym', 'médecin', 'dentiste', 'santé', 'pharmacie', 'maison', 'personnel'
+    'supermarché', 'sport', 'médecin', 'dentiste', 'santé', 'pharmacie', 'maison', 'personnel'
   ],
 };
 
@@ -73,7 +74,7 @@ const QUADRANT_KEYWORDS: Record<QuadrantId, string[]> = {
     'immediately', 'immediate', 'today', 'tonight', 'deadline', 'now',
     'high priority', 'top priority', 'pressing',
     'عاجل', 'ضروري', 'فورا', 'الآن', 'طارئ', 'اليوم', 'أولوية قصوى', 'أولوية أولى', 'لازم',
-    'urgent', 'très urgent', 'immédiatement', 'tout de suite', 'critique', 'impératif', 'aujourd\'hui'
+    'très urgent', 'immédiatement', 'tout de suite', 'critique', 'impératif'
   ],
   schedule: [
     'schedule', 'plan', 'planning', 'tomorrow', 'next week', 'future',
@@ -102,6 +103,26 @@ const PRIORITY_MAP: Record<QuadrantId, PriorityLevel> = {
   delegate: 'medium',
   eliminate: 'low',
 };
+
+const PRIORITY_TO_QUADRANT: Record<PriorityLevel, QuadrantId> = {
+  urgent: 'do_first',
+  high: 'schedule',
+  medium: 'delegate',
+  low: 'eliminate',
+};
+
+const CONTEXT_KEYWORDS: { id: string; keywords: string[] }[] = [
+  { id: 'home',     keywords: ['home', 'house', 'kitchen', 'bedroom', 'garage', 'garden', 'laundry', 'dishes', 'maison', 'بيت', 'منزل'] },
+  { id: 'work',     keywords: ['work', 'office', 'meeting', 'standup', 'client', 'boss', 'team', 'bureau', 'réunion', 'عمل', 'اجتماع'] },
+  { id: 'call',     keywords: ['call', 'phone', 'text', 'whatsapp', 'dm', 'message', 'appeler', 'téléphone', 'اتصال', 'مكالمة', 'هاتف'] },
+  { id: 'computer', keywords: ['code', 'coding', 'email', 'deep work', 'focus', 'writing', 'docs', 'ordi', 'écrire', 'برمجة', 'كتابة'] },
+  { id: 'errand',   keywords: ['buy', 'pick up', 'drop off', 'store', 'market', 'mall', 'supermarket', 'grocery', 'courses', 'acheter', 'تسوق', 'بقالة'] },
+  { id: 'health',   keywords: ['gym', 'workout', 'run', 'yoga', 'doctor', 'medical', 'therapy', 'dentist', 'sport', 'santé', 'طبيب', 'رياضة'] },
+];
+
+// ─────────────────────────────────────────────
+//   Helpers
+// ─────────────────────────────────────────────
 
 function cleanSpeechPrompt(raw: string): string {
   let cleaned = raw.trim();
@@ -150,11 +171,87 @@ function extractEstimatedMinutes(text: string): number {
   return 30;
 }
 
-/**
- * Extracts target due date from text — returns ISO string with time.
- * Handles: "in 30 minutes", "in 2 hours", "tomorrow at 5pm",
- * "at 3pm", "tonight", "this afternoon", "next monday", etc.
- */
+function extractExplicitPriority(text: string): PriorityLevel | null {
+  const m = text.match(/!(p[1-4]|urgent|high|medium|low)\b/i);
+  if (!m) return null;
+  const v = m[1].toLowerCase();
+  if (v === 'p1') return 'urgent';
+  if (v === 'p2') return 'high';
+  if (v === 'p3') return 'medium';
+  if (v === 'p4') return 'low';
+  return v as PriorityLevel;
+}
+
+function extractExplicitMinutes(text: string): number | null {
+  const m = text.match(/~(\d+)\s*(m|min|minutes?|h|hr|hours?)\b/i);
+  if (!m) return null;
+  const n = parseInt(m[1], 10);
+  if (isNaN(n)) return null;
+  const unit = m[2].toLowerCase();
+  const mins = unit.startsWith('h') ? n * 60 : n;
+  return Math.min(Math.max(mins, 5), 480);
+}
+
+function extractExplicitQuadrant(text: string): QuadrantId | null {
+  const m = text.match(/#(do|do_first|schedule|delegate|eliminate)\b/i);
+  if (!m) return null;
+  const v = m[1].toLowerCase();
+  if (v === 'do' || v === 'do_first') return 'do_first';
+  return v as QuadrantId;
+}
+
+function stripExplicitTokens(text: string): string {
+  return text
+    .replace(/!(p[1-4]|urgent|high|medium|low)\b/gi, ' ')
+    .replace(/~(\d+)\s*(m|min|minutes?|h|hr|hours?)\b/gi, ' ')
+    .replace(/#(do|do_first|schedule|delegate|eliminate)\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+const TIME_REGEX = /(\d{1,2})(?::(\d{2}))?\s*([ap])\.?\s*m\.?/i;
+
+function findExplicitTime(lower: string): { hour: number; minute: number } | null {
+  const introPatterns: RegExp[] = [
+    /(?:set\s+time\s+to)\s+(\d{1,2})(?::(\d{2}))?\s*([ap])\.?\s*m\.?/i,
+    /(?:set\s+(?:a\s+)?reminder\s+(?:at|in|for))\s+(\d{1,2})(?::(\d{2}))?\s*([ap])\.?\s*m\.?/i,
+    /(?:remind\s+me\s+(?:at|in|for))\s+(\d{1,2})(?::(\d{2}))?\s*([ap])\.?\s*m\.?/i,
+    /(?:at|@)\s+(\d{1,2})(?::(\d{2}))?\s*([ap])\.?\s*m\.?/i,
+    /(?:à|في|الساعة)\s+(\d{1,2})(?::(\d{2}))?\s*([ap])\.?\s*m\.?/i,
+  ];
+
+  for (const re of introPatterns) {
+    const m = lower.match(re);
+    if (m) return normalizeMatch(m);
+  }
+
+  const bare = lower.match(TIME_REGEX);
+  if (bare) return normalizeMatch(bare);
+
+  return null;
+}
+
+function normalizeMatch(m: RegExpMatchArray): { hour: number; minute: number } | null {
+  let h = parseInt(m[1], 10);
+  const min = m[2] ? parseInt(m[2], 10) : 0;
+  const suffix = (m[3] || '').toLowerCase();
+
+  if (suffix === 'p' && h < 12) h += 12;
+  if (suffix === 'a' && h === 12) h = 0;
+
+  if (h < 0 || h > 23 || min < 0 || min > 59) return null;
+  return { hour: h, minute: min };
+}
+
+const DAY_NAMES: Record<string, number> = {
+  sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6,
+  dimanche: 0, lundi: 1, mardi: 2, mercredi: 3, jeudi: 4, vendredi: 5, samedi: 6,
+};
+
+function lastDayOfMonth(year: number, month: number): number {
+  return new Date(year, month + 1, 0).getDate();
+}
+
 function extractDueDate(text: string): string {
   const lower = text.toLowerCase();
   const now = new Date();
@@ -165,97 +262,190 @@ function extractDueDate(text: string): string {
     result.setHours(h, m, 0, 0);
   };
 
-  // "in X minutes/hours/days/weeks"
-  const inMatch = lower.match(/\bin\s+(\d+)\s*(minutes?|mins?|hours?|hrs?|h|days?|d|weeks?|w)\b/i);
+  const inMatch = lower.match(/\bin\s+(\d+)\s*(minutes?|mins?|hours?|hrs?|days?|d|weeks?|w|months?|mos?)\b/i);
   if (inMatch) {
     const n = parseInt(inMatch[1], 10);
     const unit = inMatch[2].toLowerCase();
-    let ms = 0;
-    if (unit.startsWith('min')) ms = n * 60000;
-    else if (unit.startsWith('h')) ms = n * 3600000;
-    else if (unit.startsWith('d')) ms = n * 86400000;
-    else if (unit.startsWith('w')) ms = n * 604800000;
-    return new Date(now.getTime() + ms).toISOString();
+    const r = new Date(now.getTime());
+    if (unit.startsWith('min')) r.setMinutes(r.getMinutes() + n);
+    else if (unit.startsWith('h')) r.setHours(r.getHours() + n);
+    else if (unit.startsWith('d')) r.setDate(r.getDate() + n);
+    else if (unit.startsWith('w')) r.setDate(r.getDate() + n * 7);
+    else if (unit.startsWith('mo')) r.setMonth(r.getMonth() + n);
+    return r.toISOString();
   }
 
-  // French "dans X minutes/heures/jours"
-  const dansMatch = lower.match(/\bdans\s+(\d+)\s*(minutes?|mins?|heures?|jours?|semaines?)\b/i);
+  const inIndefinite = lower.match(/\bin\s+(?:a|an)\s+(minute|hour|day|week|month|year)\b/i);
+  if (inIndefinite) {
+    const unit = inIndefinite[1].toLowerCase();
+    const r = new Date(now.getTime());
+    if (unit === 'minute') r.setMinutes(r.getMinutes() + 1);
+    else if (unit === 'hour') r.setHours(r.getHours() + 1);
+    else if (unit === 'day') r.setDate(r.getDate() + 1);
+    else if (unit === 'week') r.setDate(r.getDate() + 7);
+    else if (unit === 'month') r.setMonth(r.getMonth() + 1);
+    else if (unit === 'year') r.setFullYear(r.getFullYear() + 1);
+    return r.toISOString();
+  }
+
+  const dansMatch = lower.match(/\bdans\s+(\d+)\s*(minutes?|mins?|heures?|jours?|semaines?|mois)\b/i);
   if (dansMatch) {
     const n = parseInt(dansMatch[1], 10);
     const unit = dansMatch[2].toLowerCase();
-    let ms = 0;
-    if (unit.startsWith('min')) ms = n * 60000;
-    else if (unit.startsWith('heure')) ms = n * 3600000;
-    else if (unit.startsWith('jour')) ms = n * 86400000;
-    else if (unit.startsWith('semaine')) ms = n * 604800000;
-    return new Date(now.getTime() + ms).toISOString();
+    const r = new Date(now.getTime());
+    if (unit.startsWith('min')) r.setMinutes(r.getMinutes() + n);
+    else if (unit.startsWith('heure')) r.setHours(r.getHours() + n);
+    else if (unit.startsWith('jour')) r.setDate(r.getDate() + n);
+    else if (unit.startsWith('semaine')) r.setDate(r.getDate() + n * 7);
+    else if (unit.startsWith('mois')) r.setMonth(r.getMonth() + n);
+    return r.toISOString();
   }
 
-  // Explicit time like "at 3pm" or "at 15:30"
-  const timeMatch = lower.match(/(?:at|à|في|الساعة)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
-  let explicitHour: number | null = null;
-  let explicitMinute = 0;
-  if (timeMatch) {
-    let h = parseInt(timeMatch[1], 10);
-    const min = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
-    const suffix = (timeMatch[3] || '').toLowerCase();
-    if (suffix === 'pm' && h < 12) h += 12;
-    if (suffix === 'am' && h === 12) h = 0;
-    if (h >= 0 && h <= 23) {
-      explicitHour = h;
-      explicitMinute = min;
-    }
+  const explicit = findExplicitTime(lower);
+  const explicitHour = explicit ? explicit.hour : null;
+  const explicitMinute = explicit ? explicit.minute : 0;
+
+  if (/\bday\s+after\s+tomorrow\b|\baprès-demain\b|\bبعد\s+غد\b/i.test(lower)) {
+    result.setDate(result.getDate() + 2);
+    setTime(explicitHour ?? 9, explicitMinute);
+    return result.toISOString();
   }
 
-  // Tomorrow
-  if (lower.includes('tomorrow') || lower.includes('demain') || lower.includes('غدا') || lower.includes('بكرة')) {
+  if (/\btomorrow\s+night\b/i.test(lower)) {
+    result.setDate(result.getDate() + 1);
+    setTime(explicitHour ?? 21, explicitMinute);
+    return result.toISOString();
+  }
+  if (/\btomorrow\s+(?:morning|matin)\b/i.test(lower)) {
+    result.setDate(result.getDate() + 1);
+    setTime(explicitHour ?? 9, explicitMinute);
+    return result.toISOString();
+  }
+  if (/\btomorrow\s+(?:afternoon|après-midi)\b/i.test(lower)) {
+    result.setDate(result.getDate() + 1);
+    setTime(explicitHour ?? 15, explicitMinute);
+    return result.toISOString();
+  }
+  if (/\btomorrow\s+(?:evening|soir)\b/i.test(lower)) {
+    result.setDate(result.getDate() + 1);
+    setTime(explicitHour ?? 20, explicitMinute);
+    return result.toISOString();
+  }
+
+  if (/\btomorrow\b|\bdemain\b|\bغدا\b|\bبكرة\b/i.test(lower)) {
     result.setDate(result.getDate() + 1);
     setTime(explicitHour ?? 9, explicitMinute);
     return result.toISOString();
   }
 
-  // Next week
-  if (lower.includes('next week') || lower.includes('semaine prochaine') || lower.includes('الأسبوع القادم')) {
+  const weekendMatch = lower.match(/\b(next|this)\s+weekend\b/i);
+  if (weekendMatch) {
+    const kind = weekendMatch[1].toLowerCase();
+    const today = now.getDay();
+    let daysToSat = (6 - today + 7) % 7;
+    if (kind === 'next' && daysToSat === 0) daysToSat = 7;
+    if (kind === 'this' && daysToSat === 0) daysToSat = 0;
+    result.setDate(result.getDate() + daysToSat);
+    setTime(explicitHour ?? 10, explicitMinute);
+    return result.toISOString();
+  }
+
+  if (/\bend\s+of\s+(?:the\s+)?week\b/i.test(lower)) {
+    const today = now.getDay();
+    const daysToSun = (7 - today) % 7 || 7;
+    result.setDate(result.getDate() + daysToSun);
+    setTime(explicitHour ?? 18, explicitMinute);
+    return result.toISOString();
+  }
+
+  if (/\bend\s+of\s+(?:the\s+)?month\b/i.test(lower)) {
+    const y = result.getFullYear();
+    const m = result.getMonth();
+    const last = lastDayOfMonth(y, m);
+    result.setDate(last);
+    setTime(explicitHour ?? 18, explicitMinute);
+    return result.toISOString();
+  }
+
+  if (/\bend\s+of\s+(?:the\s+)?year\b/i.test(lower)) {
+    result.setMonth(11);
+    result.setDate(31);
+    setTime(explicitHour ?? 18, explicitMinute);
+    return result.toISOString();
+  }
+
+  if (/\btonight\b|\bthis\s+evening\b|\bce\s+soir\b|\bالليلة\b/i.test(lower)) {
+    setTime(explicitHour ?? 20, explicitMinute);
+    if (result.getTime() < now.getTime()) result.setDate(result.getDate() + 1);
+    return result.toISOString();
+  }
+
+  if (/\bthis\s+afternoon\b|\baprès-midi\b|\bبعد الظهر\b/i.test(lower)) {
+    setTime(explicitHour ?? 15, explicitMinute);
+    if (result.getTime() < now.getTime()) result.setDate(result.getDate() + 1);
+    return result.toISOString();
+  }
+
+  if (/\bthis\s+morning\b|\bce\s+matin\b/i.test(lower)) {
+    setTime(explicitHour ?? 9, explicitMinute);
+    if (result.getTime() < now.getTime()) result.setDate(result.getDate() + 1);
+    return result.toISOString();
+  }
+
+  if (/\bnext\s+week\b|\bsemaine\s+prochaine\b|\bالأسبوع\s+القادم\b/i.test(lower)) {
     result.setDate(result.getDate() + 7);
     setTime(explicitHour ?? 9, explicitMinute);
     return result.toISOString();
   }
 
-  // Tonight
-  if (lower.includes('tonight') || lower.includes('this evening') || lower.includes('ce soir') || lower.includes('الليلة')) {
-    setTime(20, 0);
-    if (result.getTime() < now.getTime()) result.setDate(result.getDate() + 1);
+  if (/\bnext\s+month\b|\bmois\s+prochain\b/i.test(lower)) {
+    result.setMonth(result.getMonth() + 1);
+    setTime(explicitHour ?? 9, explicitMinute);
     return result.toISOString();
   }
 
-  // Afternoon
-  if (lower.includes('afternoon') || lower.includes('après-midi') || lower.includes('بعد الظهر')) {
-    setTime(15, 0);
-    if (result.getTime() < now.getTime()) result.setDate(result.getDate() + 1);
+  const nextDaysMatch = lower.match(/\b(?:next|within)\s+(\d+)\s+days?\b/i);
+  if (nextDaysMatch) {
+    const n = parseInt(nextDaysMatch[1], 10);
+    result.setDate(result.getDate() + n);
+    setTime(explicitHour ?? 18, explicitMinute);
     return result.toISOString();
   }
 
-  // Morning
-  if (lower.includes('this morning') || lower.includes('ce matin')) {
-    setTime(9, 0);
-    if (result.getTime() < now.getTime()) result.setDate(result.getDate() + 1);
+  const afterNextMatch = lower.match(/\b(?:the\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+after\s+next\b/i);
+  if (afterNextMatch) {
+    const targetDay = DAY_NAMES[afterNextMatch[1].toLowerCase()];
+    const currentDay = result.getDay();
+    let diff = (targetDay - currentDay + 7) % 7;
+    diff += 7;
+    if (diff === 0) diff = 14;
+    result.setDate(result.getDate() + diff);
+    setTime(explicitHour ?? 9, explicitMinute);
     return result.toISOString();
   }
 
-  // Explicit time today (or tomorrow if past)
+  const nextDayMatch = lower.match(/\bnext\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)\b/i);
+  if (nextDayMatch) {
+    const targetDay = DAY_NAMES[nextDayMatch[1].toLowerCase()];
+    if (targetDay !== undefined) {
+      const currentDay = result.getDay();
+      let diff = (targetDay - currentDay + 7) % 7;
+      if (diff === 0) diff = 7;
+      result.setDate(result.getDate() + diff);
+      setTime(explicitHour ?? 9, explicitMinute);
+      return result.toISOString();
+    }
+  }
+
   if (explicitHour !== null) {
     setTime(explicitHour, explicitMinute);
     if (result.getTime() < now.getTime()) result.setDate(result.getDate() + 1);
     return result.toISOString();
   }
 
-  // Day of week
-  const dayNames: Record<string, number> = {
-    monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6, sunday: 0,
-    lundi: 1, mardi: 2, mercredi: 3, jeudi: 4, vendredi: 5, samedi: 6, dimanche: 0,
-  };
-  for (const [name, dayNum] of Object.entries(dayNames)) {
-    if (lower.includes(name)) {
+  for (const [name, dayNum] of Object.entries(DAY_NAMES)) {
+    const re = new RegExp(`\\b${name}\\b`, 'i');
+    if (re.test(lower)) {
       const currentDay = result.getDay();
       let diff = dayNum - currentDay;
       if (diff <= 0) diff += 7;
@@ -265,17 +455,93 @@ function extractDueDate(text: string): string {
     }
   }
 
-  // Default: 1 hour from now
   return new Date(now.getTime() + 3600000).toISOString();
 }
+
+function extractContexts(raw: string): string[] {
+  const lower = raw.toLowerCase();
+  const found = new Set<string>();
+
+  const explicit = raw.match(/@([a-zA-Z\u0600-\u06FF]+)/g) || [];
+  explicit.forEach((m) => {
+    found.add(m.slice(1).toLowerCase());
+  });
+
+  for (const ctx of CONTEXT_KEYWORDS) {
+    for (const kw of ctx.keywords) {
+      const re = new RegExp(`\\b${kw.toLowerCase()}\\b`, 'i');
+      if (re.test(lower)) {
+        found.add(ctx.id);
+        break;
+      }
+    }
+  }
+
+  return Array.from(found);
+}
+
+function stripTimePhrasesFromTitle(text: string): string {
+  let out = text;
+
+  out = out.replace(/\bset\s+time\s+to\s+\d{1,2}(?::\d{2})?\s*[ap]?\.?\s*m?\.?/gi, ' ');
+  out = out.replace(/\bset\s+(?:a\s+)?reminder\s+(?:at|in|for)\s+\d{1,2}(?::\d{2})?\s*[ap]?\.?\s*m?\.?/gi, ' ');
+  out = out.replace(/\bremind\s+me\s+(?:at|in|for)\s+\d{1,2}(?::\d{2})?\s*[ap]?\.?\s*m?\.?/gi, ' ');
+  out = out.replace(/\breminder\s+(?:at|in|for)\s+\d{1,2}(?::\d{2})?\s*[ap]?\.?\s*m?\.?/gi, ' ');
+
+  out = out.replace(/\bday\s+after\s+tomorrow\b/gi, ' ');
+  out = out.replace(/\b(?:the\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+after\s+next\b/gi, ' ');
+  out = out.replace(/\b(?:next|this)\s+weekend\b/gi, ' ');
+  out = out.replace(/\bend\s+of\s+(?:the\s+)?(week|month|year)\b/gi, ' ');
+  out = out.replace(/\b(?:next|within)\s+\d+\s+days?\b/gi, ' ');
+  out = out.replace(/\bnext\s+month\b/gi, ' ');
+  out = out.replace(/\bnext\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)\b/gi, ' ');
+
+  // ── Order matters: strip "at 5pm" BEFORE bare "5pm" so no orphan "at" remains ──
+  out = out.replace(/\b(?:at|@)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.|[ap])?\.?\s*m?\.?\b/gi, ' ');
+  out = out.replace(/\b(?:à|في|الساعة)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.|[ap])?\.?\s*m?\.?\b/gi, ' ');
+  // Then bare times: "9am", "9:30pm", "5 p.m."
+  out = out.replace(/\b\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)\b/gi, ' ');
+
+  out = out.replace(/\b(?:tomorrow|today)\s+(?:night|morning|afternoon|evening|matin|soir|après-midi)\b/gi, ' ');
+  out = out.replace(/\b(?:غدا|بكرة|اليوم)\s+(?:الليلة|صباحا|مساء|بعد\s+الظهر)\b/gi, ' ');
+
+  out = out.replace(/\b(?:tomorrow|today|tonight)\b/gi, ' ');
+  out = out.replace(/\b(?:demain|ce\s+soir|ce\s+matin|après-midi|après-demain)\b/gi, ' ');
+  out = out.replace(/\b(?:غدا|بكرة|الليلة|اليوم|بعد\s+غد)\b/gi, ' ');
+  out = out.replace(/\bthis\s+(?:morning|afternoon|evening|week|night|weekend)\b/gi, ' ');
+  out = out.replace(/\bnext\s+week\b/gi, ' ');
+
+  out = out.replace(/\bin\s+\d+\s*(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|mos?)\b/gi, ' ');
+  out = out.replace(/\bin\s+(?:a|an)\s+(?:minute|hour|day|week|month|year)\b/gi, ' ');
+  out = out.replace(/\bdans\s+\d+\s*(?:minutes?|mins?|heures?|jours?|semaines?|mois)\b/gi, ' ');
+  out = out.replace(/بعد\s+\d+\s*(?:دقيقة|دقائق|دقيقه|ساعة|ساعات|ساعه|يوم|أيام|اسبوع|أسابيع|شهر|أشهر)/g, ' ');
+
+  out = out.replace(/@([a-zA-Z\u0600-\u06FF]+)/g, ' ');
+
+  out = out.replace(/\bset\s+(?:a\s+)?reminder\b/gi, ' ');
+  out = out.replace(/\bremind\s+me\b/gi, ' ');
+
+  // 🆕 Remove trailing dangling connectors left after stripping time/date
+  out = out.replace(/\s+(?:at|on|in|by|before|after|for|around|@|à|في|الساعة)\s*$/gi, '');
+
+  return out.replace(/\s+/g, ' ').trim();
+}
+
+// ─────────────────────────────────────────────
+//   MAIN PARSER
+// ─────────────────────────────────────────────
 
 export function parseSpokenTask(rawTranscript: string): ParsedVoiceTask {
   const raw = rawTranscript.trim();
   const lower = raw.toLowerCase();
 
+  const explicitPriority = extractExplicitPriority(raw);
+  const explicitMinutes = extractExplicitMinutes(raw);
+  const explicitQuadrant = extractExplicitQuadrant(raw);
+
+  // ── Category ──
   let detectedCategory: TaskCategory = 'Personal';
   let maxCatScore = 0;
-
   for (const [cat, keywords] of Object.entries(CATEGORY_KEYWORDS)) {
     let score = 0;
     for (const kw of keywords) {
@@ -288,49 +554,68 @@ export function parseSpokenTask(rawTranscript: string): ParsedVoiceTask {
       detectedCategory = cat as TaskCategory;
     }
   }
+  if (maxCatScore === 0) detectedCategory = 'Engineering';
 
-  if (maxCatScore === 0) {
-    detectedCategory = 'Engineering';
-  }
+  // ── Quadrant (explicit > priority-derived > keyword) ──
+  let detectedQuadrant: QuadrantId;
+  let detectedPriority: PriorityLevel;
 
-  let detectedQuadrant: QuadrantId = 'schedule';
-  let maxQuadScore = 0;
-
-  for (const [qid, keywords] of Object.entries(QUADRANT_KEYWORDS)) {
-    let score = 0;
-    for (const kw of keywords) {
-      if (lower.includes(kw.toLowerCase())) {
-        score += kw.length > 5 ? 2 : 1;
+  if (explicitPriority) {
+    detectedPriority = explicitPriority;
+    detectedQuadrant = PRIORITY_TO_QUADRANT[explicitPriority];
+  } else if (explicitQuadrant) {
+    detectedQuadrant = explicitQuadrant;
+    detectedPriority = PRIORITY_MAP[explicitQuadrant];
+  } else {
+    let maxQuadScore = 0;
+    let keywordQuadrant: QuadrantId = 'do_first';
+    for (const [qid, keywords] of Object.entries(QUADRANT_KEYWORDS)) {
+      let score = 0;
+      for (const kw of keywords) {
+        if (lower.includes(kw.toLowerCase())) {
+          score += kw.length > 5 ? 2 : 1;
+        }
+      }
+      if (score > maxQuadScore) {
+        maxQuadScore = score;
+        keywordQuadrant = qid as QuadrantId;
       }
     }
-    if (score > maxQuadScore) {
-      maxQuadScore = score;
-      detectedQuadrant = qid as QuadrantId;
-    }
+    detectedQuadrant = keywordQuadrant;
+    detectedPriority = PRIORITY_MAP[keywordQuadrant];
   }
 
-  if (maxQuadScore === 0) {
-    detectedQuadrant = 'do_first';
-  }
-
+  // ── Title ──
   const cleanedTitle = cleanSpeechPrompt(raw);
-  const minutes = extractEstimatedMinutes(raw);
+  const noExplicitTokens = stripExplicitTokens(cleanedTitle);
+  const titleStripped = stripTimePhrasesFromTitle(noExplicitTokens);
+
+  // ── Minutes ──
+  const minutes = explicitMinutes ?? extractEstimatedMinutes(raw);
+
+  // ── Due date ──
   const dueDate = extractDueDate(raw);
 
+  // ── Contexts ──
+  const contexts = extractContexts(raw);
+
   const confidenceScore = Math.min(
-    Math.round(((maxCatScore > 0 ? 0.5 : 0.2) + (maxQuadScore > 0 ? 0.5 : 0.2)) * 100),
+    Math.round(((maxCatScore > 0 ? 0.5 : 0.2) + (explicitPriority || explicitQuadrant ? 0.5 : 0.2)) * 100),
     98
   );
 
+  const finalTitle = titleStripped.length >= 2 ? titleStripped : noExplicitTokens;
+
   return {
     rawTranscript: raw,
-    title: cleanedTitle || raw,
+    title: finalTitle || raw,
     description: raw.length > cleanedTitle.length + 10 ? raw : '',
     category: detectedCategory,
     quadrant: detectedQuadrant,
-    priority: PRIORITY_MAP[detectedQuadrant],
+    priority: detectedPriority,
     estimatedMinutes: minutes,
     dueDate,
+    contexts,
     confidenceScore,
   };
 }

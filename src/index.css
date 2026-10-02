@@ -300,3 +300,297 @@ html.perf-low .backdrop-blur-sm {
   0%, 100% { opacity: 0.9; }
   50%      { opacity: 0.6; }
 }
+
+/* ═══════════════════════════════════════════
+   NESTED SUBTASKS — robust dark-mode support
+   Uses explicit colors + .dark overrides so it works
+   with Tailwind's class-based dark mode (not just data attributes).
+   ═══════════════════════════════════════════ */
+
+/* Block wrapper */
+.subtask-block {
+  margin-top: 10px;
+  padding-left: 4px;
+  border-left: 2px solid #E2E8F0;
+}
+.dark .subtask-block {
+  border-left-color: rgba(148, 163, 184, 0.25);
+}
+
+/* Header */
+.subtask-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0 6px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #94A3B8;
+}
+.dark .subtask-header {
+  color: #64748B;
+}
+
+.subtask-header-count {
+  background: rgba(99, 102, 241, 0.12);
+  color: #6366F1;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 700;
+}
+.dark .subtask-header-count {
+  background: rgba(167, 139, 250, 0.18);
+  color: #C4B5FD;
+}
+
+/* List */
+.subtask-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.subtask-item {
+  position: relative;
+}
+
+.subtask-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 0;
+  padding-left: calc(var(--depth, 0) * 22px);
+  border-radius: 6px;
+  transition: background 0.15s ease;
+}
+
+.subtask-row:hover {
+  background: rgba(99, 102, 241, 0.06);
+}
+.dark .subtask-row:hover {
+  background: rgba(167, 139, 250, 0.10);
+}
+
+/* Chevron */
+.subtask-chevron,
+.subtask-chevron-spacer {
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 16px;
+}
+
+.subtask-chevron {
+  background: none;
+  border: none;
+  color: #94A3B8;
+  cursor: pointer;
+  font-size: 10px;
+  line-height: 1;
+  padding: 0;
+}
+.dark .subtask-chevron {
+  color: #64748B;
+}
+
+/* Checkbox */
+.subtask-check {
+  width: 14px;
+  height: 14px;
+  accent-color: #6366F1;
+  cursor: pointer;
+  flex: 0 0 14px;
+}
+.dark .subtask-check {
+  accent-color: #A78BFA;
+}
+
+/* Title — FIXED: explicit colors + .dark override */
+.subtask-title {
+  flex: 1;
+  font-family: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: #0F172A;
+  line-height: 1.4;
+  cursor: text;
+  user-select: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dark .subtask-title {
+  color: #F1F5F9;
+}
+
+/* Parents (have children) — bolder + darker to create hierarchy */
+.subtask-item:has(> .subtask-list) > .subtask-row > .subtask-title {
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+.dark .subtask-item:has(> .subtask-list) > .subtask-row > .subtask-title {
+  color: #FFFFFF;
+}
+.subtask-title.is-done {
+  text-decoration: line-through;
+  color: #64748B;
+  opacity: 0.75;
+}
+.dark .subtask-title.is-done {
+  color: #94A3B8;
+}
+
+/* Edit input */
+.subtask-edit-input {
+  flex: 1;
+  background: #F8FAFC;
+  border: 1px solid #6366F1;
+  border-radius: 6px;
+  padding: 3px 7px;
+  color: #0F172A;
+  font-size: 13px;
+  outline: none;
+}
+.dark .subtask-edit-input {
+  background: #0F172A;
+  color: #F1F5F9;
+  border-color: #A78BFA;
+}
+
+/* Progress pill */
+.subtask-pill {
+  font-size: 10px;
+  font-weight: 700;
+  background: rgba(99, 102, 241, 0.12);
+  color: #6366F1;
+  padding: 1px 7px;
+  border-radius: 8px;
+  flex: 0 0 auto;
+}
+.dark .subtask-pill {
+  background: rgba(167, 139, 250, 0.18);
+  color: #C4B5FD;
+}
+
+/* Icon buttons (+ / ×) */
+.subtask-action {
+  background: none;
+  border: 1px solid transparent;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  color: #94A3B8;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.dark .subtask-action {
+  color: #64748B;
+}
+
+.subtask-row:hover .subtask-action {
+  opacity: 1;
+}
+
+.subtask-action:hover {
+  color: #6366F1;
+  border-color: #CBD5E1;
+}
+.dark .subtask-action:hover {
+  color: #C4B5FD;
+  border-color: #475569;
+}
+
+.subtask-delete:hover {
+  color: #F43F5E;
+  border-color: #F43F5E;
+}
+
+/* Inline add form */
+.subtask-add-form {
+  display: flex;
+  gap: 6px;
+  padding: 4px 0 6px 28px;
+  align-items: center;
+}
+
+.subtask-add-form input {
+  flex: 1;
+  background: #F8FAFC;
+  border: 1px solid #CBD5E1;
+  border-radius: 6px;
+  padding: 5px 9px;
+  color: #0F172A;
+  font-size: 13px;
+  outline: none;
+}
+.dark .subtask-add-form input {
+  background: #0F172A;
+  border-color: #334155;
+  color: #F1F5F9;
+}
+
+.subtask-add-form input:focus {
+  border-color: #6366F1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+}
+
+.subtask-add-form button {
+  background: rgba(99, 102, 241, 0.12);
+  border: none;
+  border-radius: 6px;
+  padding: 5px 10px;
+  color: #6366F1;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.dark .subtask-add-form button {
+  background: rgba(167, 139, 250, 0.18);
+  color: #C4B5FD;
+}
+
+.subtask-add-form button:hover {
+  background: #6366F1;
+  color: #FFFFFF;
+}
+
+/* Trigger button */
+.subtask-add-btn {
+  background: none;
+  border: 1px dashed #CBD5E1;
+  border-radius: 6px;
+  padding: 5px 10px;
+  color: #64748B;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-top: 6px;
+  margin-left: 6px;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+.dark .subtask-add-btn {
+  border-color: #334155;
+  color: #94A3B8;
+}
+
+.subtask-add-btn:hover {
+  border-color: #6366F1;
+  color: #6366F1;
+}
+.dark .subtask-add-btn:hover {
+  border-color: #A78BFA;
+  color: #C4B5FD;
+}
