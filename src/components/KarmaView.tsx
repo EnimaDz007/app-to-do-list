@@ -16,7 +16,7 @@ type LocalLang = 'en' | 'fr' | 'ar';
 const COPY: Record<LocalLang, {
   karma: string;
   topLevel: string;
-  toNext: string;
+  toNext: string;      // "{n} to {level}"
   todaysGoals: string;
   tasks: string;
   habits: string;
@@ -54,12 +54,12 @@ const COPY: Record<LocalLang, {
     levelNames: {
       Beginner: 'Beginner',
       Novice: 'Novice',
-      Intermediate: 'Intermediate',
-      Professional: 'Professional',
+      Apprentice: 'Apprentice',
+      Adept: 'Adept',
       Expert: 'Expert',
       Master: 'Master',
-      Enlightened: 'Enlightened',
       Grandmaster: 'Grandmaster',
+      Legend: 'Legend',
     },
   },
   fr: {
@@ -83,12 +83,12 @@ const COPY: Record<LocalLang, {
     levelNames: {
       Beginner: 'Débutant',
       Novice: 'Novice',
-      Intermediate: 'Intermédiaire',
-      Professional: 'Professionnel',
+      Apprentice: 'Apprenti',
+      Adept: 'Adepte',
       Expert: 'Expert',
       Master: 'Maître',
-      Enlightened: 'Éclairé',
       Grandmaster: 'Grand Maître',
+      Legend: 'Légende',
     },
   },
   ar: {
@@ -112,12 +112,12 @@ const COPY: Record<LocalLang, {
     levelNames: {
       Beginner: 'مبتدئ',
       Novice: 'متدرب',
-      Intermediate: 'متوسط',
-      Professional: 'محترف',
+      Apprentice: 'متدرّب',
+      Adept: 'بارع',
       Expert: 'خبير',
-      Master: 'أستاذ',
-      Enlightened: 'مستنير',
+      Master: 'محترف',
       Grandmaster: 'أستاذ كبير',
+      Legend: 'أسطورة',
     },
   },
 };

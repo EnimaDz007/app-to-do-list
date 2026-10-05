@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X } from 'lucide-react';
-import { Task, QuadrantId } from '../types';
+import { Task, QuadrantId, Subtask } from '../types';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { SwipeableTaskItem } from './SwipeableTaskItem';
@@ -11,6 +11,7 @@ interface HoneycombHiveViewProps {
   onToggleStatus: (taskId: string) => void;
   onDeleteTask?: (taskId: string) => void;
   onQuadrantSelect?: (q: QuadrantId) => void;
+  onUpdateSubtasks?: (taskId: string, nextSubtasks: Subtask[]) => void;
 }
 
 const HEX_RADIUS = 75;
@@ -38,7 +39,7 @@ const COPY: Record<LocalLang, { chip: string; titleA: string; titleB: string; su
   ar: { chip: '⬢ الخلية نشطة', titleA: 'خلية', titleB: 'النحل', subtitle: '{n} خلية · {pct}% مكتمل' },
 };
 
-export const HoneycombHiveView: React.FC<HoneycombHiveViewProps> = ({ tasks, onToggleStatus, onDeleteTask, onQuadrantSelect }) => {
+export const HoneycombHiveView: React.FC<HoneycombHiveViewProps> = ({ tasks, onToggleStatus, onDeleteTask, onQuadrantSelect, onUpdateSubtasks }) => {
   const { isDark } = useTheme();
   const { t, language } = useLanguage();
   const lang = (language as LocalLang) || 'en';
@@ -137,7 +138,7 @@ export const HoneycombHiveView: React.FC<HoneycombHiveViewProps> = ({ tasks, onT
                 ) : (
                   <div className="flex flex-col gap-2">
                     {currentTasks.map((task) => (
-                      <SwipeableTaskItem key={task.id} task={task} categoryColor={currentQuad.color} categoryLight={currentQuad.color} categoryPale={isDark ? '#0F172A' : `${currentQuad.color}11`} categoryGradient={currentQuad.color} onComplete={(id) => onToggleStatus(id)} onDelete={(id) => onDeleteTask && onDeleteTask(id)} onTogglePin={() => {}} />
+                      <SwipeableTaskItem key={task.id} task={task} categoryColor={currentQuad.color} categoryLight={currentQuad.color} categoryPale={isDark ? '#0F172A' : `${currentQuad.color}11`} categoryGradient={currentQuad.color} onComplete={(id) => onToggleStatus(id)} onDelete={(id) => onDeleteTask && onDeleteTask(id)} onTogglePin={() => {}} onUpdateSubtasks={onUpdateSubtasks} />
                     ))}
                   </div>
                 )}

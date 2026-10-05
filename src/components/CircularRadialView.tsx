@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X } from 'lucide-react';
-import { Task, QuadrantId } from '../types';
+import { Task, QuadrantId, Subtask } from '../types';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { SwipeableTaskItem } from './SwipeableTaskItem';
@@ -11,6 +11,7 @@ interface CircularRadialViewProps {
   onToggleStatus: (taskId: string) => void;
   onDeleteTask?: (taskId: string) => void;
   onQuadrantSelect?: (q: QuadrantId) => void;
+  onUpdateSubtasks?: (taskId: string, nextSubtasks: Subtask[]) => void;
 }
 
 const QUADS: {
@@ -44,6 +45,7 @@ export const CircularRadialView: React.FC<CircularRadialViewProps> = ({
   onToggleStatus,
   onDeleteTask,
   onQuadrantSelect,
+  onUpdateSubtasks,
 }) => {
   const { isDark } = useTheme();
   const { t, language } = useLanguage();
@@ -469,6 +471,7 @@ export const CircularRadialView: React.FC<CircularRadialViewProps> = ({
                         onComplete={(id) => onToggleStatus(id)}
                         onDelete={(id) => onDeleteTask && onDeleteTask(id)}
                         onTogglePin={() => {}}
+                        onUpdateSubtasks={onUpdateSubtasks}
                       />
                     ))}
                   </div>

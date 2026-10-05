@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { X } from 'lucide-react';
-import { Task, QuadrantId } from '../types';
+import { Task, QuadrantId, Subtask } from '../types';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { SwipeableTaskItem } from './SwipeableTaskItem';
@@ -10,6 +10,7 @@ interface SoftNeumorphicViewProps {
   onToggleStatus: (taskId: string) => void;
   onDeleteTask?: (taskId: string) => void;
   onQuadrantSelect?: (q: QuadrantId) => void;
+  onUpdateSubtasks?: (taskId: string, nextSubtasks: Subtask[]) => void;
 }
 
 const QUADS: { id: QuadrantId; emoji: string; color: string }[] = [
@@ -26,7 +27,7 @@ const COPY: Record<LocalLang, { subtitle: string; totalLabel: string }> = {
   ar: { subtitle: 'إنتاجية ناعمة', totalLabel: 'المجموع · {pct}% مكتمل' },
 };
 
-export const SoftNeumorphicView: React.FC<SoftNeumorphicViewProps> = ({ tasks, onToggleStatus, onDeleteTask, onQuadrantSelect }) => {
+export const SoftNeumorphicView: React.FC<SoftNeumorphicViewProps> = ({ tasks, onToggleStatus, onDeleteTask, onQuadrantSelect, onUpdateSubtasks }) => {
   const { isDark } = useTheme();
   const { t, language } = useLanguage();
   const lang = (language as LocalLang) || 'en';
@@ -112,7 +113,7 @@ export const SoftNeumorphicView: React.FC<SoftNeumorphicViewProps> = ({ tasks, o
               ) : (
                 <div className="flex flex-col gap-2">
                   {currentTasks.map((task) => (
-                    <SwipeableTaskItem key={task.id} task={task} categoryColor={currentQuad.color} categoryLight={currentQuad.color} categoryPale={BG} categoryGradient={currentQuad.color} onComplete={(id) => onToggleStatus(id)} onDelete={(id) => onDeleteTask && onDeleteTask(id)} onTogglePin={() => {}} />
+                    <SwipeableTaskItem key={task.id} task={task} categoryColor={currentQuad.color} categoryLight={currentQuad.color} categoryPale={BG} categoryGradient={currentQuad.color} onComplete={(id) => onToggleStatus(id)} onDelete={(id) => onDeleteTask && onDeleteTask(id)} onTogglePin={() => {}} onUpdateSubtasks={onUpdateSubtasks} />
                   ))}
                 </div>
               )}

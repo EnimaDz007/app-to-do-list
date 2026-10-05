@@ -546,7 +546,7 @@ export const PriorityMatrixView: React.FC<PriorityMatrixViewProps> = ({
           </div>
           <h1 className="mt-3 text-[28px] font-extrabold tracking-tight text-slate-900 dark:text-white leading-none">
             {t('matrix_welcome')}{' '}
-            <em style={{ fontFamily: "'Instrument Serif', serif", fontStyle: 'italic', fontWeight: 400, background: 'linear-gradient(135deg, #7C3AED, #6366F1)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
+            <em style={{ fontFamily: "'Instrument Serif', serif", fontStyle: 'italic', fontWeight: 400, backgroundImage: 'linear-gradient(135deg, #7C3AED, #6366F1)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
               {t('matrix_em')}
             </em>
           </h1>

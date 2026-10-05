@@ -103,7 +103,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
                 className="font-normal italic"
                 style={{
                   fontFamily: "'Instrument Serif', serif",
-                  background: 'linear-gradient(135deg, #7C3AED, #6366F1)',
+                  backgroundImage: 'linear-gradient(135deg, #7C3AED, #6366F1)',
                   WebkitBackgroundClip: 'text',
                   WebkitTextFillColor: 'transparent',
                   backgroundClip: 'text',

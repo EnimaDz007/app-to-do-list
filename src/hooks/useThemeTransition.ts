@@ -13,6 +13,7 @@ interface Timing {
 const DEFAULT_TIMING: Timing = { peak: 900, total: 2000 };
 
 const TIMING: Record<UIDesign, Timing> = {
+  binder:     { peak: 1500, total: 2200 },
   classic:    { peak: 900,  total: 2000 },
   neumorphic: { peak: 1050, total: 2200 },
   stacked:    { peak: 900,  total: 2000 },

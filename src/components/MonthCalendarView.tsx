@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Clock, Check } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Task, QuadrantId, CONTEXT_DEFINITIONS } from '../types';
@@ -9,6 +9,8 @@ interface MonthCalendarViewProps {
   tasks: Task[];
   onToggleStatus: (taskId: string) => void;
   onEditTask: (task: Task) => void;
+  /** Reports the currently selected day (YYYY-MM-DD) to the parent */
+  onDateSelect?: (dateKey: string) => void;
 }
 
 type LocalLang = 'en' | 'fr' | 'ar';
@@ -93,6 +95,7 @@ export const MonthCalendarView: React.FC<MonthCalendarViewProps> = ({
   tasks,
   onToggleStatus,
   onEditTask,
+  onDateSelect,
 }) => {
   const { language } = useLanguage();
   const lang = (language as LocalLang) || 'en';
@@ -104,6 +107,13 @@ export const MonthCalendarView: React.FC<MonthCalendarViewProps> = ({
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth());
   const [selectedDateKey, setSelectedDateKey] = useState<string>(toLocalDateKey(today));
+
+  // Report the selected day up to App so the "+" button can pre-fill the due date
+  const onDateSelectRef = useRef(onDateSelect);
+  useEffect(() => { onDateSelectRef.current = onDateSelect; });
+  useEffect(() => {
+    onDateSelectRef.current?.(selectedDateKey);
+  }, [selectedDateKey]);
 
   const tasksByDate = useMemo(() => {
     const map: Record<string, Task[]> = {};

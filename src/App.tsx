@@ -1,3 +1,8 @@
+// ─────────────────────────────────────────────────────────────
+//  FILE: src/App.tsx
+//  Root app — includes BinderView as the default Matrix theme
+// ─────────────────────────────────────────────────────────────
+
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -21,6 +26,7 @@ import { KarmaView } from './components/KarmaView';
 import { OnboardingScreen } from './components/OnboardingScreen';
 import { FloatingActionButton } from './components/FloatingActionButton';
 import { PriorityMatrixView } from './components/PriorityMatrixView';
+import { BinderView } from './components/BinderView';
 import { SoftNeumorphicView } from './components/SoftNeumorphicView';
 import { StackedCardsView } from './components/StackedCardsView';
 import { TarotDeckView } from './components/TarotDeckView';
@@ -622,6 +628,8 @@ export default function App() {
   const [isVoiceModalOpen, setIsVoiceModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [defaultQuadrant, setDefaultQuadrant] = useState<QuadrantId>('do_first');
+  const [calendarSelectedDate, setCalendarSelectedDate] = useState<string | null>(null);
+  const [pendingDueDate, setPendingDueDate] = useState<string | null>(null);
   const [isInstallModalOpen, setIsInstallModalOpen] = useState(false);
   const [isFocusTimerOpen, setIsFocusTimerOpen] = useState(false);
   const [focusTask, setFocusTask] = useState<Task | null>(null);
@@ -947,9 +955,19 @@ export default function App() {
     triggerHaptic('medium');
   };
 
-  const handleOpenNewTask = (quadrant: QuadrantId = 'do_first') => {
-    setEditingTask(null); setDefaultQuadrant(quadrant); setIsTaskModalOpen(true);
+  const handleOpenNewTask = (quadrant: QuadrantId = 'do_first', dueDate?: string) => {
+    setEditingTask(null);
+    setDefaultQuadrant(quadrant);
+    setPendingDueDate(dueDate ?? null);
+    setIsTaskModalOpen(true);
   };
+
+  const handleCalendarDateSelect = (dateKey: string) => {
+    setCalendarSelectedDate(dateKey);
+  };
+
+  const isCalendarTab =
+    activeTab === 'timeline' || activeTab === 'calendar' || activeTab === 'flow';
 
   const handleRestoreFromArchive = (taskId: string) => {
     setTasks((prev) => prev.map((t) =>
@@ -1242,30 +1260,39 @@ export default function App() {
             onOpen={() => setIsMilestoneModalOpen(true)}
           />
 
-          <main className="flex-1 px-4 py-3.5 pb-24 overflow-y-auto">
+          <main className="flex-1 flex flex-col px-4 py-3.5 pb-24 overflow-y-auto">
             {activeTab === 'matrix' && (
-              uiDesign === 'kanban' ? (
+              uiDesign === 'binder' ? (
+                <BinderView
+                  tasks={activeTasks}
+                  onToggleStatus={handleToggleStatus}
+                  onDeleteTask={handleDeleteTask}
+                  onQuadrantSelect={setDefaultQuadrant}
+                  onUpdateSubtasks={handleUpdateSubtasks}
+                />
+              ) : uiDesign === 'kanban' ? (
                 <PriorityBoardView
                   tasks={activeTasks}
                   onToggleStatus={handleToggleStatus}
                   onEditTask={handleEditTask}
                   onMoveTaskQuadrant={handleMoveTaskQuadrant}
                   onOpenNewTask={handleOpenNewTask}
+                  onUpdateSubtasks={handleUpdateSubtasks}
                 />
               ) : uiDesign === 'neumorphic' ? (
-                <SoftNeumorphicView tasks={activeTasks} onToggleStatus={handleToggleStatus} onDeleteTask={handleDeleteTask} />
+                <SoftNeumorphicView tasks={activeTasks} onToggleStatus={handleToggleStatus} onDeleteTask={handleDeleteTask} onUpdateSubtasks={handleUpdateSubtasks} />
               ) : uiDesign === 'stacked' ? (
-                <StackedCardsView tasks={activeTasks} onToggleStatus={handleToggleStatus} onDeleteTask={handleDeleteTask} />
+                <StackedCardsView tasks={activeTasks} onToggleStatus={handleToggleStatus} onDeleteTask={handleDeleteTask} onUpdateSubtasks={handleUpdateSubtasks} />
               ) : uiDesign === 'tarot' ? (
-                <TarotDeckView tasks={activeTasks} onToggleStatus={handleToggleStatus} onDeleteTask={handleDeleteTask} />
+                <TarotDeckView tasks={activeTasks} onToggleStatus={handleToggleStatus} onDeleteTask={handleDeleteTask} onUpdateSubtasks={handleUpdateSubtasks} />
               ) : uiDesign === 'radial' ? (
-                <CircularRadialView tasks={activeTasks} onToggleStatus={handleToggleStatus} onDeleteTask={handleDeleteTask} />
+                <CircularRadialView tasks={activeTasks} onToggleStatus={handleToggleStatus} onDeleteTask={handleDeleteTask} onUpdateSubtasks={handleUpdateSubtasks} />
               ) : uiDesign === 'hive' ? (
-                <HoneycombHiveView tasks={activeTasks} onToggleStatus={handleToggleStatus} onDeleteTask={handleDeleteTask} />
+                <HoneycombHiveView tasks={activeTasks} onToggleStatus={handleToggleStatus} onDeleteTask={handleDeleteTask} onUpdateSubtasks={handleUpdateSubtasks} />
               ) : uiDesign === 'vending' ? (
-                <VendingMachineView tasks={activeTasks} onToggleStatus={handleToggleStatus} onDeleteTask={handleDeleteTask} />
+                <VendingMachineView tasks={activeTasks} onToggleStatus={handleToggleStatus} onDeleteTask={handleDeleteTask} onUpdateSubtasks={handleUpdateSubtasks} />
               ) : uiDesign === 'detective' ? (
-                <DetectiveBoardView tasks={activeTasks} onToggleStatus={handleToggleStatus} onDeleteTask={handleDeleteTask} />
+                <DetectiveBoardView tasks={activeTasks} onToggleStatus={handleToggleStatus} onDeleteTask={handleDeleteTask} onUpdateSubtasks={handleUpdateSubtasks} />
               ) : (
                 <PriorityMatrixView
                   tasks={activeTasks}
@@ -1298,6 +1325,7 @@ export default function App() {
                 onChangeSubTab={(sub) => setActiveTab(sub)}
                 onToggleStatus={handleToggleStatus}
                 onEditTask={handleEditTask}
+                onDateSelect={handleCalendarDateSelect}
               />
             )}
             {activeTab === 'analytics' && <ProgressAnalyticsView tasks={tasks} />}
@@ -1333,7 +1361,15 @@ export default function App() {
             )}
           </main>
           {activeTab !== 'habits' && (
-            <FloatingActionButton onNewTask={() => handleOpenNewTask(defaultQuadrant)} onPushToTalk={() => setIsVoiceModalOpen(true)} />
+            <FloatingActionButton
+              onNewTask={() =>
+                handleOpenNewTask(
+                  defaultQuadrant,
+                  isCalendarTab ? calendarSelectedDate ?? undefined : undefined
+                )
+              }
+              onPushToTalk={() => setIsVoiceModalOpen(true)}
+            />
           )}
           <BottomTabBar
             activeTab={activeTab}
@@ -1406,6 +1442,7 @@ export default function App() {
         onSaveTask={handleSaveTask}
         editingTask={editingTask}
         defaultQuadrant={defaultQuadrant}
+        defaultDueDate={pendingDueDate ?? undefined}
         onShareTask={handleShareTask}
         templates={allTemplates}
         onDeleteTemplate={handleDeleteTemplate}

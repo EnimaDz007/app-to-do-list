@@ -24,6 +24,7 @@ const tokensCollection = db.collection('tokens');
 const tasksCollection = db.collection('tasks');
 const habitRemindersCollection = db.collection('habitReminders');
 const delegateCollection = db.collection('delegates');
+const prefsCollection = db.collection('preferences');
 
 const app = express();
 app.use(cors({ origin: '*' }));
@@ -435,6 +436,45 @@ app.get('/api/tasks/:userId', async (req, res) => {
     console.log(`📤 Sync request for user ${userId} → ${tasks.length} task(s)`);
     res.json({ success: true, tasks });
   } catch (err) {
+    res.status(500).json({ error: 'Failed' });
+  }
+});
+
+// ============================================================
+//                  USER PREFERENCES (theme etc.)
+// ============================================================
+
+/** GET /api/preferences/:userId → { success, preferences | null } */
+app.get('/api/preferences/:userId', async (req, res) => {
+  const { userId } = req.params;
+  if (!userId) return res.status(400).json({ error: 'userId required' });
+  try {
+    const doc = await prefsCollection.doc(userId).get();
+    if (!doc.exists) return res.json({ success: true, preferences: null });
+    res.json({ success: true, preferences: doc.data() });
+  } catch (err) {
+    console.error('❌ preferences get failed:', err);
+    res.status(500).json({ error: 'Failed' });
+  }
+});
+
+/** POST /api/preferences/:userId  body: { uiDesign } */
+app.post('/api/preferences/:userId', async (req, res) => {
+  const { userId } = req.params;
+  if (!userId) return res.status(400).json({ error: 'userId required' });
+  const { uiDesign } = req.body ?? {};
+  if (typeof uiDesign !== 'string' || !uiDesign) {
+    return res.status(400).json({ error: 'uiDesign required' });
+  }
+  try {
+    await prefsCollection.doc(userId).set(
+      { uiDesign, updatedAt: new Date().toISOString() },
+      { merge: true }
+    );
+    console.log(`🎨 Saved preferences for ${userId} → ${uiDesign}`);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('❌ preferences set failed:', err);
     res.status(500).json({ error: 'Failed' });
   }
 });

@@ -16,6 +16,8 @@ interface CalendarHubViewProps {
   onChangeSubTab: (tab: SubTab) => void;
   onToggleStatus: (taskId: string) => void;
   onEditTask: (task: Task) => void;
+  /** Reports the day selected inside MonthCalendarView up to App */
+  onDateSelect?: (dateKey: string) => void;
 }
 
 const COPY: Record<LocalLang, {
@@ -34,6 +36,7 @@ export const CalendarHubView: React.FC<CalendarHubViewProps> = ({
   onChangeSubTab,
   onToggleStatus,
   onEditTask,
+  onDateSelect,
 }) => {
   const { language } = useLanguage();
   const lang = (language as LocalLang) || 'en';
@@ -88,6 +91,7 @@ export const CalendarHubView: React.FC<CalendarHubViewProps> = ({
           tasks={tasks}
           onToggleStatus={onToggleStatus}
           onEditTask={onEditTask}
+          onDateSelect={onDateSelect}
         />
       )}
       {activeSubTab === 'flow' && (

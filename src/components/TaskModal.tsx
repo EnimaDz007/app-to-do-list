@@ -17,6 +17,8 @@ interface TaskModalProps {
   onSaveTask: (taskData: Omit<Task, 'id' | 'createdAt'> & { id?: string }) => void;
   editingTask?: Task | null;
   defaultQuadrant?: QuadrantId;
+  /** Pre-fills the due date for a NEW task (YYYY-MM-DD) */
+  defaultDueDate?: string;
   onShareTask?: (task: Task) => void;
   templates?: Template[];
   onDeleteTemplate?: (templateId: string) => void;
@@ -254,7 +256,7 @@ function makeRecurrence(freq: RecurrenceFrequency | null, dueDateStr: string): R
 }
 
 export const TaskModal: React.FC<TaskModalProps> = ({
-  isOpen, onClose, onSaveTask, editingTask, defaultQuadrant = 'do_first', onShareTask,
+  isOpen, onClose, onSaveTask, editingTask, defaultQuadrant = 'do_first', defaultDueDate, onShareTask,
   templates = [], onDeleteTemplate,
 }) => {
   const { language, t } = useLanguage();
@@ -317,6 +319,13 @@ export const TaskModal: React.FC<TaskModalProps> = ({
       setContexts([]);
       setSubtasks([]);
       setDueDate(() => {
+        if (defaultDueDate) {
+          const isToday = defaultDueDate === dateToLocalInputString(new Date()).slice(0, 10);
+          if (!isToday) {
+            const scheduled = new Date(`${defaultDueDate}T09:00`);
+            if (!isNaN(scheduled.getTime())) return dateToLocalInputString(scheduled);
+          }
+        }
         const d = new Date();
         d.setMinutes(d.getMinutes() + 15);
         return dateToLocalInputString(d);
@@ -328,7 +337,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
     resetTranscript();
     stopListening();
     // eslint-disable-next-line
-  }, [isOpen, editingTask, defaultQuadrant]);
+  }, [isOpen, editingTask, defaultQuadrant, defaultDueDate]);
 
   useEffect(() => {
     if (!transcript) return;

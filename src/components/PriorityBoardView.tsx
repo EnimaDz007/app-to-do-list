@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { Plus, MoreVertical, Check, Clock, Calendar, Flame, GripVertical } from 'lucide-react';
+import { Plus, MoreVertical, Check, Clock, Calendar, Flame, GripVertical, ChevronDown, ChevronUp } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Task, QuadrantId, CONTEXT_DEFINITIONS } from '../types';
+import { Task, QuadrantId, Subtask, CONTEXT_DEFINITIONS } from '../types';
 import { triggerHaptic } from '../utils/haptics';
 import { useLanguage } from '../context/LanguageContext';
+import { SubtaskList } from './SubtaskList';
 
 interface PriorityBoardViewProps {
   tasks: Task[];
@@ -11,6 +12,7 @@ interface PriorityBoardViewProps {
   onEditTask: (task: Task) => void;
   onMoveTaskQuadrant: (taskId: string, targetQuadrant: QuadrantId) => void;
   onOpenNewTask: (quadrant: QuadrantId) => void;
+  onUpdateSubtasks?: (taskId: string, nextSubtasks: Subtask[]) => void;
 }
 
 interface ColumnConfig {
@@ -102,13 +104,14 @@ const PRIORITY_DOT: Record<string, string> = {
 };
 
 export const PriorityBoardView: React.FC<PriorityBoardViewProps> = ({
-  tasks, onToggleStatus, onEditTask, onMoveTaskQuadrant, onOpenNewTask,
+  tasks, onToggleStatus, onEditTask, onMoveTaskQuadrant, onOpenNewTask, onUpdateSubtasks,
 }) => {
   const { t, language } = useLanguage();
   const lang = (language as LocalLang) || 'en';
   const copy = COPY[lang] ?? COPY.en;
 
   const [menuTaskId, setMenuTaskId] = useState<string | null>(null);
+  const [subtaskTaskId, setSubtaskTaskId] = useState<string | null>(null);
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
   const [dragOverQuadrant, setDragOverQuadrant] = useState<QuadrantId | null>(null);
 
@@ -197,6 +200,9 @@ export const PriorityBoardView: React.FC<PriorityBoardViewProps> = ({
                     const due = task.dueDate ? formatDue(task.dueDate, lang, copy.tomorrow) : null;
                     const isMenuOpen = menuTaskId === task.id;
                     const isDragging = draggedTaskId === task.id;
+                    const subs = task.subtasks || [];
+                    const subsDone = subs.filter((s) => s.done).length;
+                    const isSubOpen = subtaskTaskId === task.id;
 
                     return (
                       <div key={task.id} draggable onDragStart={(e) => handleDragStart(e, task.id)} onDragEnd={handleDragEnd} className={`relative group rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700/80 shadow-xs transition-all cursor-grab active:cursor-grabbing hover:shadow-md ${isDragging ? 'opacity-40' : ''}`} style={{ borderLeftWidth: 3, borderLeftColor: col.color }}>
@@ -242,6 +248,14 @@ export const PriorityBoardView: React.FC<PriorityBoardViewProps> = ({
                               <MoreVertical className="w-3.5 h-3.5" />
                             </button>
                           </div>
+
+                          {onUpdateSubtasks && (
+                            <button onClick={(e) => { e.stopPropagation(); triggerHaptic('light'); setSubtaskTaskId(isSubOpen ? null : task.id); }} className="mt-1.5 ml-5 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-bold transition cursor-pointer" style={{ background: `${col.color}18`, color: col.color }}>
+                              <span>📋</span>
+                              <span>{subsDone} / {subs.length}</span>
+                              {isSubOpen ? <ChevronUp className="w-2.5 h-2.5" /> : <ChevronDown className="w-2.5 h-2.5" />}
+                            </button>
+                          )}
                         </div>
 
                         <AnimatePresence>
@@ -260,6 +274,12 @@ export const PriorityBoardView: React.FC<PriorityBoardViewProps> = ({
                             </>
                           )}
                         </AnimatePresence>
+
+                        {isSubOpen && onUpdateSubtasks && (
+                          <div draggable={false} onClick={(e) => e.stopPropagation()} className="border-t border-dashed border-slate-200 dark:border-slate-700 px-2.5 py-2">
+                            <SubtaskList subtasks={subs} onChange={(next) => onUpdateSubtasks(task.id, next)} />
+                          </div>
+                        )}
                       </div>
                     );
                   })}

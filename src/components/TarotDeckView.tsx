@@ -1,15 +1,17 @@
 import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence, useMotionValue, useTransform, PanInfo } from 'framer-motion';
-import { Check, X, RotateCcw } from 'lucide-react';
-import { Task, QuadrantId } from '../types';
+import { Check, X, RotateCcw, ChevronDown, ChevronUp } from 'lucide-react';
+import { Task, QuadrantId, Subtask } from '../types';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
+import { SubtaskList } from './SubtaskList';
 
 interface TarotDeckViewProps {
   tasks: Task[];
   onToggleStatus: (taskId: string) => void;
   onDeleteTask?: (taskId: string) => void;
   onQuadrantSelect?: (q: QuadrantId) => void;
+  onUpdateSubtasks?: (taskId: string, nextSubtasks: Subtask[]) => void;
 }
 
 const QUAD_META: Record<QuadrantId, { emoji: string; color: string }> = {
@@ -40,7 +42,7 @@ const COPY: Record<LocalLang, {
 };
 
 export const TarotDeckView: React.FC<TarotDeckViewProps> = ({
-  tasks, onToggleStatus, onDeleteTask, onQuadrantSelect,
+  tasks, onToggleStatus, onDeleteTask, onQuadrantSelect, onUpdateSubtasks,
 }) => {
   const { isDark } = useTheme();
   const { t, language } = useLanguage();
@@ -108,7 +110,7 @@ export const TarotDeckView: React.FC<TarotDeckViewProps> = ({
         )}
 
         <AnimatePresence mode="wait">
-          <SwipeableTarotCard key={currentTask.id} task={currentTask} isDark={isDark} cardBg={CARD_BG} exitDir={exitDir} quadLabel={t(`quad_${currentTask.quadrant}`)} onComplete={handleComplete} onDelete={handleDelete} onDefer={handleDefer} onTapQuadrant={handleTapQuadrant} />
+          <SwipeableTarotCard key={currentTask.id} task={currentTask} isDark={isDark} cardBg={CARD_BG} exitDir={exitDir} quadLabel={t(`quad_${currentTask.quadrant}`)} onComplete={handleComplete} onDelete={handleDelete} onDefer={handleDefer} onTapQuadrant={handleTapQuadrant} onUpdateSubtasks={onUpdateSubtasks} />
         </AnimatePresence>
 
         <AnimatePresence>
@@ -130,9 +132,11 @@ export const TarotDeckView: React.FC<TarotDeckViewProps> = ({
 interface SwipeableTarotCardProps {
   task: Task; isDark: boolean; cardBg: string; exitDir: ExitDir; quadLabel: string;
   onComplete: () => void; onDelete: () => void; onDefer: () => void; onTapQuadrant: () => void;
+  onUpdateSubtasks?: (taskId: string, nextSubtasks: Subtask[]) => void;
 }
 
-const SwipeableTarotCard: React.FC<SwipeableTarotCardProps> = ({ task, isDark, cardBg, exitDir, quadLabel, onComplete, onDelete, onDefer, onTapQuadrant }) => {
+const SwipeableTarotCard: React.FC<SwipeableTarotCardProps> = ({ task, isDark, cardBg, exitDir, quadLabel, onComplete, onDelete, onDefer, onTapQuadrant, onUpdateSubtasks }) => {
+  const [showSubs, setShowSubs] = useState(false);
   const x = useMotionValue(0);
   const y = useMotionValue(0);
   const rotate = useTransform(x, [-200, 0, 200], [-15, 0, 15]);
@@ -169,6 +173,20 @@ const SwipeableTarotCard: React.FC<SwipeableTarotCardProps> = ({ task, isDark, c
         <div className="text-[20px] font-black tracking-tight leading-tight mb-2" style={{ color: isDark ? '#FEF3C7' : '#451A03' }}>{task.title}</div>
         {task.description && <p className="text-[12px] font-medium leading-tight mt-1" style={{ color: isDark ? '#C4B5FD' : '#92400E' }}>{task.description}</p>}
       </div>
+
+      {onUpdateSubtasks && (
+        <div className="px-3 pb-3" onPointerDownCapture={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+          <button onClick={() => setShowSubs((v) => !v)} className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold transition cursor-pointer" style={{ background: `${meta.color}22`, border: `1px solid ${meta.color}55`, color: meta.color }}>
+            <span>📋 {(task.subtasks || []).filter((s) => s.done).length} / {(task.subtasks || []).length}</span>
+            {showSubs ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+          </button>
+          {showSubs && (
+            <div className="mt-2 max-h-[26vh] overflow-y-auto rounded-xl p-2 text-left rtl:text-right" style={{ background: 'rgba(255,255,255,0.8)' }}>
+              <SubtaskList subtasks={task.subtasks || []} onChange={(next) => onUpdateSubtasks(task.id, next)} />
+            </div>
+          )}
+        </div>
+      )}
       <div style={{ position: 'absolute', bottom: 10, left: 12, fontSize: 14, color: '#B45309', fontWeight: 'bold' }}>✦</div>
       <div style={{ position: 'absolute', bottom: 10, right: 12, fontSize: 14, color: '#B45309', fontWeight: 'bold' }}>✦</div>
     </motion.div>

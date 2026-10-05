@@ -121,6 +121,19 @@ const CONTEXT_KEYWORDS: { id: string; keywords: string[] }[] = [
 ];
 
 // ─────────────────────────────────────────────
+//   Arabic digit normalization
+// ─────────────────────────────────────────────
+
+const ARABIC_DIGITS: Record<string, string> = {
+  '٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4',
+  '٥': '5', '٦': '6', '٧': '7', '٨': '8', '٩': '9',
+};
+
+function normalizeDigits(text: string): string {
+  return text.replace(/[٠-٩]/g, (d) => ARABIC_DIGITS[d] ?? d);
+}
+
+// ─────────────────────────────────────────────
 //   Helpers
 // ─────────────────────────────────────────────
 
@@ -211,7 +224,30 @@ function stripExplicitTokens(text: string): string {
 
 const TIME_REGEX = /(\d{1,2})(?::(\d{2}))?\s*([ap])\.?\s*m\.?/i;
 
+function normalizeMatch(m: RegExpMatchArray): { hour: number; minute: number } | null {
+  let h = parseInt(m[1], 10);
+  const min = m[2] ? parseInt(m[2], 10) : 0;
+  const suffix = (m[3] || '').toLowerCase();
+
+  if (suffix === 'p' && h < 12) h += 12;
+  if (suffix === 'a' && h === 12) h = 0;
+
+  if (h < 0 || h > 23 || min < 0 || min > 59) return null;
+  return { hour: h, minute: min };
+}
+
 function findExplicitTime(lower: string): { hour: number; minute: number } | null {
+  // ── 1. Single-word times ──
+  // "noon" / "at noon" / "ظهراً" / "الظهر"
+  if (/\b(?:at\s+)?noon\b/i.test(lower) || /(?:الساعة\s+)?ظهرا|ظهراً|(?:في\s+)?الظهر/.test(lower)) {
+    return { hour: 12, minute: 0 };
+  }
+  // "midnight" / "at midnight" / "منتصف الليل"
+  if (/\b(?:at\s+)?midnight\b/i.test(lower) || /منتصف\s+الليل/.test(lower)) {
+    return { hour: 0, minute: 0 };
+  }
+
+  // ── 2. H / H:MM with explicit am/pm ──
   const introPatterns: RegExp[] = [
     /(?:set\s+time\s+to)\s+(\d{1,2})(?::(\d{2}))?\s*([ap])\.?\s*m\.?/i,
     /(?:set\s+(?:a\s+)?reminder\s+(?:at|in|for))\s+(\d{1,2})(?::(\d{2}))?\s*([ap])\.?\s*m\.?/i,
@@ -228,19 +264,51 @@ function findExplicitTime(lower: string): { hour: number; minute: number } | nul
   const bare = lower.match(TIME_REGEX);
   if (bare) return normalizeMatch(bare);
 
+  // ── 3. "H morning/afternoon/evening/night" (English qualifier) ──
+  const enQual = lower.match(/\b(\d{1,2})(?::(\d{2}))?\s*(?:in\s+the\s+)?(morning|afternoon|evening|night)\b/i);
+  if (enQual) {
+    let h = parseInt(enQual[1], 10);
+    const min = enQual[2] ? parseInt(enQual[2], 10) : 0;
+    const q = enQual[3].toLowerCase();
+    if (q === 'morning') {
+      if (h === 12) h = 0;           // 12 morning = midnight
+    } else if (q === 'afternoon' || q === 'evening') {
+      if (h < 12) h += 12;           // 3 evening = 15
+    } else if (q === 'night') {
+      if (h === 12) h = 0;           // 12 night = midnight
+      else if (h < 12) h += 12;
+    }
+    if (h >= 0 && h <= 23 && min >= 0 && min <= 59) return { hour: h, minute: min };
+  }
+
+  // ── 4. "H صباحاً / مساءً / ظهراً / ليلاً" (Arabic qualifier) ──
+  const arQual = lower.match(/(\d{1,2})(?::(\d{2}))?\s*(?:في\s+)?(صباحا|صباحاً|صباح|مساء|مساءً|مساءا|ظهرا|ظهراً|ليلا|ليلاً)/);
+  if (arQual) {
+    let h = parseInt(arQual[1], 10);
+    const min = arQual[2] ? parseInt(arQual[2], 10) : 0;
+    const q = arQual[3];
+    if (/صباح/.test(q)) {
+      if (h === 12) h = 0;
+    } else if (/مساء|ليلا|ليلاً/.test(q)) {
+      if (h < 12) h += 12;
+    } else if (/ظهرا|ظهراً/.test(q)) {
+      h = 12;
+    }
+    if (h >= 0 && h <= 23 && min >= 0 && min <= 59) return { hour: h, minute: min };
+  }
+
+  // ── 5. Bare "at H" (no am/pm, no qualifier) — apply heuristic ──
+  // 1–7 → PM (afternoon/evening), 8–11 → AM, 12 → noon
+  const atBare = lower.match(/(?:at|@|à|في|الساعة)\s+(\d{1,2})(?::(\d{2}))?\b/i);
+  if (atBare) {
+    let h = parseInt(atBare[1], 10);
+    const min = atBare[2] ? parseInt(atBare[2], 10) : 0;
+    if (h >= 1 && h <= 7) h += 12;
+    else if (h === 12) h = 12;
+    if (h >= 0 && h <= 23 && min >= 0 && min <= 59) return { hour: h, minute: min };
+  }
+
   return null;
-}
-
-function normalizeMatch(m: RegExpMatchArray): { hour: number; minute: number } | null {
-  let h = parseInt(m[1], 10);
-  const min = m[2] ? parseInt(m[2], 10) : 0;
-  const suffix = (m[3] || '').toLowerCase();
-
-  if (suffix === 'p' && h < 12) h += 12;
-  if (suffix === 'a' && h === 12) h = 0;
-
-  if (h < 0 || h > 23 || min < 0 || min > 59) return null;
-  return { hour: h, minute: min };
 }
 
 const DAY_NAMES: Record<string, number> = {
@@ -496,11 +564,22 @@ function stripTimePhrasesFromTitle(text: string): string {
   out = out.replace(/\bnext\s+month\b/gi, ' ');
   out = out.replace(/\bnext\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)\b/gi, ' ');
 
-  // ── Order matters: strip "at 5pm" BEFORE bare "5pm" so no orphan "at" remains ──
+  // Strip "at H am/pm" (existing behavior)
   out = out.replace(/\b(?:at|@)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.|[ap])?\.?\s*m?\.?\b/gi, ' ');
   out = out.replace(/\b(?:à|في|الساعة)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.|[ap])?\.?\s*m?\.?\b/gi, ' ');
-  // Then bare times: "9am", "9:30pm", "5 p.m."
+  // Bare times: "9am", "9:30pm"
   out = out.replace(/\b\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)\b/gi, ' ');
+
+  // 🆕 Strip "H morning/afternoon/evening/night" (English qualifier)
+  out = out.replace(/\b\d{1,2}(?::\d{2})?\s*(?:in\s+the\s+)?(?:morning|afternoon|evening|night)\b/gi, ' ');
+  // 🆕 Strip "H صباحاً / مساءً / ظهراً / ليلاً" (Arabic qualifier)
+  out = out.replace(/\b\d{1,2}(?::\d{2})?\s*(?:في\s+)?(?:صباحا|صباحاً|صباح|مساء|مساءً|مساءا|ظهرا|ظهراً|ليلا|ليلاً)/g, ' ');
+
+  // 🆕 Strip standalone noon / midnight keywords
+  out = out.replace(/\b(?:at\s+)?noon\b/gi, ' ');
+  out = out.replace(/\b(?:at\s+)?midnight\b/gi, ' ');
+  out = out.replace(/(?:الساعة\s+)?(?:ظهرا|ظهراً|الظهر)/g, ' ');
+  out = out.replace(/منتصف\s+الليل/g, ' ');
 
   out = out.replace(/\b(?:tomorrow|today)\s+(?:night|morning|afternoon|evening|matin|soir|après-midi)\b/gi, ' ');
   out = out.replace(/\b(?:غدا|بكرة|اليوم)\s+(?:الليلة|صباحا|مساء|بعد\s+الظهر)\b/gi, ' ');
@@ -521,7 +600,7 @@ function stripTimePhrasesFromTitle(text: string): string {
   out = out.replace(/\bset\s+(?:a\s+)?reminder\b/gi, ' ');
   out = out.replace(/\bremind\s+me\b/gi, ' ');
 
-  // 🆕 Remove trailing dangling connectors left after stripping time/date
+  // Remove trailing dangling connectors
   out = out.replace(/\s+(?:at|on|in|by|before|after|for|around|@|à|في|الساعة)\s*$/gi, '');
 
   return out.replace(/\s+/g, ' ').trim();
@@ -532,7 +611,8 @@ function stripTimePhrasesFromTitle(text: string): string {
 // ─────────────────────────────────────────────
 
 export function parseSpokenTask(rawTranscript: string): ParsedVoiceTask {
-  const raw = rawTranscript.trim();
+  // Normalize Arabic numerals to ASCII so all regexes work uniformly
+  const raw = normalizeDigits(rawTranscript.trim());
   const lower = raw.toLowerCase();
 
   const explicitPriority = extractExplicitPriority(raw);

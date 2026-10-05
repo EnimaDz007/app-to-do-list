@@ -31,6 +31,7 @@ const COPY: Record<LocalLang, PickerCopy> = {
     subtitle: 'Pick your Matrix view style',
     close: 'Close layout picker',
     designs: {
+      binder:     { name: 'Leather Binder',    desc: 'Brass & leather' },
       classic:    { name: 'Classic Matrix',    desc: 'Your current layout' },
       neumorphic: { name: 'Soft Neumorphic',   desc: 'Pillow shadows' },
       stacked:    { name: 'Stacked Cards',     desc: '3D layered depth' },
@@ -47,6 +48,7 @@ const COPY: Record<LocalLang, PickerCopy> = {
     subtitle: 'Choisissez votre style de matrice',
     close: 'Fermer le sélecteur',
     designs: {
+      binder:     { name: 'Classeur cuir',     desc: 'Laiton et cuir' },
       classic:    { name: 'Matrice classique', desc: 'Disposition actuelle' },
       neumorphic: { name: 'Néomorphique doux', desc: 'Ombres en coussin' },
       stacked:    { name: 'Cartes empilées',   desc: 'Profondeur 3D' },
@@ -63,6 +65,7 @@ const COPY: Record<LocalLang, PickerCopy> = {
     subtitle: 'اختر نمط عرض المصفوفة',
     close: 'إغلاق منتقي التخطيط',
     designs: {
+      binder:     { name: 'مجلد جلدي',           desc: 'نحاس وجلد' },
       classic:    { name: 'المصفوفة الكلاسيكية', desc: 'تخطيطك الحالي' },
       neumorphic: { name: 'نيومورفي ناعم',        desc: 'ظلال وسائدية' },
       stacked:    { name: 'بطاقات متراكمة',        desc: 'عمق ثلاثي الأبعاد' },
@@ -87,6 +90,10 @@ export const UILayoutPicker: React.FC<UILayoutPickerProps> = ({ isOpen, onClose 
 
   const handleSelect = (id: UIDesign) => {
     triggerHaptic('success');
+    // Persist immediately. The transition overlay applies the theme at the PEAK of its
+    // animation (~1.5s later) and only writes storage then — so a user who closed the
+    // app inside that window would lose their choice. Writing here closes that gap.
+    try { localStorage.setItem('taskflow_ui_design', id); } catch { /* storage blocked */ }
     // Trigger the themed transition — it applies the design at the peak
     // of the animation and clears itself when done.
     triggerThemeTransition(id);
