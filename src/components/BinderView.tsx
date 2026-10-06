@@ -1,10 +1,14 @@
 // ─────────────────────────────────────────────────────────────
 //  FILE: src/components/BinderView.tsx
+//  Two-level subtasks: task → subtask → sub-subtask
+//  ＋ shows on task rows and subtask rows only
 // ─────────────────────────────────────────────────────────────
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Task, QuadrantId, Subtask } from '../types';
 import { useTheme } from '../context/ThemeContext';
+import { useLanguage } from '../context/LanguageContext';
+import { triggerHaptic } from '../utils/haptics';
 import { BinderCoverArt } from './BinderCoverArt';
 import { BinderInsideCover } from './BinderInsideCover';
 
@@ -17,11 +21,84 @@ interface Props {
 }
 interface Q { id: QuadrantId; label: string; meta: string; color: string; accent: string; bg: string; idx: string; }
 
-const QS: Q[] = [
-  { id: 'do_first',  label: 'Do First',  meta: 'Urgent · today',  color: '#a02028', accent: '#d04040', bg: 'linear-gradient(135deg,#d84848 0%,#a01828 50%,#4a0810 100%)', idx: '01' },
-  { id: 'schedule',  label: 'Schedule',  meta: 'This week',       color: '#2048a0', accent: '#5080d8', bg: 'linear-gradient(135deg,#5888e0 0%,#2048a8 50%,#0c1a5e 100%)', idx: '02' },
-  { id: 'delegate',  label: 'Delegate',  meta: 'Team · hand off', color: '#207038', accent: '#58b068', bg: 'linear-gradient(135deg,#60b870 0%,#207038 50%,#0a3a1c 100%)', idx: '03' },
-  { id: 'eliminate', label: 'Eliminate', meta: 'Drop · let go',   color: '#4a4a58', accent: '#908088', bg: 'linear-gradient(135deg,#9a8a92 0%,#403040 50%,#1a1018 100%)', idx: '04' },
+type LocalLang = 'en' | 'fr' | 'ar';
+
+const QUAD_COPY: Record<LocalLang, Record<QuadrantId, { label: string; meta: string }>> = {
+  en: {
+    do_first:  { label: 'Do First',  meta: 'Urgent · today' },
+    schedule:  { label: 'Schedule',  meta: 'This week' },
+    delegate:  { label: 'Delegate',  meta: 'Team · hand off' },
+    eliminate: { label: 'Eliminate', meta: 'Drop · let go' },
+  },
+  fr: {
+    do_first:  { label: 'À faire',   meta: 'Urgent · aujourd’hui' },
+    schedule:  { label: 'Planifier', meta: 'Cette semaine' },
+    delegate:  { label: 'Déléguer',  meta: 'Équipe · transmettre' },
+    eliminate: { label: 'Éliminer',  meta: 'Abandonner' },
+  },
+  ar: {
+    do_first:  { label: 'افعل أولاً', meta: 'عاجل · مهم' },
+    schedule:  { label: 'جدول',      meta: 'مهم · لاحقاً' },
+    delegate:  { label: 'فوّض',      meta: 'عاجل · للفريق' },
+    eliminate: { label: 'احذف',      meta: 'غير مهم' },
+  },
+};
+
+const UI_COPY: Record<LocalLang, {
+  addSubtaskPlaceholder: string;
+  addSubSubtaskPlaceholder: string;
+  addSubtask: string;
+  addSubSubtask: string;
+  deleteSub: string;
+  subtasks: string;
+  progress: string;
+  emptySection: string;
+  openBinder: string;
+  openBinderHint: string;
+}> = {
+  en: {
+    addSubtaskPlaceholder: 'Add a subtask…',
+    addSubSubtaskPlaceholder: 'Add a sub-subtask…',
+    addSubtask: 'subtask',
+    addSubSubtask: 'sub-subtask',
+    deleteSub: 'Delete',
+    subtasks: 'subtasks',
+    progress: 'Progress',
+    emptySection: 'No tasks in this section yet',
+    openBinder: 'Open the binder',
+    openBinderHint: 'Tap a folder tab on the right to open a section',
+  },
+  fr: {
+    addSubtaskPlaceholder: 'Ajouter une sous-tâche…',
+    addSubSubtaskPlaceholder: 'Ajouter une sous-sous-tâche…',
+    addSubtask: 'sous-tâche',
+    addSubSubtask: 'sous-sous-tâche',
+    deleteSub: 'Supprimer',
+    subtasks: 'sous-tâches',
+    progress: 'Progrès',
+    emptySection: 'Aucune tâche dans cette section',
+    openBinder: 'Ouvrir le classeur',
+    openBinderHint: 'Touchez un onglet latéral pour ouvrir une section',
+  },
+  ar: {
+    addSubtaskPlaceholder: 'أضف مهمة فرعية…',
+    addSubSubtaskPlaceholder: 'أضف مهمة فرعية داخلية…',
+    addSubtask: 'مهمة فرعية',
+    addSubSubtask: 'مهمة داخلية',
+    deleteSub: 'حذف',
+    subtasks: 'مهام فرعية',
+    progress: 'التقدم',
+    emptySection: 'لا توجد مهام في هذا القسم',
+    openBinder: 'افتح المفكرة',
+    openBinderHint: 'اضغط على تبويب جانبي لفتح قسم',
+  },
+};
+
+const Q_META = [
+  { id: 'do_first'  as QuadrantId, color: '#a02028', accent: '#d04040', bg: 'linear-gradient(135deg,#d84848 0%,#a01828 50%,#4a0810 100%)', idx: '01' },
+  { id: 'schedule'  as QuadrantId, color: '#2048a0', accent: '#5080d8', bg: 'linear-gradient(135deg,#5888e0 0%,#2048a8 50%,#0c1a5e 100%)', idx: '02' },
+  { id: 'delegate'  as QuadrantId, color: '#207038', accent: '#58b068', bg: 'linear-gradient(135deg,#60b870 0%,#207038 50%,#0a3a1c 100%)', idx: '03' },
+  { id: 'eliminate' as QuadrantId, color: '#4a4a58', accent: '#908088', bg: 'linear-gradient(135deg,#9a8a92 0%,#403040 50%,#1a1018 100%)', idx: '04' },
 ];
 
 const OPEN_MS = 2200;
@@ -29,39 +106,116 @@ const FLIP_MS = 900;
 const PAPER_BG = 'radial-gradient(ellipse 70% 45% at 22% 12%, #fffaf0 0%, #faf4e0 45%, #f2ecdc 100%)';
 const PAPER_SHADOW = 'inset 0 0 0 1px rgba(180,160,120,0.5), inset 0 1px 0 rgba(255,255,255,0.9), 0 6px 20px rgba(0,0,0,0.5)';
 
+let subCounter = 0;
+const makeSubId = () => `sub_${Date.now()}_${subCounter++}`;
+
+const inputStyle: React.CSSProperties = {
+  flex: 1, minWidth: 0,
+  background: 'rgba(255,255,255,0.55)',
+  border: '1px solid rgba(140,120,80,0.35)',
+  borderRadius: 6,
+  padding: '4px 8px',
+  fontFamily: "'Kalam','Comic Sans MS',cursive",
+  fontSize: 13, lineHeight: 1.3,
+  color: '#2a1a08',
+  outline: 'none',
+};
+
 export const BinderView: React.FC<Props> = ({ tasks, onToggleStatus, onQuadrantSelect, onUpdateSubtasks }) => {
   const { isDark } = useTheme();
+  const { language } = useLanguage();
+  const lang = (language as LocalLang) || 'en';
+  const copy = QUAD_COPY[lang] ?? QUAD_COPY.en;
+  const ui = UI_COPY[lang] ?? UI_COPY.en;
+
+  const QS: Q[] = Q_META.map((m) => ({
+    id: m.id,
+    label: copy[m.id].label,
+    meta: copy[m.id].meta,
+    color: m.color, accent: m.accent, bg: m.bg, idx: m.idx,
+  }));
+
   const [currentQ, setCurrentQ] = useState<QuadrantId | null>(null);
   const [prevQ, setPrevQ] = useState<QuadrantId | null>(null);
   const [flip, setFlip] = useState<{ from: QuadrantId; to: QuadrantId; dir: 'fwd' | 'back' } | null>(null);
   const [busy, setBusy] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // { taskId, parentSubId } | null — parentSubId === null → add to task root
+  const [addingTo, setAddingTo] = useState<{ taskId: string; parentSubId: string | null } | null>(null);
+  const [draft, setDraft] = useState('');
+  const [hoveredSub, setHoveredSub] = useState<string | null>(null);
   const timer = useRef<number | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (addingTo && inputRef.current) setTimeout(() => inputRef.current?.focus(), 40);
+  }, [addingTo]);
 
   const tasksFor = (q: QuadrantId) => tasks.filter((t) => t.quadrant === q);
   const clearTimer = () => { if (timer.current !== null) { window.clearTimeout(timer.current); timer.current = null; } };
   const toggleExp = (id: string) => setExpanded((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  // Recursive all-done check
+  const allDone = (l: Subtask[]): boolean => l.every((st) => st.done && (!st.subtasks?.length || allDone(st.subtasks)));
+
   const toggleSub = (taskId: string, subId: string) => {
     if (!onUpdateSubtasks) return;
     const task = tasks.find((t) => t.id === taskId);
     if (!task || !task.subtasks) return;
-    const walk = (l: Subtask[]): Subtask[] => l.map((st) => st.id === subId ? { ...st, done: !st.done } : (st.subtasks?.length ? { ...st, subtasks: walk(st.subtasks) } : st));
+    const walk = (l: Subtask[]): Subtask[] =>
+      l.map((st) => st.id === subId ? { ...st, done: !st.done } : (st.subtasks?.length ? { ...st, subtasks: walk(st.subtasks) } : st));
+    const next = walk(task.subtasks);
+    onUpdateSubtasks(taskId, next);
+
+    const nowAllDone = next.length > 0 && allDone(next);
+    const wasDone = task.status === 'completed';
+    if (nowAllDone && !wasDone) setTimeout(() => onToggleStatus(taskId), 220);
+    else if (!nowAllDone && wasDone) setTimeout(() => onToggleStatus(taskId), 220);
+  };
+
+  const deleteSub = (taskId: string, subId: string) => {
+    if (!onUpdateSubtasks) return;
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task || !task.subtasks) return;
+    const walk = (l: Subtask[]): Subtask[] =>
+      l.filter((st) => st.id !== subId).map((st) => st.subtasks?.length ? { ...st, subtasks: walk(st.subtasks) } : st);
     onUpdateSubtasks(taskId, walk(task.subtasks));
+    triggerHaptic('medium');
+  };
+
+  // parentSubId === null → add at task root; else add as child of that subtask
+  const addSubTo = (taskId: string, parentSubId: string | null) => {
+    const title = draft.trim();
+    if (!title || !onUpdateSubtasks) { setAddingTo(null); setDraft(''); return; }
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) return;
+    const newSub: Subtask = { id: makeSubId(), title, done: false };
+
+    if (parentSubId === null) {
+      onUpdateSubtasks(taskId, [...(task.subtasks ?? []), newSub]);
+    } else {
+      const walk = (l: Subtask[]): Subtask[] =>
+        l.map((st) => st.id === parentSubId ? { ...st, subtasks: [...(st.subtasks ?? []), newSub] }
+          : (st.subtasks?.length ? { ...st, subtasks: walk(st.subtasks) } : st));
+      onUpdateSubtasks(taskId, walk(task.subtasks ?? []));
+    }
+
+    setExpanded((p) => { const n = new Set(p); n.add(taskId); return n; });
+    if (task.status === 'completed') setTimeout(() => onToggleStatus(taskId), 180);
+    setDraft('');
+    triggerHaptic('success');
+    setTimeout(() => inputRef.current?.focus(), 30);
   };
 
   const onTab = (q: QuadrantId) => {
     if (busy) return;
-    // nothing open yet → open on the right
     if (!currentQ) { setBusy(true); setCurrentQ(q); setPrevQ(null); onQuadrantSelect?.(q); clearTimer(); timer.current = window.setTimeout(() => setBusy(false), OPEN_MS); return; }
-    // tapping the open page closes the binder
     if (currentQ === q) { setBusy(true); setCurrentQ(null); setPrevQ(null); clearTimer(); timer.current = window.setTimeout(() => setBusy(false), OPEN_MS); return; }
-    // tapping the turned leaf → it swings back the other way, like returning in a book
     if (prevQ === q) {
       setBusy(true); setFlip({ from: q, to: currentQ, dir: 'back' }); clearTimer();
       timer.current = window.setTimeout(() => { setCurrentQ(q); setPrevQ(null); setFlip(null); setBusy(false); onQuadrantSelect?.(q); }, FLIP_MS);
       return;
     }
-    // otherwise the open leaf turns over and settles on the inside cover
     setBusy(true); setFlip({ from: currentQ, to: q, dir: 'fwd' }); clearTimer();
     timer.current = window.setTimeout(() => { setPrevQ(currentQ); setCurrentQ(q); setFlip(null); setBusy(false); onQuadrantSelect?.(q); }, FLIP_MS);
   };
@@ -71,39 +225,157 @@ export const BinderView: React.FC<Props> = ({ tasks, onToggleStatus, onQuadrantS
   const stageTex = isDark ? `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Cfilter id='w'%3E%3CfeTurbulence baseFrequency='0.015 0.5' numOctaves='4' seed='12'/%3E%3CfeColorMatrix values='0 0 0 0 0.28 0 0 0 0 0.14 0 0 0 0 0.06 0 0 0 0.5 0'/%3E%3C/filter%3E%3Crect width='400' height='400' filter='url(%23w)'/%3E%3C/svg%3E")` : `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Cfilter id='w'%3E%3CfeTurbulence baseFrequency='0.015 0.4' numOctaves='3' seed='14'/%3E%3CfeColorMatrix values='0 0 0 0 0.55 0 0 0 0 0.45 0 0 0 0 0.32 0 0 0 0.22 0'/%3E%3C/filter%3E%3Crect width='400' height='400' filter='url(%23w)'/%3E%3C/svg%3E")`;
   const spot = isDark ? 'radial-gradient(ellipse, rgba(255,215,150,0.28) 0%, rgba(255,190,110,0.10) 35%, transparent 70%)' : 'radial-gradient(ellipse, rgba(255,245,220,0.75) 0%, rgba(255,235,200,0.30) 35%, transparent 70%)';
   const shadowOp = isDark ? 0.95 : 0.32;
-
-  // ── cover surface — tuned per theme so the book still reads in dark mode ──
-  const coverBg = isDark
-    ? 'linear-gradient(155deg,#e0655c 0%,#bd3038 22%,#941a26 52%,#641016 82%,#3d060b 100%)'
-    : 'linear-gradient(155deg,#c84747 0%,#a5222c 25%,#7a1220 55%,#4a0810 85%,#2a0308 100%)';
-  const coverShadow = isDark
-    ? 'inset 0 3px 14px rgba(255,228,228,0.34), inset 0 -16px 40px rgba(0,0,0,0.55), inset 0 0 130px rgba(0,0,0,0.28), 0 0 0 1px rgba(255,205,150,0.24), 0 0 38px rgba(214,176,92,0.22), 0 44px 90px rgba(0,0,0,0.95)'
-    : 'inset 0 3px 12px rgba(255,220,220,0.3), inset 0 -16px 40px rgba(0,0,0,0.7), inset 0 0 140px rgba(0,0,0,0.45), 0 44px 90px rgba(0,0,0,0.9), 0 0 0 1px rgba(0,0,0,0.95)';
-  const innerLeather = isDark
-    ? 'linear-gradient(155deg,#5c2129 0%,#3e1219 58%,#280a0e 100%)'
-    : 'linear-gradient(155deg,#4a1e22 0%,#33100f 60%,#1e0606 100%)';
+  const coverBg = isDark ? 'linear-gradient(155deg,#e0655c 0%,#bd3038 22%,#941a26 52%,#641016 82%,#3d060b 100%)' : 'linear-gradient(155deg,#c84747 0%,#a5222c 25%,#7a1220 55%,#4a0810 85%,#2a0308 100%)';
+  const coverShadow = isDark ? 'inset 0 3px 14px rgba(255,228,228,0.34), inset 0 -16px 40px rgba(0,0,0,0.55), inset 0 0 130px rgba(0,0,0,0.28), 0 0 0 1px rgba(255,205,150,0.24), 0 0 38px rgba(214,176,92,0.22), 0 44px 90px rgba(0,0,0,0.95)' : 'inset 0 3px 12px rgba(255,220,220,0.3), inset 0 -16px 40px rgba(0,0,0,0.7), inset 0 0 140px rgba(0,0,0,0.45), 0 44px 90px rgba(0,0,0,0.9), 0 0 0 1px rgba(0,0,0,0.95)';
+  const innerLeather = isDark ? 'linear-gradient(155deg,#5c2129 0%,#3e1219 58%,#280a0e 100%)' : 'linear-gradient(155deg,#4a1e22 0%,#33100f 60%,#1e0606 100%)';
   const g1 = isDark ? '#fffaea' : '#fff4d0';
   const g2 = isDark ? '#f6e3b4' : '#f0d8a8';
   const g3 = isDark ? '#dcb873' : '#c8a25c';
   const g4 = isDark ? '#a8853f' : '#8b6f3a';
   const stitchC = isDark ? 'rgba(240,210,140,0.85)' : 'rgba(212,175,90,0.7)';
 
-  const subList = (list: Subtask[], depth: number, color: string, tid: string): React.ReactNode => (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-      {list.map((st) => (
-        <div key={st.id}>
-          <div onClick={(e) => { e.stopPropagation(); toggleSub(tid, st.id); }} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, paddingLeft: 6 + depth * 14, paddingTop: 4, paddingBottom: 4, cursor: 'pointer' }}>
-            <div style={{ width: 13, height: 13, borderRadius: 3, flexShrink: 0, border: `1.5px solid ${color}`, background: st.done ? color : 'rgba(255,255,255,0.7)', marginTop: 2, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              {st.done && <span style={{ color: '#fff', fontSize: 8, fontWeight: 700 }}>✓</span>}
-            </div>
-            <span style={{ fontFamily: "'Kalam','Comic Sans MS',cursive", fontSize: 13, lineHeight: 1.35, color: st.done ? 'rgba(42,26,8,0.4)' : '#3a2a18', textDecoration: st.done ? 'line-through' : 'none', wordBreak: 'break-word' }}>{st.title}</span>
-          </div>
-          {st.subtasks?.length ? subList(st.subtasks, depth + 1, color, tid) : null}
-        </div>
-      ))}
-    </div>
-  );
+  // ─── Subtask list ───
+  // depth=0 → level-1 subtasks (get a ＋ to add sub-subtasks)
+  // depth=1 → level-2 sub-subtasks (no ＋, only checkbox/title/×)
+  const subList = (list: Subtask[], depth: number, color: string, tid: string): React.ReactNode => {
+    const canAddChildren = depth === 0;
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+        {list.map((st) => {
+          const isHovered = hoveredSub === st.id;
+          const isAddingHere = addingTo?.taskId === tid && addingTo?.parentSubId === st.id;
+          const childCount = st.subtasks?.length ?? 0;
+          const childDone = st.subtasks?.filter((s) => s.done).length ?? 0;
+          return (
+            <div key={st.id}>
+              <div
+                onMouseEnter={() => setHoveredSub(st.id)}
+                onMouseLeave={() => { if (hoveredSub === st.id) setHoveredSub(null); }}
+                style={{
+                  display: 'flex', alignItems: 'flex-start', gap: 6,
+                  paddingLeft: 8 + depth * 18, paddingRight: 4,
+                  paddingTop: 6, paddingBottom: 6,
+                  borderRadius: 6,
+                  transition: 'background 0.15s',
+                  background: isHovered ? 'rgba(120,100,60,0.06)' : 'transparent',
+                }}
+              >
+                {/* Checkbox */}
+                <button
+                  onClick={(e) => { e.stopPropagation(); toggleSub(tid, st.id); }}
+                  aria-label="Toggle done"
+                  style={{
+                    width: 15, height: 15, borderRadius: 3, flexShrink: 0,
+                    border: `1.5px solid ${color}`,
+                    background: st.done ? color : 'rgba(255,255,255,0.7)',
+                    marginTop: 1, cursor: 'pointer', padding: 0,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    transition: 'background 0.2s',
+                  }}
+                >
+                  {st.done && <span style={{ color: '#fff', fontSize: 9, fontWeight: 700, lineHeight: 1 }}>✓</span>}
+                </button>
 
+                {/* Title */}
+                <div
+                  onClick={() => toggleSub(tid, st.id)}
+                  style={{ flex: 1, minWidth: 0, cursor: 'pointer' }}
+                >
+                  <span
+                    dir="auto"
+                    style={{
+                      fontFamily: "'Kalam','Comic Sans MS',cursive",
+                      fontSize: 13, lineHeight: 1.4, display: 'block',
+                      color: st.done ? 'rgba(42,26,8,0.4)' : '#3a2a18',
+                      textDecoration: st.done ? 'line-through' : 'none',
+                      wordBreak: 'break-word',
+                    }}
+                  >
+                    {st.title}
+                  </span>
+                  {childCount > 0 && (
+                    <div dir="ltr" style={{ fontFamily: 'monospace', fontSize: 8, color: '#8a7a58', marginTop: 1, unicodeBidi: 'isolate' }}>
+                      {childDone} / {childCount}
+                    </div>
+                  )}
+                </div>
+
+                {/* ＋ Add sub-subtask — only on level-1 subtasks */}
+                {canAddChildren && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setAddingTo({ taskId: tid, parentSubId: st.id });
+                      setDraft('');
+                      setExpanded((p) => { const n = new Set(p); n.add(tid); return n; });
+                    }}
+                    aria-label={ui.addSubSubtask}
+                    title={ui.addSubSubtask}
+                    style={{
+                      width: 20, height: 20, flexShrink: 0,
+                      background: 'transparent', border: 'none', cursor: 'pointer',
+                      color: 'rgba(140,110,60,0.7)', fontSize: 13, fontWeight: 700, lineHeight: 1,
+                      padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      borderRadius: 4, marginTop: 1,
+                      transition: 'background 0.15s, color 0.15s',
+                    }}
+                    onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'rgba(212,175,90,0.22)'; (e.currentTarget as HTMLElement).style.color = '#5a3a10'; }}
+                    onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = 'rgba(140,110,60,0.7)'; }}
+                  >
+                    ＋
+                  </button>
+                )}
+
+                {/* × Delete subtask */}
+                <button
+                  onClick={(e) => { e.stopPropagation(); deleteSub(tid, st.id); }}
+                  aria-label={ui.deleteSub}
+                  title={ui.deleteSub}
+                  style={{
+                    width: 20, height: 20, flexShrink: 0,
+                    background: 'transparent', border: 'none', cursor: 'pointer',
+                    color: 'rgba(160,90,60,0.6)', fontSize: 15, lineHeight: 1,
+                    padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    borderRadius: 4, marginTop: 1,
+                    transition: 'background 0.15s, color 0.15s',
+                  }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'rgba(200,90,90,0.18)'; (e.currentTarget as HTMLElement).style.color = '#8a3020'; }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = 'rgba(160,90,60,0.6)'; }}
+                >
+                  ×
+                </button>
+              </div>
+
+              {/* Nested children — recursive, but depth+1 means no ＋ inside */}
+              {st.subtasks?.length ? subList(st.subtasks, depth + 1, color, tid) : null}
+
+              {/* Inline add input for this subtask's children */}
+              {isAddingHere && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingLeft: 8 + (depth + 1) * 18, paddingRight: 4, paddingTop: 4, paddingBottom: 4 }}>
+                  <div style={{ width: 15, height: 15, borderRadius: 3, flexShrink: 0, border: `1.5px dashed ${color}80`, marginTop: 1 }} />
+                  <input
+                    ref={inputRef}
+                    dir="auto"
+                    value={draft}
+                    placeholder={ui.addSubSubtaskPlaceholder}
+                    onChange={(e) => setDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') { e.preventDefault(); addSubTo(tid, st.id); }
+                      else if (e.key === 'Escape') { setAddingTo(null); setDraft(''); }
+                    }}
+                    onBlur={() => { if (!draft.trim()) setAddingTo(null); else addSubTo(tid, st.id); }}
+                    style={inputStyle}
+                  />
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  // ─── Page body ───
   const pageBody = (q: Q, list: Task[]): React.ReactNode => {
     const done = list.filter((t) => t.status === 'completed').length;
     const pct = list.length > 0 ? (done / list.length) * 100 : 0;
@@ -111,46 +383,129 @@ export const BinderView: React.FC<Props> = ({ tasks, onToggleStatus, onQuadrantS
       <>
         <div style={{ position: 'absolute', inset: 0, backgroundImage: 'repeating-linear-gradient(0deg, transparent 0 30px, rgba(120,140,180,0.13) 30px 31px)', backgroundPosition: '0 62px', pointerEvents: 'none' }} />
         <div style={{ position: 'absolute', top: 0, bottom: 0, left: 46, width: 1, background: 'rgba(200,90,90,0.3)', pointerEvents: 'none' }} />
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', padding: '42px 20px 14px 60px' }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', paddingBottom: 8, marginBottom: 12, borderBottom: '1.5px solid #2a1a08', position: 'relative', flexShrink: 0 }}>
-            <div style={{ fontFamily: "'Cormorant Garamond',Georgia,serif", fontSize: 24, fontWeight: 500, fontStyle: 'italic', lineHeight: 1, color: q.color, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '68%' }}>{q.label}</div>
-            <div style={{ fontFamily: 'monospace', fontSize: 8, letterSpacing: 1.4, textTransform: 'uppercase', color: '#8a7a58', whiteSpace: 'nowrap' }}>{q.meta}</div>
+
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', padding: '42px 68px 14px 60px' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', paddingBottom: 8, marginBottom: 12, borderBottom: '1.5px solid #2a1a08', position: 'relative', flexShrink: 0, gap: 10 }}>
+            <div dir="auto" style={{ fontFamily: "'Cormorant Garamond',Georgia,serif", fontSize: 22, fontWeight: 500, fontStyle: 'italic', lineHeight: 1.05, color: q.color, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, flex: 1 }}>
+              {q.label}
+            </div>
+            <div dir="auto" style={{ fontFamily: 'monospace', fontSize: 8, letterSpacing: 1.4, textTransform: 'uppercase', color: '#8a7a58', whiteSpace: 'nowrap', flexShrink: 0 }}>
+              {q.meta}
+            </div>
             <div style={{ position: 'absolute', bottom: -1.5, left: 0, width: 50, height: 1.5, background: 'linear-gradient(90deg,#c8a25c,transparent)' }} />
           </div>
-          <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+
+          <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', paddingRight: 2 }}>
             {list.length === 0 ? (
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, textAlign: 'center' }}>
                 <div style={{ fontSize: 30, opacity: 0.35 }}>✦</div>
-                <div style={{ fontFamily: "'Kalam','Comic Sans MS',cursive", fontSize: 13, color: '#6a5a3a', fontStyle: 'italic' }}>No tasks in this section yet</div>
+                <div dir="auto" style={{ fontFamily: "'Kalam','Comic Sans MS',cursive", fontSize: 13, color: '#6a5a3a', fontStyle: 'italic' }}>
+                  {ui.emptySection}
+                </div>
               </div>
             ) : list.map((task) => {
               const isDone = task.status === 'completed';
               const hasSub = !!(task.subtasks?.length);
-              const subDone = hasSub ? task.subtasks!.filter((s) => s.done).length : 0;
+              const subDone = hasSub ? task.subtasks!.filter((s) => s.done && (!s.subtasks?.length || allDone(s.subtasks))).length : 0;
               const isExp = expanded.has(task.id);
+              const isAddingHere = addingTo?.taskId === task.id && addingTo?.parentSubId === null;
               return (
                 <div key={task.id} style={{ borderBottom: '1px solid rgba(120,100,60,0.14)' }}>
-                  <div onClick={() => onToggleStatus(task.id)} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 2px', cursor: 'pointer' }}>
-                    {hasSub ? (<button onClick={(e) => { e.stopPropagation(); toggleExp(task.id); }} style={{ width: 16, height: 20, flexShrink: 0, background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, color: '#8a7a58', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', transform: isExp ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>▶</button>) : (<span style={{ width: 16, flexShrink: 0 }} />)}
-                    <div style={{ width: 20, height: 20, borderRadius: 4, flexShrink: 0, border: `2px solid ${q.color}`, background: isDone ? q.color : 'rgba(255,255,255,0.6)', marginTop: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      {isDone && <span style={{ color: '#fff', fontSize: 12, fontWeight: 700 }}>✓</span>}
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontFamily: "'Kalam','Comic Sans MS',cursive", fontSize: 15, lineHeight: 1.35, color: isDone ? 'rgba(42,26,8,0.4)' : '#2a1a08', textDecoration: isDone ? 'line-through' : 'none', wordBreak: 'break-word' }}>{task.title}</div>
-                      {hasSub && <div style={{ fontFamily: 'monospace', fontSize: 8.5, letterSpacing: 0.8, color: '#8a7a58', marginTop: 2 }}>{subDone} / {task.subtasks!.length} subtasks</div>}
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 4px 10px 2px', position: 'relative' }}>
+                    {hasSub ? (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); toggleExp(task.id); }}
+                        aria-label={isExp ? 'Collapse' : 'Expand'}
+                        style={{ width: 22, height: 22, flexShrink: 0, marginTop: 3, background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, color: '#8a7a58', display: 'flex', alignItems: 'center', justifyContent: 'center', transform: isExp ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}
+                      >
+                        <span style={{ fontSize: 12, fontWeight: 700, lineHeight: 1 }}>▶</span>
+                      </button>
+                    ) : (
+                      <span style={{ width: 22, flexShrink: 0 }} />
+                    )}
+
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onToggleStatus(task.id); }}
+                      aria-label={isDone ? 'Mark as not done' : 'Mark as done'}
+                      style={{ width: 22, height: 22, borderRadius: 5, flexShrink: 0, cursor: 'pointer', border: `2px solid ${q.color}`, background: isDone ? q.color : 'rgba(255,255,255,0.65)', marginTop: 3, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background 0.25s', padding: 0 }}
+                    >
+                      {isDone && <span style={{ color: '#fff', fontSize: 13, fontWeight: 700, lineHeight: 1 }}>✓</span>}
+                    </button>
+
+                    <div
+                      onClick={() => { if (hasSub) toggleExp(task.id); else onToggleStatus(task.id); }}
+                      style={{ flex: 1, minWidth: 0, cursor: 'pointer', paddingTop: 2 }}
+                    >
+                      <div dir="auto" style={{ fontFamily: "'Kalam','Comic Sans MS',cursive", fontSize: 15, lineHeight: 1.35, color: isDone ? 'rgba(42,26,8,0.4)' : '#2a1a08', textDecoration: isDone ? 'line-through' : 'none', wordBreak: 'break-word' }}>
+                        {task.title}
+                      </div>
+                      {hasSub && (
+                        <div dir="ltr" style={{ fontFamily: 'monospace', fontSize: 9, letterSpacing: 0.6, color: '#8a7a58', marginTop: 3, unicodeBidi: 'isolate' }}>
+                          {subDone} / {task.subtasks!.length}
+                          <span style={{ marginLeft: 6 }}>{ui.subtasks}</span>
+                        </div>
+                      )}
                     </div>
                   </div>
-                  {hasSub && isExp && (<div style={{ paddingTop: 3, paddingBottom: 7, borderLeft: `2px solid ${q.color}33`, marginLeft: 9, marginBottom: 5 }}>{subList(task.subtasks!, 0, q.color, task.id)}</div>)}
+
+                  {/* Subtask tree — level 1 (with ＋) and level 2 (no ＋) */}
+                  {hasSub && isExp && (
+                    <div style={{ paddingTop: 4, paddingBottom: 4, borderLeft: `2px solid ${q.color}33`, marginLeft: 12, marginBottom: 4 }}>
+                      {subList(task.subtasks!, 0, q.color, task.id)}
+                    </div>
+                  )}
+
+                  {/* Root-level "+ subtask" trigger */}
+                  {(!hasSub || isExp) && !isAddingHere && (
+                    <div
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setAddingTo({ taskId: task.id, parentSubId: null });
+                        setDraft('');
+                        setExpanded((p) => { const n = new Set(p); n.add(task.id); return n; });
+                      }}
+                      style={{
+                        paddingLeft: 34, paddingBottom: 8, paddingTop: 2,
+                        fontFamily: "'Kalam','Comic Sans MS',cursive", fontSize: 11,
+                        color: 'rgba(140,110,60,0.75)', cursor: 'pointer',
+                        display: 'inline-flex', alignItems: 'center', gap: 4,
+                      }}
+                    >
+                      <span style={{ fontSize: 13, lineHeight: 1 }}>＋</span>
+                      <span>{ui.addSubtask}</span>
+                    </div>
+                  )}
+
+                  {/* Root-level add input */}
+                  {isAddingHere && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingLeft: 34, paddingRight: 4, paddingTop: 2, paddingBottom: 8 }}>
+                      <div style={{ width: 15, height: 15, borderRadius: 3, flexShrink: 0, border: `1.5px dashed ${q.color}80`, marginTop: 1 }} />
+                      <input
+                        ref={inputRef}
+                        dir="auto"
+                        value={draft}
+                        placeholder={ui.addSubtaskPlaceholder}
+                        onChange={(e) => setDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') { e.preventDefault(); addSubTo(task.id, null); }
+                          else if (e.key === 'Escape') { setAddingTo(null); setDraft(''); }
+                        }}
+                        onBlur={() => { if (!draft.trim()) setAddingTo(null); else addSubTo(task.id, null); }}
+                        style={inputStyle}
+                      />
+                    </div>
+                  )}
                 </div>
               );
             })}
           </div>
+
           <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0, paddingTop: 8, borderTop: '1px dashed rgba(120,100,60,0.32)', marginTop: 6, gap: 8 }}>
-            <span style={{ fontFamily: 'monospace', fontSize: 8, letterSpacing: 1.2, textTransform: 'uppercase', color: '#8a7a58' }}>Progress</span>
+            <span dir="auto" style={{ fontFamily: 'monospace', fontSize: 8, letterSpacing: 1.2, textTransform: 'uppercase', color: '#8a7a58' }}>{ui.progress}</span>
             <div style={{ flex: 1, height: 4, background: 'rgba(120,100,60,0.18)', borderRadius: 2, overflow: 'hidden' }}>
               <div style={{ width: `${pct}%`, height: '100%', background: `linear-gradient(90deg,${q.color},${q.accent})`, borderRadius: 2, transition: 'width 0.6s' }} />
             </div>
-            <span style={{ fontFamily: 'monospace', fontSize: 10, fontWeight: 600, color: '#3a2010' }}>{done}/{list.length}</span>
+            <span dir="ltr" style={{ fontFamily: 'monospace', fontSize: 10, fontWeight: 600, color: '#3a2010' }}>{done} / {list.length}</span>
           </div>
         </div>
       </>
@@ -161,11 +516,8 @@ export const BinderView: React.FC<Props> = ({ tasks, onToggleStatus, onQuadrantS
   const pdef = prevQ ? QS.find((x) => x.id === prevQ) ?? null : null;
   const fromDef = flip ? QS.find((x) => x.id === flip.from) ?? null : null;
   const toDef = flip ? QS.find((x) => x.id === flip.to) ?? null : null;
-  // what the reader sees on the right while a leaf is in the air
   const destDef = flip ? (flip.dir === 'fwd' ? toDef : cdef) : cdef;
 
-  /* Both faces of one leaf. The 180deg on the back face cancels the flipper's own
-     -180deg, so the page reads the right way up once it has landed on the cover. */
   const leafFaces = (q: Q): React.ReactNode => (
     <>
       <div style={{ position: 'absolute', inset: 0, background: PAPER_BG, boxShadow: PAPER_SHADOW, borderRadius: 3, overflow: 'hidden', backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}>
@@ -180,23 +532,18 @@ export const BinderView: React.FC<Props> = ({ tasks, onToggleStatus, onQuadrantS
   );
 
   return (
-    <div style={{ position: 'relative', width: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', flex: 1, minHeight: 0 }}>
+    <div dir="ltr" style={{ position: 'relative', width: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', flex: 1, minHeight: 0 }}>
       <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', background: stageBg }} />
       <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', backgroundImage: stageTex, mixBlendMode: 'multiply', opacity: isDark ? 0.55 : 0.22 }} />
       <div style={{ position: 'absolute', top: -100, left: '50%', transform: 'translateX(-50%)', width: 700, height: 500, background: spot, pointerEvents: 'none' }} />
-      {/* desk falloff — stops the margin around the binder reading as flat white */}
       <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', background: isDark ? 'radial-gradient(ellipse 82% 66% at 50% 40%, transparent 34%, rgba(0,0,0,0.52) 100%)' : 'radial-gradient(ellipse 82% 66% at 50% 40%, transparent 32%, rgba(124,92,50,0.30) 100%)' }} />
-      {/* weighted base so the binder looks like it is resting on something */}
       <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 200, pointerEvents: 'none', background: isDark ? 'linear-gradient(0deg, rgba(0,0,0,0.45) 0%, transparent 100%)' : 'linear-gradient(0deg, rgba(118,86,46,0.22) 0%, transparent 100%)' }} />
       <div style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 120, pointerEvents: 'none', background: isDark ? 'linear-gradient(180deg, rgba(0,0,0,0.35) 0%, transparent 100%)' : 'linear-gradient(180deg, rgba(255,248,232,0.55) 0%, transparent 100%)' }} />
 
-      {/* Scene — symmetric padding so the binder sits dead centre (the tabs only
-          overhang 8px, so they don't need 52px of reserved space on one side) */}
       <div style={{ position: 'relative', zIndex: 10, flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', perspective: 2400, padding: '8px 16px' }}>
         <div style={{ position: 'relative', width: '100%', maxWidth: 520, maxHeight: 'min(74dvh, 660px)', aspectRatio: '4 / 5.3', transformStyle: 'preserve-3d' }}>
           <div style={{ position: 'absolute', bottom: -22, left: '4%', right: '4%', height: 60, background: `radial-gradient(ellipse, rgba(0,0,0,${shadowOp}) 0%, rgba(0,0,0,${shadowOp * 0.5}) 40%, transparent 75%)`, filter: 'blur(14px)', zIndex: 0, pointerEvents: 'none' }} />
 
-          {/* INSIDE OF BINDER */}
           <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', borderRadius: 18, background: innerLeather, boxShadow: 'inset 0 0 80px rgba(0,0,0,0.8), 0 22px 60px rgba(0,0,0,0.85), 0 0 0 1px rgba(0,0,0,0.9)', zIndex: 1 }}>
             <div style={{ position: 'absolute', top: 40, bottom: 40, left: 20, width: 2, backgroundImage: `repeating-linear-gradient(0deg, ${stitchC} 0 8px, transparent 8px 16px)`, filter: 'drop-shadow(0 0 3px rgba(212,175,90,0.45))', zIndex: 3, pointerEvents: 'none' }} />
             <div style={{ position: 'absolute', inset: 0, backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='320'%3E%3Cfilter id='g'%3E%3CfeTurbulence baseFrequency='0.7' numOctaves='3' seed='9'/%3E%3CfeColorMatrix values='0 0 0 0 0.15 0 0 0 0 0.04 0 0 0 0 0.03 0 0 0 0.55 0'/%3E%3C/filter%3E%3Crect width='320' height='320' filter='url(%23g)'/%3E%3C/svg%3E")`, mixBlendMode: 'multiply', opacity: 0.7, pointerEvents: 'none' }} />
@@ -206,18 +553,14 @@ export const BinderView: React.FC<Props> = ({ tasks, onToggleStatus, onQuadrantS
                 {destDef ? pageBody(destDef, tasksFor(destDef.id)) : (
                   <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, textAlign: 'center', padding: '0 40px' }}>
                     <div style={{ fontSize: 42, opacity: 0.4 }}>📖</div>
-                    <div style={{ fontFamily: "'Cormorant Garamond',Georgia,serif", fontSize: 22, fontWeight: 500, fontStyle: 'italic', color: '#2a1a08' }}>Open the binder</div>
-                    <div style={{ fontFamily: "'Kalam','Comic Sans MS',cursive", fontSize: 13, color: '#6a5a3a', lineHeight: 1.5, maxWidth: 220 }}>Tap a folder tab on the right to open a section</div>
+                    <div dir="auto" style={{ fontFamily: "'Cormorant Garamond',Georgia,serif", fontSize: 22, fontWeight: 500, fontStyle: 'italic', color: '#2a1a08' }}>{ui.openBinder}</div>
+                    <div dir="auto" style={{ fontFamily: "'Kalam','Comic Sans MS',cursive", fontSize: 13, color: '#6a5a3a', lineHeight: 1.5, maxWidth: 240 }}>{ui.openBinderHint}</div>
                     <div style={{ fontFamily: "'Cormorant Garamond',Georgia,serif", fontSize: 13, color: 'rgba(200,162,92,0.75)', letterSpacing: 12, marginTop: 8 }}>✦ ✦ ✦</div>
                   </div>
                 )}
               </div>
-
-
             </div>
           </div>
-
-
 
           <div style={{ position: 'absolute', top: 60, right: -8, display: 'flex', flexDirection: 'column', gap: 9, zIndex: 30 }}>
             {QS.map((q, idx) => {
@@ -230,12 +573,13 @@ export const BinderView: React.FC<Props> = ({ tasks, onToggleStatus, onQuadrantS
                   transition: 'width 0.5s cubic-bezier(0.34,1.4,0.64,1), transform 0.5s cubic-bezier(0.34,1.4,0.64,1), box-shadow 0.5s, opacity 0.9s',
                   transform: isActive ? 'translateX(-10px)' : 'translateX(0)', opacity: coverOpen ? 1 : 0.98,
                   transitionDelay: coverOpen ? `${idx * 60}ms` : '0ms',
-                  boxShadow: isActive ? `inset 0 1px 0 rgba(255,255,255,0.7), inset 0 -3px 10px rgba(0,0,0,0.4), 8px 6px 22px rgba(0,0,0,0.65), 0 0 0 1px rgba(0,0,0,0.7), 0 0 26px ${q.accent}66`
+                  boxShadow: isActive
+                    ? `inset 0 1px 0 rgba(255,255,255,0.7), inset 0 -3px 10px rgba(0,0,0,0.4), 8px 6px 22px rgba(0,0,0,0.65), 0 0 0 1px rgba(0,0,0,0.7), 0 0 26px ${q.accent}66`
                     : `inset 0 1px 0 rgba(255,255,255,0.45), inset 0 -3px 10px rgba(0,0,0,0.45), 5px 4px 16px rgba(0,0,0,0.55), 0 0 0 1px rgba(0,0,0,0.7)`,
                 }}>
                   <span style={{ position: 'absolute', top: 3, left: 7, fontSize: 7, fontFamily: 'monospace', letterSpacing: 1, opacity: 0.6 }}>{q.idx}</span>
                   <span style={{ position: 'absolute', top: 0, left: 8, right: 8, height: 1.5, background: 'linear-gradient(90deg,transparent,rgba(255,220,160,0.85),transparent)' }} />
-                  <span style={{ fontSize: 9, fontFamily: "'Cormorant Garamond',Georgia,serif", fontWeight: 700, letterSpacing: 0.9, textTransform: 'uppercase', lineHeight: 1, textShadow: '0 1px 2px rgba(0,0,0,0.5)' }}>{q.label}</span>
+                  <span dir="auto" style={{ fontSize: 10, fontFamily: "'Cormorant Garamond',Georgia,serif", fontWeight: 700, letterSpacing: 0.5, textTransform: lang === 'ar' ? 'none' : 'uppercase', lineHeight: 1, textShadow: '0 1px 2px rgba(0,0,0,0.5)', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingInline: 2 }}>{q.label}</span>
                   <span style={{ fontSize: 18, fontFamily: "'Cormorant Garamond',Georgia,serif", fontWeight: 700, lineHeight: 1, textShadow: '0 1px 2px rgba(0,0,0,0.5)', marginTop: 2 }}>{count}</span>
                 </button>
               );
@@ -276,33 +620,23 @@ export const BinderView: React.FC<Props> = ({ tasks, onToggleStatus, onQuadrantS
             </div>
           </div>
 
-          {/* TURNED LEAVES — rendered AFTER the cover, and nudged 30px toward the viewer.
-              The cover opens to -178deg (not a flat -180deg), so rotateY leaves its far edge
-              ~16px CLOSER to the camera than z=0. Without this translateZ the leaf lands
-              exactly on that plane and 3D sorting hides it behind the cover. */}
           <div style={{ position: 'absolute', top: 38, bottom: 38, left: 0, right: 34, perspective: 1800, perspectiveOrigin: '0% 50%', transformStyle: 'preserve-3d', transform: 'translateZ(30px)', zIndex: 25, pointerEvents: 'none' }}>
-            {/* a leaf already turned — lying face-up on the inside of the cover */}
             {pdef && !flip && (
               <div style={{ position: 'absolute', inset: 0, transformOrigin: 'left center', transform: 'rotateY(-180deg)', transformStyle: 'preserve-3d' }}>
                 {leafFaces(pdef)}
               </div>
             )}
-            {/* the leaf currently in the air */}
             {flip && fromDef && (
               <div style={{ position: 'absolute', inset: 0, transformOrigin: 'left center', transformStyle: 'preserve-3d', animation: `${flip.dir === 'fwd' ? 'leafTurnFwd' : 'leafTurnBack'} ${FLIP_MS}ms cubic-bezier(0.55, 0.05, 0.35, 1) forwards` }}>
                 {leafFaces(fromDef)}
               </div>
             )}
-            {/* gutter — the two pages now meet at the spine, so shade the crease */}
             {cdef && !flip && (
               <div style={{ position: 'absolute', top: 0, bottom: 0, left: -16, width: 32, background: 'linear-gradient(90deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.13) 30%, rgba(0,0,0,0.30) 50%, rgba(0,0,0,0.13) 70%, rgba(0,0,0,0) 100%)', pointerEvents: 'none' }} />
             )}
           </div>
         </div>
       </div>
-
-      {/* No bottom spacer — App's <main> already carries pb-24 to clear the tab bar.
-          Keeping both was what pushed the binder up off centre. */}
 
       <style>{`
         .binder-cover { transform: rotateY(0deg); transition: transform ${OPEN_MS}ms cubic-bezier(0.4,0.05,0.2,1); transform-origin: left center; will-change: transform; }

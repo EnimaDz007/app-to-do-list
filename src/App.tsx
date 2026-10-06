@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────────────────────
 //  FILE: src/App.tsx
-//  Root app — includes BinderView as the default Matrix theme
+//  Full file — with web sync + clean restore-from-code
 // ─────────────────────────────────────────────────────────────
 
 /**
@@ -95,6 +95,7 @@ const MILESTONES_STORAGE_KEY = 'taskflow_milestones';
 const DAILY_DIGEST_STORAGE_KEY = 'taskflow_daily_digest';
 const ESCALATION_STORAGE_KEY = 'taskflow_escalation';
 const ONBOARDING_SEEN_KEY = 'taskflow_onboarding_seen';
+const RESTORE_PENDING_KEY = 'taskflow_restore_pending';
 const SERVER_URL = 'https://task-priority-server-pir6.onrender.com';
 
 const OVERDUE_NOTIFICATION_ID = 999_998;
@@ -467,21 +468,32 @@ export default function App() {
     setupPush();
   }, []);
 
+  // FIXED: runs on both web and native. On a restore, replace instead of merge.
   const syncTasksFromServer = async () => {
-    if (!Capacitor.isNativePlatform()) return;
     try {
       const userId = localStorage.getItem('taskflow_user_id') || 'test-user-123';
       const response = await fetch(`${SERVER_URL}/api/tasks/${userId}`);
       const data = await response.json();
       if (!data.success || !data.tasks) return;
+
+      const serverTasks: Task[] = [];
+      for (const record of data.tasks) {
+        if (record.fullTask) serverTasks.push(record.fullTask as Task);
+      }
+
+      const restorePending = (() => {
+        try { return localStorage.getItem(RESTORE_PENDING_KEY) === '1'; } catch { return false; }
+      })();
+
       setTasks((prev) => {
-        const existingIds = new Set(prev.map((t) => t.id));
-        const newTasks: Task[] = [];
-        for (const record of data.tasks) {
-          if (record.fullTask && !existingIds.has(record.fullTask.id)) {
-            newTasks.push(record.fullTask);
-          }
+        if (restorePending) {
+          // Clean restore: replace local tasks with server's
+          try { localStorage.removeItem(RESTORE_PENDING_KEY); } catch {}
+          return serverTasks;
         }
+        // Normal sync: merge only new ids
+        const existingIds = new Set(prev.map((t) => t.id));
+        const newTasks = serverTasks.filter((t) => !existingIds.has(t.id));
         if (newTasks.length === 0) return prev;
         return [...newTasks, ...prev];
       });
