@@ -100,6 +100,12 @@ export interface Task {
   delegateStatus?: DelegateStatus;
   delegateCompletedBy?: string;
   delegateCompletedAt?: string;
+
+  // ── Sync fields ─────────────────────────────────────────
+  /** ISO timestamp — set on every mutation. Used for LWW merge. */
+  updatedAt?: string;
+  /** ISO timestamp — soft-delete tombstone. When set, the task is hidden from the UI but kept so the delete propagates across devices. */
+  deletedAt?: string;
 }
 
 /* ─────────────────────────────────────────────────────────

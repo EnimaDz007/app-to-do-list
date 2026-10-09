@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────────────────────
 //  FILE: src/components/SettingsModal.tsx
-//  Full — Sync tab + clean restore (sets pending flag → replace)
+//  Full — Sync tab + clean restore + "Sync now" indicator
 // ─────────────────────────────────────────────────────────────
 
 import React, { useState, useRef, useEffect } from 'react';
@@ -38,6 +38,12 @@ interface SettingsModalProps {
   onChangeDailyDigest: (next: DailyDigestConfig) => void;
   escalation: EscalationConfig;
   onChangeEscalation: (next: EscalationConfig) => void;
+
+  // ── Sync (new) ────────────────────────────────────────────
+  onSyncNow?: () => void | Promise<void>;
+  isSyncing?: boolean;
+  lastSyncedAt?: string | null;
+  syncError?: string | null;
 }
 
 type SettingsTab = 'general' | 'backup' | 'sync' | 'notifications' | 'about';
@@ -163,6 +169,23 @@ const TIME_COPY: Record<LocalLang, { am: string; pm: string; h24: string; h12: s
   ar: { am: '\u0635', pm: '\u0645', h24: '\u0662\u0664\u0633', h12: '\u0635/\u0645', switchTo24: '\u0627\u0644\u062a\u062d\u0648\u064a\u0644 \u0625\u0644\u0649 \u0646\u0637\u0627\u0645 \u0662\u0664 \u0633\u0627\u0639\u0629', switchTo12: '\u0627\u0644\u062a\u062d\u0648\u064a\u0644 \u0625\u0644\u0649 \u0646\u0637\u0627\u0645 \u0635/\u0645' },
 };
 
+// ── Relative time helper (new) ────────────────────────────────
+function formatRelative(iso: string | null | undefined): string {
+  if (!iso) return 'Never';
+  const then = new Date(iso).getTime();
+  if (isNaN(then)) return 'Never';
+  const diff = Date.now() - then;
+  if (diff < 0) return 'Just now';
+  const s = Math.floor(diff / 1000);
+  if (s < 45) return 'Just now';
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} min ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} hr${h === 1 ? '' : 's'} ago`;
+  const d = Math.floor(h / 24);
+  return `${d} day${d === 1 ? '' : 's'} ago`;
+}
+
 function translateSoundOption(
   option: { id: SoundAlertId; name: string; description: string; tag: string },
   lang: LocalLang
@@ -201,6 +224,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen, onClose, tasks, onImportTasks, onOpenInstallModal,
   dailyDigest, onChangeDailyDigest,
   escalation, onChangeEscalation,
+  onSyncNow, isSyncing = false, lastSyncedAt = null, syncError = null,
 }) => {
   const { t, language, setLanguage, supportedLanguages } = useLanguage();
   const { theme, setTheme } = useTheme();
@@ -617,6 +641,28 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <h4 className="text-xs font-bold text-indigo-950 dark:text-indigo-200">{syncCopy.title}</h4>
                 </div>
                 <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-snug">{syncCopy.desc}</p>
+              </div>
+
+              {/* ── Cloud sync status card (new) ── */}
+              <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-2.5">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0 text-start">
+                    <div className="text-xs font-bold text-slate-900 dark:text-white">
+                      {isSyncing ? 'Syncing…' : syncError ? 'Sync issue' : 'Up to date'}
+                    </div>
+                    <div className={`text-[11px] mt-0.5 truncate ${syncError ? 'text-rose-600 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'}`}>
+                      {syncError ? syncError : `Last synced: ${formatRelative(lastSyncedAt)}`}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => { void onSyncNow?.(); }}
+                    disabled={isSyncing}
+                    className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl text-[11px] font-bold shadow-xs transition cursor-pointer ${isSyncing ? 'bg-indigo-300 dark:bg-indigo-900 text-white cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700 text-white'}`}
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                    <span>{isSyncing ? 'Syncing…' : 'Sync now'}</span>
+                  </button>
+                </div>
               </div>
 
               <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-2.5">

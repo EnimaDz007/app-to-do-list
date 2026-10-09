@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────────────────────
 //  FILE: src/App.tsx
-//  Full file — with web sync + clean restore-from-code
+//  Full file — with two-way web sync + soft-delete + timestamps
 // ─────────────────────────────────────────────────────────────
 
 /**
@@ -8,7 +8,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { PushNotifications } from '@capacitor/push-notifications';
 import { LocalNotifications } from '@capacitor/local-notifications';
@@ -85,6 +85,11 @@ import {
 } from './utils/escalatingNags';
 import { getDelegateStatus } from './utils/delegateShare';
 import { syncWidgetData } from './utils/widgetBridge';
+import {
+  syncTasks as runSyncTasks,
+  getLastSyncAt,
+  setLastSyncAt as storeLastSyncAt,
+} from './utils/sync';
 import { Mic } from 'lucide-react';
 import { triggerHaptic } from './utils/haptics';
 
@@ -96,6 +101,7 @@ const DAILY_DIGEST_STORAGE_KEY = 'taskflow_daily_digest';
 const ESCALATION_STORAGE_KEY = 'taskflow_escalation';
 const ONBOARDING_SEEN_KEY = 'taskflow_onboarding_seen';
 const RESTORE_PENDING_KEY = 'taskflow_restore_pending';
+const USER_ID_KEY = 'taskflow_user_id';
 const SERVER_URL = 'https://task-priority-server-pir6.onrender.com';
 
 const OVERDUE_NOTIFICATION_ID = 999_998;
@@ -178,6 +184,20 @@ export default function App() {
   const tasksRef = useRef<Task[]>([]);
   const escalationRef = useRef<EscalationConfig>(DEFAULT_ESCALATION_CONFIG);
   const handleToggleStatusRef = useRef<((id: string) => Promise<void>) | null>(null);
+
+  // ── Sync state ────────────────────────────────────────────
+  const [userId] = useState<string>(() => {
+    try {
+      return localStorage.getItem(USER_ID_KEY) || 'test-user-123';
+    } catch {
+      return 'test-user-123';
+    }
+  });
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const syncingRef = useRef(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [showOnboarding, setShowOnboarding] = useState<boolean>(() => {
     try {
@@ -262,10 +282,14 @@ export default function App() {
     [customTemplates, language]
   );
 
-  const streakData = useStreak(tasks.filter((t) => t.status === 'completed').length);
-  const karma = useKarma(tasks, habits, checkIns, milestones, streakData.currentStreak);
-  const activeTasks = tasks.filter((t) => !t.archivedAt);
-  const archivedTasks = tasks.filter((t) => t.archivedAt);
+  // ── Derived task views ────────────────────────────────────
+  // `tasks` includes tombstones (deletedAt). `visibleTasks` hides them from the UI.
+  const visibleTasks = useMemo(() => tasks.filter((t) => !t.deletedAt), [tasks]);
+  const activeTasks = visibleTasks.filter((t) => !t.archivedAt);
+  const archivedTasks = visibleTasks.filter((t) => t.archivedAt);
+
+  const streakData = useStreak(visibleTasks.filter((t) => t.status === 'completed').length);
+  const karma = useKarma(visibleTasks, habits, checkIns, milestones, streakData.currentStreak);
 
   const [karmaPopup, setKarmaPopup] = useState<{ id: number; amount: number } | null>(null);
   const showKarmaPopup = (amount: number) => {
@@ -276,6 +300,103 @@ export default function App() {
       setKarmaPopup((prev) => (prev?.id === id ? null : prev));
     }, 1400);
   };
+
+  // ─────────────────────────────────────────────────────────
+  //                    TWO-WAY SYNC
+  // ─────────────────────────────────────────────────────────
+  const runSync = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!userId) return;
+    if (syncingRef.current) return;
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+
+    syncingRef.current = true;
+    if (!opts?.silent) setIsSyncing(true);
+
+    try {
+      const result = await runSyncTasks(userId, tasksRef.current);
+      if (!result) return;
+
+      // Merge server result back in, but don't clobber edits made while in flight.
+      setTasks((prev) => {
+        const merged = new Map<string, Task>();
+        for (const t of result.merged) merged.set(t.id, t);
+
+        const serverTs = new Date(result.serverTime).getTime();
+        for (const local of prev) {
+          const existing = merged.get(local.id);
+          if (!existing) { merged.set(local.id, local); continue; }
+          const localTs = new Date(local.updatedAt || 0).getTime();
+          if (localTs > serverTs) merged.set(local.id, local);
+        }
+        return Array.from(merged.values());
+      });
+
+      storeLastSyncAt(userId, result.serverTime);
+      setLastSyncedAt(result.serverTime);
+      setSyncError(null);
+    } catch (err) {
+      setSyncError(err instanceof Error ? err.message : 'Sync failed');
+    } finally {
+      syncingRef.current = false;
+      setIsSyncing(false);
+    }
+  }, [userId]);
+
+  // Debounced trigger — call this after ANY local mutation.
+  const scheduleSync = useCallback(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => { void runSync({ silent: true }); }, 1500);
+  }, [runSync]);
+
+  // Initial sync + handle restore-from-code (replace local, then pull fresh).
+  useEffect(() => {
+    if (!userId) return;
+
+    let restorePending = false;
+    try {
+      restorePending = localStorage.getItem(RESTORE_PENDING_KEY) === '1';
+    } catch {}
+
+    if (restorePending) {
+      try {
+        localStorage.removeItem(RESTORE_PENDING_KEY);
+        localStorage.removeItem(STORAGE_KEY);
+        localStorage.removeItem(`taskflow_lastSync_${userId}`);
+      } catch {}
+      // Wipe local state before pulling, so we don't push stale tasks to the new account.
+      setTasks([]);
+      tasksRef.current = [];
+    }
+
+    setLastSyncedAt(getLastSyncAt(userId));
+    void runSync({ silent: true });
+  }, [userId, runSync]);
+
+  // Periodic background sync (60s).
+  useEffect(() => {
+    if (!userId) return;
+    const id = setInterval(() => { void runSync({ silent: true }); }, 60_000);
+    return () => clearInterval(id);
+  }, [userId, runSync]);
+
+  // Sync on reconnect + on tab refocus.
+  useEffect(() => {
+    if (!userId) return;
+    const onOnline = () => { void runSync({ silent: true }); };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void runSync({ silent: true });
+    };
+    window.addEventListener('online', onOnline);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [userId, runSync]);
+
+  // ─────────────────────────────────────────────────────────
+  //                    REMINDERS / NOTIFICATIONS
+  // ─────────────────────────────────────────────────────────
 
   const scheduleTaskReminder = async (task: Task) => {
     if (task.quadrant !== 'do_first') return;
@@ -321,7 +442,6 @@ export default function App() {
     }
 
     try {
-      const userId = localStorage.getItem('taskflow_user_id') || 'test-user-123';
       const response = await fetch(`${SERVER_URL}/api/schedule-reminder`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -373,7 +493,6 @@ export default function App() {
 
   const syncHabitReminderToServer = async (habit: Habit) => {
     if (!Capacitor.isNativePlatform()) return;
-    const userId = localStorage.getItem('taskflow_user_id') || 'test-user-123';
     try {
       if (habit.reminderEnabled && habit.reminderTime) {
         const tzOffset = new Date().getTimezoneOffset();
@@ -452,7 +571,6 @@ export default function App() {
         PushNotifications.addListener('registration', async (token) => {
           console.log('📱 FCM TOKEN RECEIVED:', token.value);
           try {
-            const userId = localStorage.getItem('taskflow_user_id') || 'test-user-123';
             await fetch(`${SERVER_URL}/api/register-device`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -466,50 +584,7 @@ export default function App() {
       } catch {}
     };
     setupPush();
-  }, []);
-
-  // FIXED: runs on both web and native. On a restore, replace instead of merge.
-  const syncTasksFromServer = async () => {
-    try {
-      const userId = localStorage.getItem('taskflow_user_id') || 'test-user-123';
-      const response = await fetch(`${SERVER_URL}/api/tasks/${userId}`);
-      const data = await response.json();
-      if (!data.success || !data.tasks) return;
-
-      const serverTasks: Task[] = [];
-      for (const record of data.tasks) {
-        if (record.fullTask) serverTasks.push(record.fullTask as Task);
-      }
-
-      const restorePending = (() => {
-        try { return localStorage.getItem(RESTORE_PENDING_KEY) === '1'; } catch { return false; }
-      })();
-
-      setTasks((prev) => {
-        if (restorePending) {
-          // Clean restore: replace local tasks with server's
-          try { localStorage.removeItem(RESTORE_PENDING_KEY); } catch {}
-          return serverTasks;
-        }
-        // Normal sync: merge only new ids
-        const existingIds = new Set(prev.map((t) => t.id));
-        const newTasks = serverTasks.filter((t) => !existingIds.has(t.id));
-        if (newTasks.length === 0) return prev;
-        return [...newTasks, ...prev];
-      });
-    } catch {}
-  };
-
-  useEffect(() => {
-    syncTasksFromServer();
-    const handler = () => { if (document.visibilityState === 'visible') syncTasksFromServer(); };
-    document.addEventListener('visibilitychange', handler);
-    window.addEventListener('focus', handler);
-    return () => {
-      document.removeEventListener('visibilitychange', handler);
-      window.removeEventListener('focus', handler);
-    };
-  }, []);
+  }, [userId]);
 
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
@@ -531,7 +606,7 @@ export default function App() {
     hasSyncedTasksRef.current = true;
 
     tasks.forEach((task) => {
-      if (task.quadrant === 'do_first' && task.status !== 'completed' && task.dueDate) {
+      if (task.quadrant === 'do_first' && task.status !== 'completed' && task.dueDate && !task.deletedAt) {
         scheduleTaskReminder(task);
       }
     });
@@ -541,7 +616,7 @@ export default function App() {
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
 
-    const overdue = tasks.filter((t) =>
+    const overdue = visibleTasks.filter((t) =>
       t.quadrant === 'do_first' &&
       t.status !== 'completed' &&
       !t.archivedAt &&
@@ -569,25 +644,29 @@ export default function App() {
         extra: { type: 'overdue' },
       }],
     }).catch(() => {});
-  }, [tasks]);
+    // eslint-disable-next-line
+  }, [visibleTasks]);
 
+  // Auto-archive completed tasks 2s after completion.
   useEffect(() => {
     const completedOnes = tasks.filter(
-      (t) => t.status === 'completed' && !t.archivedAt && t.completedAt
+      (t) => t.status === 'completed' && !t.archivedAt && !t.deletedAt && t.completedAt
     );
     if (completedOnes.length === 0) return;
     const timer = setTimeout(() => {
+      const now = new Date().toISOString();
       setTasks((prev) =>
         prev.map((t) => {
-          if (t.status === 'completed' && !t.archivedAt && t.completedAt) {
-            return { ...t, archivedAt: t.completedAt };
+          if (t.status === 'completed' && !t.archivedAt && !t.deletedAt && t.completedAt) {
+            return { ...t, archivedAt: t.completedAt, updatedAt: now };
           }
           return t;
         })
       );
+      scheduleSync();
     }, 2000);
     return () => clearTimeout(timer);
-  }, [tasks]);
+  }, [tasks, scheduleSync]);
 
   useEffect(() => {
     const handleTasksUpdated = () => {
@@ -609,7 +688,7 @@ export default function App() {
   useEffect(() => {
     const timer = setTimeout(() => {
       void syncWidgetData(
-        tasks,
+        visibleTasks,
         streakData.currentStreak,
         karma.total,
         karma.level.emoji,
@@ -619,7 +698,7 @@ export default function App() {
     }, 500);
     return () => clearTimeout(timer);
     // eslint-disable-next-line
-  }, [tasks, streakData.currentStreak, karma.total, karma.level.emoji, karma.level.name, karma.progressToNext]);
+  }, [visibleTasks, streakData.currentStreak, karma.total, karma.level.emoji, karma.level.name, karma.progressToNext]);
 
   useEffect(() => {
     scheduleDailyDigests(dailyDigest, tasksRef.current);
@@ -659,16 +738,18 @@ export default function App() {
   };
 
   const handleDelegateIdCreated = (taskId: string, delegateId: string) => {
+    const now = new Date().toISOString();
     setTasks((prev) =>
       prev.map((t) =>
         t.id === taskId
-          ? { ...t, delegateId, delegateStatus: 'pending' }
+          ? { ...t, delegateId, delegateStatus: 'pending', updatedAt: now }
           : t
       )
     );
     setDelegatedTaskShare((prev) =>
       prev && prev.id === taskId ? { ...prev, delegateId, delegateStatus: 'pending' } : prev
     );
+    scheduleSync();
   };
 
   const handleDelegateStatusChanged = (
@@ -676,13 +757,14 @@ export default function App() {
     status: DelegateStatus,
     completedBy?: string
   ) => {
+    const now = new Date().toISOString();
     setTasks((prev) =>
       prev.map((t) => {
         if (t.id !== taskId) return t;
-        const next: Task = { ...t, delegateStatus: status };
+        const next: Task = { ...t, delegateStatus: status, updatedAt: now };
         if (status === 'completed') {
           next.delegateCompletedBy = completedBy || 'recipient';
-          next.delegateCompletedAt = new Date().toISOString();
+          next.delegateCompletedAt = now;
         }
         return next;
       })
@@ -690,6 +772,7 @@ export default function App() {
     setDelegatedTaskShare((prev) =>
       prev && prev.id === taskId ? { ...prev, delegateStatus: status, delegateCompletedBy: completedBy } : prev
     );
+    scheduleSync();
 
     if (status === 'completed') {
       const task = tasksRef.current.find((t) => t.id === taskId);
@@ -704,7 +787,7 @@ export default function App() {
   useEffect(() => {
     const checkDelegates = async () => {
       const pendingDelegates = tasksRef.current.filter(
-        (t) => t.delegateId && t.status !== 'completed' && t.delegateStatus !== 'completed'
+        (t) => t.delegateId && t.status !== 'completed' && t.delegateStatus !== 'completed' && !t.deletedAt
       );
       if (pendingDelegates.length === 0) return;
       for (const task of pendingDelegates) {
@@ -833,6 +916,7 @@ export default function App() {
     const task = tasks.find((t) => t.id === taskId);
     if (!task) return;
     const isNowDone = task.status !== 'completed';
+    const now = new Date().toISOString();
 
     if (isNowDone) {
       const karmaAmount = KARMA_PER_QUADRANT[task.quadrant] ?? 1;
@@ -845,31 +929,37 @@ export default function App() {
     setTasks((prev) =>
       prev.map((t) =>
         t.id === taskId
-          ? { ...t, status: isNowDone ? 'completed' : 'todo', completedAt: isNowDone ? new Date().toISOString() : undefined }
+          ? { ...t, status: isNowDone ? 'completed' : 'todo', completedAt: isNowDone ? now : undefined, updatedAt: now }
           : t
       )
     );
+    scheduleSync();
 
     if (isNowDone) {
       playAudioChime('success');
       const nextTaskFromServer = await completeTaskOnServer(taskId);
 
       if (nextTaskFromServer) {
-        setTasks((prev) => [nextTaskFromServer, ...prev]);
-        setTimeout(() => scheduleTaskReminder(nextTaskFromServer), 200);
+        const stampedNext = { ...nextTaskFromServer, updatedAt: new Date().toISOString() };
+        setTasks((prev) => [stampedNext, ...prev]);
+        scheduleSync();
+        setTimeout(() => scheduleTaskReminder(stampedNext), 200);
       } else {
         const recurrence = (task as any).recurrence;
         if (recurrence && recurrence !== 'none') {
+          const nowIso = new Date().toISOString();
           const localNext: Task = {
             ...task,
             id: `task-${Date.now()}`,
             status: 'todo',
             completedAt: undefined,
             archivedAt: undefined,
-            createdAt: new Date().toISOString(),
+            createdAt: nowIso,
+            updatedAt: nowIso,
             dueDate: computeNextDueDate(task.dueDate, recurrence),
           };
           setTasks((prev) => [localNext, ...prev]);
+          scheduleSync();
           setTimeout(() => scheduleTaskReminder(localNext), 200);
         }
       }
@@ -896,6 +986,7 @@ export default function App() {
         if (
           task.status !== 'completed' &&
           !task.archivedAt &&
+          !task.deletedAt &&
           task.dueDate &&
           task.quadrant !== 'eliminate'
         ) {
@@ -907,46 +998,59 @@ export default function App() {
   }, [escalation.intensity]);
 
   const handleMoveTaskQuadrant = (taskId: string, targetQuadrant: QuadrantId) => {
-    setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, quadrant: targetQuadrant } : t)));
+    const now = new Date().toISOString();
+    setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, quadrant: targetQuadrant, updatedAt: now } : t)));
     playAudioChime('beep');
+    scheduleSync();
   };
 
   const handleImportTasks = (newTasks: Task[], mode: 'replace' | 'append') => {
-    if (mode === 'replace') setTasks(newTasks);
-    else setTasks((prev) => [...newTasks, ...prev]);
+    const now = new Date().toISOString();
+    const stamped = newTasks.map((t) => ({ ...t, updatedAt: t.updatedAt || now }));
+    if (mode === 'replace') setTasks(stamped);
+    else setTasks((prev) => [...stamped, ...prev]);
+    scheduleSync();
   };
 
   const handleStartFocus = (task: Task) => { setFocusTask(task); setIsFocusTimerOpen(true); };
 
   const handleSaveTask = (taskData: Omit<Task, 'id' | 'createdAt'> & { id?: string }) => {
+    const now = new Date().toISOString();
     if (taskData.id) {
       cancelTaskReminder(taskData.id);
-      const updatedTask = { ...taskData, id: taskData.id } as Task;
-      setTasks((prev) => prev.map((t) => (t.id === taskData.id ? { ...t, ...taskData } : t)));
+      const updatedTask = { ...taskData, id: taskData.id, updatedAt: now } as Task;
+      setTasks((prev) => prev.map((t) => (t.id === taskData.id ? { ...t, ...taskData, updatedAt: now } : t)));
       scheduleTaskReminder({ ...updatedTask, createdAt: new Date().toISOString() } as Task);
       playAudioChime('beep');
     } else {
       const newTask: Task = {
         ...taskData,
         id: `task-${Date.now()}`,
-        createdAt: new Date().toISOString(),
+        createdAt: now,
+        updatedAt: now,
       };
       setTasks((prev) => [newTask, ...prev]);
       scheduleTaskReminder(newTask);
       playAudioChime('beep');
     }
+    scheduleSync();
   };
 
   const handleDeleteTask = (taskId: string) => {
     cancelTaskReminder(taskId);
-    setTasks((prev) => prev.filter((t) => t.id !== taskId));
+    const now = new Date().toISOString();
+    // Soft-delete: keep a tombstone so the delete propagates via sync.
+    setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, deletedAt: now, updatedAt: now } : t)));
     playAudioChime('beep');
+    scheduleSync();
   };
 
   const handleUpdateSubtasks = (taskId: string, nextSubtasks: Subtask[]) => {
+    const now = new Date().toISOString();
     setTasks((prev) =>
-      prev.map((t) => (t.id === taskId ? { ...t, subtasks: nextSubtasks } : t))
+      prev.map((t) => (t.id === taskId ? { ...t, subtasks: nextSubtasks, updatedAt: now } : t))
     );
+    scheduleSync();
   };
 
   const handleSaveAsTemplate = (task: Task) => {
@@ -982,14 +1086,19 @@ export default function App() {
     activeTab === 'timeline' || activeTab === 'calendar' || activeTab === 'flow';
 
   const handleRestoreFromArchive = (taskId: string) => {
+    const now = new Date().toISOString();
     setTasks((prev) => prev.map((t) =>
-      t.id === taskId ? { ...t, archivedAt: undefined, status: 'todo' as const, completedAt: undefined } : t
+      t.id === taskId ? { ...t, archivedAt: undefined, status: 'todo' as const, completedAt: undefined, updatedAt: now } : t
     ));
+    scheduleSync();
   };
 
   const handlePermanentDelete = (taskId: string) => {
     cancelTaskReminder(taskId);
-    setTasks((prev) => prev.filter((t) => t.id !== taskId));
+    const now = new Date().toISOString();
+    // Soft-delete tombstone — propagates the delete across devices.
+    setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, deletedAt: now, updatedAt: now } : t)));
+    scheduleSync();
   };
 
   const handleEditTask = (task: Task) => { setEditingTask(task); setIsTaskModalOpen(true); };
@@ -1098,8 +1207,8 @@ export default function App() {
     setMilestones((prev) => prev.filter((m) => m.id !== id));
   };
 
-  const completedCount = tasks.filter((t) => t.status === 'completed').length;
-  const urgentCount = tasks.filter((t) => t.quadrant === 'do_first' && t.status !== 'completed').length;
+  const completedCount = visibleTasks.filter((t) => t.status === 'completed').length;
+  const urgentCount = visibleTasks.filter((t) => t.quadrant === 'do_first' && t.status !== 'completed').length;
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -1197,7 +1306,7 @@ export default function App() {
       onSelect: () => { setIsKarmaOpen(true); setIsCmdkOpen(false); },
     });
 
-    tasks
+    visibleTasks
       .filter((t) => t.status !== 'completed' && !t.archivedAt)
       .slice(0, 50)
       .forEach((t) => {
@@ -1239,7 +1348,7 @@ export default function App() {
 
     return list;
     // eslint-disable-next-line
-  }, [tasks, habits, defaultQuadrant]);
+  }, [visibleTasks, habits, defaultQuadrant]);
 
   return (
     <div className="min-h-screen bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col transition-colors duration-200 overflow-x-hidden w-full">
@@ -1253,7 +1362,7 @@ export default function App() {
         <div className="flex-1 flex flex-col bg-slate-50 dark:bg-slate-900 min-h-full transition-colors">
           <Header
             completedCount={completedCount}
-            totalCount={tasks.length}
+            totalCount={visibleTasks.length}
             streakCount={streakData.currentStreak}
             karmaTotal={karma.total}
             karmaEmoji={karma.level.emoji}
@@ -1317,7 +1426,7 @@ export default function App() {
             )}
             {activeTab === 'list' && (
               <PriorityListView
-                tasks={tasks}
+                tasks={visibleTasks}
                 onToggleStatus={handleToggleStatus}
                 onEditTask={handleEditTask}
                 onDeleteTask={handleDeleteTask}
@@ -1332,7 +1441,7 @@ export default function App() {
             )}
             {(activeTab === 'timeline' || activeTab === 'calendar' || activeTab === 'flow') && (
               <CalendarHubView
-                tasks={tasks}
+                tasks={visibleTasks}
                 activeSubTab={activeTab as 'timeline' | 'calendar' | 'flow'}
                 onChangeSubTab={(sub) => setActiveTab(sub)}
                 onToggleStatus={handleToggleStatus}
@@ -1340,10 +1449,10 @@ export default function App() {
                 onDateSelect={handleCalendarDateSelect}
               />
             )}
-            {activeTab === 'analytics' && <ProgressAnalyticsView tasks={tasks} />}
+            {activeTab === 'analytics' && <ProgressAnalyticsView tasks={visibleTasks} />}
             {activeTab === 'review' && (
               <WeeklyReviewView
-                tasks={tasks}
+                tasks={visibleTasks}
                 habits={habits}
                 checkIns={checkIns}
                 streakCount={streakData.currentStreak}
@@ -1360,10 +1469,10 @@ export default function App() {
                 onOpenNewHabit={handleOpenNewHabit}
               />
             )}
-            {activeTab === 'archive' && <ArchiveView tasks={tasks} onRestore={handleRestoreFromArchive} onDelete={handlePermanentDelete} />}
+            {activeTab === 'archive' && <ArchiveView tasks={visibleTasks} onRestore={handleRestoreFromArchive} onDelete={handlePermanentDelete} />}
             {activeTab === 'export' && (
               <NativePackagingHub
-                tasks={tasks}
+                tasks={visibleTasks}
                 habits={habits}
                 checkIns={checkIns}
                 milestones={milestones}
@@ -1473,13 +1582,17 @@ export default function App() {
       <SettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
-        tasks={tasks}
+        tasks={visibleTasks}
         onImportTasks={handleImportTasks}
         onOpenInstallModal={() => setIsInstallModalOpen(true)}
         dailyDigest={dailyDigest}
         onChangeDailyDigest={setDailyDigest}
         escalation={escalation}
         onChangeEscalation={setEscalation}
+        onSyncNow={() => runSync()}
+        isSyncing={isSyncing}
+        lastSyncedAt={lastSyncedAt}
+        syncError={syncError}
       />
 
       <CommandPalette
