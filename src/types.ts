@@ -46,6 +46,10 @@ export interface Habit {
   reminderEnabled: boolean;
   createdAt: string;
   archivedAt?: string;
+
+  // ── Sync fields ─────────────────────────────────────────
+  updatedAt?: string;
+  deletedAt?: string;
 }
 
 export interface HabitCheckIn {
@@ -55,6 +59,10 @@ export interface HabitCheckIn {
   count: number;
   note?: string;
   completedAt: string;
+
+  // ── Sync fields ─────────────────────────────────────────
+  updatedAt?: string;
+  deletedAt?: string;
 }
 
 export interface Subtask {
@@ -72,6 +80,10 @@ export interface Milestone {
   color: string;
   createdAt: string;
   archivedAt?: string;
+
+  // ── Sync fields ─────────────────────────────────────────
+  updatedAt?: string;
+  deletedAt?: string;
 }
 
 export type DelegateStatus = 'pending' | 'completed' | 'rejected';
@@ -102,9 +114,7 @@ export interface Task {
   delegateCompletedAt?: string;
 
   // ── Sync fields ─────────────────────────────────────────
-  /** ISO timestamp — set on every mutation. Used for LWW merge. */
   updatedAt?: string;
-  /** ISO timestamp — soft-delete tombstone. When set, the task is hidden from the UI but kept so the delete propagates across devices. */
   deletedAt?: string;
 }
 
@@ -117,7 +127,6 @@ export interface Template {
   name: string;
   emoji: string;
   description?: string;
-  /** Preset fields applied to the new task */
   preset: {
     category?: TaskCategory;
     quadrant?: QuadrantId;
@@ -127,10 +136,8 @@ export interface Template {
     contexts?: string[];
     priority?: PriorityLevel;
   };
-  /** The full nested subtask tree to clone into the new task */
   subtasks: Subtask[];
   createdAt: string;
-  /** true for the 3 shipped templates — can't be deleted, only duplicated */
   isBuiltIn?: boolean;
 }
 

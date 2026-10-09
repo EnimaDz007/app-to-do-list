@@ -1,10 +1,11 @@
 // ─────────────────────────────────────────────────────────────
 //  FILE: src/utils/sync.ts
-//  Two-way task sync: pull changes since last sync, merge by
-//  updatedAt (last-write-wins), push local changes back.
+//  Two-way sync for tasks, habits, check-ins, and milestones.
+//  Pull changes since last sync, merge by updatedAt (LWW),
+//  push local changes back. All 4 types in one round trip.
 // ─────────────────────────────────────────────────────────────
 
-import { Task } from '../types';
+import { Task, Habit, HabitCheckIn, Milestone } from '../types';
 
 const SERVER_URL = 'https://task-priority-server-pir6.onrender.com';
 
@@ -22,44 +23,18 @@ export function setLastSyncAt(userId: string, iso: string): void {
   try { localStorage.setItem(lastSyncKey(userId), iso); } catch { /* noop */ }
 }
 
-type SyncResult = {
-  merged: Task[];
-  serverTime: string;
-  pushed: number;
-  pulled: number;
-};
+// ─────────────────────────────────────────────────────────────
+//  Generic merge — works for any type that has id + updatedAt
+// ─────────────────────────────────────────────────────────────
 
-/**
- * Pull remote changes since lastSyncAt, merge with local (LWW on updatedAt),
- * push local tasks the server doesn't know about or that are newer.
- *
- * Returns the merged task list — caller should setState with it.
- */
-export async function syncTasks(userId: string, localTasks: Task[]): Promise<SyncResult | null> {
-  if (!userId) return null;
-  const since = getLastSyncAt(userId);
+type Syncable = { id: string; updatedAt?: string };
 
-  // ── 1. PULL remote changes ──
-  let remoteTasks: Task[] = [];
-  let serverTime = new Date().toISOString();
-  try {
-    const res = await fetch(
-      `${SERVER_URL}/api/sync/${encodeURIComponent(userId)}?since=${encodeURIComponent(since)}`
-    );
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (!data.success) return null;
-    remoteTasks = (data.tasks || []) as Task[];
-    serverTime = data.serverTime || serverTime;
-  } catch {
-    return null; // offline — leave local as-is
-  }
+/** Merge remote into local by id. LWW on updatedAt. */
+function mergeById<T extends Syncable>(local: T[], remote: T[]): T[] {
+  const byId = new Map<string, T>();
+  for (const t of local) byId.set(t.id, t);
 
-  // ── 2. MERGE by id, LWW on updatedAt ──
-  const byId = new Map<string, Task>();
-  for (const t of localTasks) byId.set(t.id, t);
-
-  for (const r of remoteTasks) {
+  for (const r of remote) {
     const existing = byId.get(r.id);
     if (!existing) {
       byId.set(r.id, r);
@@ -70,40 +45,116 @@ export async function syncTasks(userId: string, localTasks: Task[]): Promise<Syn
     if (rt > lt) byId.set(r.id, r);
   }
 
-  // ── 3. Determine what to push ──
-  const remoteById = new Map(remoteTasks.map((r) => [r.id, r]));
-  const toPush: Task[] = [];
+  return Array.from(byId.values());
+}
 
-  for (const local of localTasks) {
-    const remote = remoteById.get(local.id);
-    if (!remote) {
-      toPush.push(local); // server has never seen this id
+/** Determine which local items need to be pushed (new or newer than remote). */
+function pickToPush<T extends Syncable>(local: T[], remote: T[]): T[] {
+  const remoteById = new Map(remote.map((r) => [r.id, r]));
+  const toPush: T[] = [];
+
+  for (const l of local) {
+    const r = remoteById.get(l.id);
+    if (!r) {
+      toPush.push(l);
       continue;
     }
-    const lt = new Date(local.updatedAt || 0).getTime();
-    const rt = new Date(remote.updatedAt || 0).getTime();
-    if (lt > rt) toPush.push(local); // local is newer
+    const lt = new Date(l.updatedAt || 0).getTime();
+    const rt = new Date(r.updatedAt || 0).getTime();
+    if (lt > rt) toPush.push(l);
   }
 
-  // ── 4. PUSH in chunks of 200 ──
+  return toPush;
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Full sync — tasks + habits + checkIns + milestones
+// ─────────────────────────────────────────────────────────────
+
+export type SyncAllInput = {
+  tasks: Task[];
+  habits: Habit[];
+  checkIns: HabitCheckIn[];
+  milestones: Milestone[];
+};
+
+export type SyncAllResult = {
+  tasks: Task[];
+  habits: Habit[];
+  checkIns: HabitCheckIn[];
+  milestones: Milestone[];
+  serverTime: string;
+  pushed: number;
+  pulled: number;
+};
+
+export async function syncAll(
+  userId: string,
+  local: SyncAllInput
+): Promise<SyncAllResult | null> {
+  if (!userId) return null;
+  const since = getLastSyncAt(userId);
+
+  // ── 1. PULL remote changes ──
+  let remoteTasks: Task[] = [];
+  let remoteHabits: Habit[] = [];
+  let remoteCheckIns: HabitCheckIn[] = [];
+  let remoteMilestones: Milestone[] = [];
+  let serverTime = new Date().toISOString();
+
+  try {
+    const res = await fetch(
+      `${SERVER_URL}/api/sync/${encodeURIComponent(userId)}/full?since=${encodeURIComponent(since)}`
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data.success) return null;
+
+    remoteTasks = (data.tasks || []) as Task[];
+    remoteHabits = (data.habits || []) as Habit[];
+    remoteCheckIns = (data.checkIns || []) as HabitCheckIn[];
+    remoteMilestones = (data.milestones || []) as Milestone[];
+    serverTime = data.serverTime || serverTime;
+  } catch {
+    return null; // offline — leave local as-is
+  }
+
+  // ── 2. MERGE each type (LWW) ──
+  const mergedTasks = mergeById(local.tasks, remoteTasks);
+  const mergedHabits = mergeById(local.habits, remoteHabits);
+  const mergedCheckIns = mergeById(local.checkIns, remoteCheckIns);
+  const mergedMilestones = mergeById(local.milestones, remoteMilestones);
+
+  // ── 3. Determine what to push (per type) ──
+  const tasksToPush = pickToPush(local.tasks, remoteTasks);
+  const habitsToPush = pickToPush(local.habits, remoteHabits);
+  const checkInsToPush = pickToPush(local.checkIns, remoteCheckIns);
+  const milestonesToPush = pickToPush(local.milestones, remoteMilestones);
+
+  const totalPush =
+    tasksToPush.length + habitsToPush.length +
+    checkInsToPush.length + milestonesToPush.length;
+
+  // ── 4. PUSH (single batch call, or skip if nothing to push) ──
   let pushed = 0;
-  if (toPush.length > 0) {
-    const CHUNK = 200;
-    for (let i = 0; i < toPush.length; i += CHUNK) {
-      const slice = toPush.slice(i, i + CHUNK);
-      try {
-        const res = await fetch(`${SERVER_URL}/api/sync/${encodeURIComponent(userId)}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tasks: slice }),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          pushed += data.applied || slice.length;
-        }
-      } catch {
-        /* offline — will retry next sync */
+  if (totalPush > 0) {
+    try {
+      const res = await fetch(`${SERVER_URL}/api/sync/${encodeURIComponent(userId)}/full`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tasks: tasksToPush,
+          habits: habitsToPush,
+          checkIns: checkInsToPush,
+          milestones: milestonesToPush,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        pushed = data.applied || totalPush;
       }
+    } catch {
+      /* offline — will retry next sync */
     }
   }
 
@@ -111,6 +162,42 @@ export async function syncTasks(userId: string, localTasks: Task[]): Promise<Syn
   setLastSyncAt(userId, serverTime);
 
   // ── 6. Return merged (tombstones included; caller filters for UI) ──
-  const merged = [...byId.values()];
-  return { merged, serverTime, pushed, pulled: remoteTasks.length };
+  const pulled = remoteTasks.length + remoteHabits.length + remoteCheckIns.length + remoteMilestones.length;
+  return {
+    tasks: mergedTasks,
+    habits: mergedHabits,
+    checkIns: mergedCheckIns,
+    milestones: mergedMilestones,
+    serverTime,
+    pushed,
+    pulled,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Legacy: tasks-only sync (kept so nothing else breaks)
+// ─────────────────────────────────────────────────────────────
+
+type LegacySyncResult = {
+  merged: Task[];
+  serverTime: string;
+  pushed: number;
+  pulled: number;
+};
+
+export async function syncTasks(userId: string, localTasks: Task[]): Promise<LegacySyncResult | null> {
+  if (!userId) return null;
+  const result = await syncAll(userId, {
+    tasks: localTasks,
+    habits: [],
+    checkIns: [],
+    milestones: [],
+  });
+  if (!result) return null;
+  return {
+    merged: result.tasks,
+    serverTime: result.serverTime,
+    pushed: result.pushed,
+    pulled: result.pulled,
+  };
 }

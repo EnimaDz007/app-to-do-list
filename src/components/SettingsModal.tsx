@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────────────────────
 //  FILE: src/components/SettingsModal.tsx
-//  Full — Clerk signed-in card + Cloud Sync status
+//  Full — Clerk signed-in card + Cloud Sync status with counts
 // ─────────────────────────────────────────────────────────────
 
 import React, { useState, useRef, useEffect } from 'react';
@@ -44,6 +44,7 @@ interface SettingsModalProps {
   isSyncing?: boolean;
   lastSyncedAt?: string | null;
   syncError?: string | null;
+  syncCounts?: { tasks: number; habits: number; checkIns: number; milestones: number };
 }
 
 type SettingsTab = 'general' | 'backup' | 'sync' | 'notifications' | 'about';
@@ -177,6 +178,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   dailyDigest, onChangeDailyDigest,
   escalation, onChangeEscalation,
   onSyncNow, isSyncing = false, lastSyncedAt = null, syncError = null,
+  syncCounts,
 }) => {
   const { t, language, setLanguage, supportedLanguages } = useLanguage();
   const { theme, setTheme } = useTheme();
@@ -347,8 +349,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     .join('')
     .toUpperCase();
 
-  return (
-    <div id="settings-modal-backdrop" className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-150" onClick={onClose}>
+  // Fallback counts if caller didn't pass them
+  const counts = syncCounts ?? { tasks: tasks.length, habits: 0, checkIns: 0, milestones: 0 };
+
+  return (    <div id="settings-modal-backdrop" className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-150" onClick={onClose}>
       <div id="settings-modal-dialog" className="w-full max-w-md rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-150" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
           <div className="flex items-center gap-2.5">
@@ -544,6 +548,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
                     <span>{isSyncing ? 'Syncing…' : 'Sync now'}</span>
                   </button>
+                </div>
+
+                {/* Counts breakdown */}
+                <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center gap-3 text-[10px] text-slate-500 dark:text-slate-400">
+                  <span className="font-semibold">{counts.tasks} task{counts.tasks === 1 ? '' : 's'}</span>
+                  <span className="text-slate-300 dark:text-slate-700">·</span>
+                  <span className="font-semibold">{counts.habits} habit{counts.habits === 1 ? '' : 's'}</span>
+                  <span className="text-slate-300 dark:text-slate-700">·</span>
+                  <span className="font-semibold">{counts.milestones} milestone{counts.milestones === 1 ? '' : 's'}</span>
                 </div>
               </div>
 

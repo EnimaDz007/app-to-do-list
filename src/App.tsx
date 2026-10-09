@@ -1,6 +1,7 @@
 // ─────────────────────────────────────────────────────────────
 //  FILE: src/App.tsx
-//  Full file — Clerk auth + two-way sync + soft-delete + timestamps
+//  Full file — Clerk auth + two-way sync for tasks, habits,
+//  check-ins, and milestones + soft-delete + timestamps
 // ─────────────────────────────────────────────────────────────
 
 /**
@@ -87,7 +88,7 @@ import {
 import { getDelegateStatus } from './utils/delegateShare';
 import { syncWidgetData } from './utils/widgetBridge';
 import {
-  syncTasks as runSyncTasks,
+  syncAll as runSyncAll,
   getLastSyncAt,
   setLastSyncAt as storeLastSyncAt,
 } from './utils/sync';
@@ -186,6 +187,9 @@ export default function App() {
   const hasSyncedTasksRef = useRef(false);
 
   const tasksRef = useRef<Task[]>([]);
+  const habitsRef = useRef<Habit[]>([]);
+  const checkInsRef = useRef<HabitCheckIn[]>([]);
+  const milestonesRef = useRef<Milestone[]>([]);
   const escalationRef = useRef<EscalationConfig>(DEFAULT_ESCALATION_CONFIG);
   const handleToggleStatusRef = useRef<((id: string) => Promise<void>) | null>(null);
 
@@ -282,8 +286,12 @@ export default function App() {
   const activeTasks = visibleTasks.filter((t) => !t.archivedAt);
   const archivedTasks = visibleTasks.filter((t) => t.archivedAt);
 
+  const visibleHabits = useMemo(() => habits.filter((h) => !h.deletedAt), [habits]);
+  const visibleCheckIns = useMemo(() => checkIns.filter((ci) => !ci.deletedAt), [checkIns]);
+  const visibleMilestones = useMemo(() => milestones.filter((m) => !m.deletedAt), [milestones]);
+
   const streakData = useStreak(visibleTasks.filter((t) => t.status === 'completed').length);
-  const karma = useKarma(visibleTasks, habits, checkIns, milestones, streakData.currentStreak);
+  const karma = useKarma(visibleTasks, visibleHabits, visibleCheckIns, visibleMilestones, streakData.currentStreak);
 
   const [karmaPopup, setKarmaPopup] = useState<{ id: number; amount: number } | null>(null);
   const showKarmaPopup = (amount: number) => {
@@ -304,14 +312,56 @@ export default function App() {
     if (!opts?.silent) setIsSyncing(true);
 
     try {
-      const result = await runSyncTasks(userId, tasksRef.current);
+      const result = await runSyncAll(userId, {
+        tasks: tasksRef.current,
+        habits: habitsRef.current,
+        checkIns: checkInsRef.current,
+        milestones: milestonesRef.current,
+      });
       if (!result) return;
 
+      const serverTs = new Date(result.serverTime).getTime();
+
+      // Merge server results back in, preserving any local edits made during the round trip.
       setTasks((prev) => {
         const merged = new Map<string, Task>();
-        for (const t of result.merged) merged.set(t.id, t);
+        for (const t of result.tasks) merged.set(t.id, t);
+        for (const local of prev) {
+          const existing = merged.get(local.id);
+          if (!existing) { merged.set(local.id, local); continue; }
+          const localTs = new Date(local.updatedAt || 0).getTime();
+          if (localTs > serverTs) merged.set(local.id, local);
+        }
+        return Array.from(merged.values());
+      });
 
-        const serverTs = new Date(result.serverTime).getTime();
+      setHabits((prev) => {
+        const merged = new Map<string, Habit>();
+        for (const h of result.habits) merged.set(h.id, h);
+        for (const local of prev) {
+          const existing = merged.get(local.id);
+          if (!existing) { merged.set(local.id, local); continue; }
+          const localTs = new Date(local.updatedAt || 0).getTime();
+          if (localTs > serverTs) merged.set(local.id, local);
+        }
+        return Array.from(merged.values());
+      });
+
+      setCheckIns((prev) => {
+        const merged = new Map<string, HabitCheckIn>();
+        for (const ci of result.checkIns) merged.set(ci.id, ci);
+        for (const local of prev) {
+          const existing = merged.get(local.id);
+          if (!existing) { merged.set(local.id, local); continue; }
+          const localTs = new Date(local.updatedAt || 0).getTime();
+          if (localTs > serverTs) merged.set(local.id, local);
+        }
+        return Array.from(merged.values());
+      });
+
+      setMilestones((prev) => {
+        const merged = new Map<string, Milestone>();
+        for (const m of result.milestones) merged.set(m.id, m);
         for (const local of prev) {
           const existing = merged.get(local.id);
           if (!existing) { merged.set(local.id, local); continue; }
@@ -360,10 +410,19 @@ export default function App() {
       try {
         localStorage.removeItem(RESTORE_PENDING_KEY);
         localStorage.removeItem(STORAGE_KEY);
+        localStorage.removeItem(HABITS_STORAGE_KEY);
+        localStorage.removeItem(CHECKINS_STORAGE_KEY);
+        localStorage.removeItem(MILESTONES_STORAGE_KEY);
         localStorage.removeItem(`taskflow_lastSync_${userId}`);
       } catch {}
       setTasks([]);
+      setHabits([]);
+      setCheckIns([]);
+      setMilestones([]);
       tasksRef.current = [];
+      habitsRef.current = [];
+      checkInsRef.current = [];
+      milestonesRef.current = [];
     }
 
     setLastSyncedAt(getLastSyncAt(userId));
@@ -583,7 +642,7 @@ export default function App() {
     if (hasSyncedHabitsRef.current) return;
     hasSyncedHabitsRef.current = true;
 
-    const active = habits.filter((h) => !h.archivedAt);
+    const active = habits.filter((h) => !h.archivedAt && !h.deletedAt);
     active.forEach((h) => {
       if (h.reminderEnabled && h.reminderTime) {
         syncHabitReminderToServer(h);
@@ -962,6 +1021,18 @@ export default function App() {
   }, [tasks]);
 
   useEffect(() => {
+    habitsRef.current = habits;
+  }, [habits]);
+
+  useEffect(() => {
+    checkInsRef.current = checkIns;
+  }, [checkIns]);
+
+  useEffect(() => {
+    milestonesRef.current = milestones;
+  }, [milestones]);
+
+  useEffect(() => {
     escalationRef.current = escalation;
   }, [escalation]);
 
@@ -1093,15 +1164,17 @@ export default function App() {
   const handleEditTask = (task: Task) => { setEditingTask(task); setIsTaskModalOpen(true); };
 
   const handleSaveHabit = (habitData: Omit<Habit, 'id' | 'createdAt'> & { id?: string }) => {
+    const now = new Date().toISOString();
     if (habitData.id) {
-      const updatedHabit = { ...habitData, id: habitData.id } as Habit;
-      setHabits((prev) => prev.map((h) => (h.id === habitData.id ? updatedHabit : h)));
+      const updatedHabit = { ...habitData, id: habitData.id, updatedAt: now } as Habit;
+      setHabits((prev) => prev.map((h) => (h.id === habitData.id ? { ...h, ...habitData, updatedAt: now } : h)));
       syncHabitReminderToServer(updatedHabit);
     } else {
       const newHabit: Habit = {
         ...habitData,
         id: `habit-${Date.now()}`,
-        createdAt: new Date().toISOString(),
+        createdAt: now,
+        updatedAt: now,
       } as Habit;
       setHabits((prev) => [newHabit, ...prev]);
       if (newHabit.reminderEnabled && newHabit.reminderTime) {
@@ -1109,13 +1182,20 @@ export default function App() {
       }
     }
     triggerHaptic('success');
+    scheduleSync();
   };
 
   const handleDeleteHabit = (habitId: string) => {
     cancelHabitReminderOnServer(habitId);
-    setHabits((prev) => prev.filter((h) => h.id !== habitId));
-    setCheckIns((prev) => prev.filter((ci) => ci.habitId !== habitId));
+    const now = new Date().toISOString();
+    // Soft-delete the habit
+    setHabits((prev) => prev.map((h) => (h.id === habitId ? { ...h, deletedAt: now, updatedAt: now } : h)));
+    // Soft-delete its check-ins too
+    setCheckIns((prev) =>
+      prev.map((ci) => (ci.habitId === habitId ? { ...ci, deletedAt: now, updatedAt: now } : ci))
+    );
     triggerHaptic('success');
+    scheduleSync();
   };
 
   const handleEditHabit = (habit: Habit) => {
@@ -1124,54 +1204,70 @@ export default function App() {
   };
 
   const handleToggleCheckIn = (habitId: string, date: string) => {
-    const habit = habits.find((h) => h.id === habitId);
+    const habit = visibleHabits.find((h) => h.id === habitId);
     if (!habit) return;
 
-    const existingCheckIn = checkIns.find((ci) => ci.habitId === habitId && ci.date === date);
+    const existingCheckIn = visibleCheckIns.find((ci) => ci.habitId === habitId && ci.date === date);
     if (!existingCheckIn) {
       showKarmaPopup(2);
     } else {
       showKarmaPopup(-2);
     }
 
+    const now = new Date().toISOString();
     setCheckIns((prev) => {
-      const existing = prev.find((ci) => ci.habitId === habitId && ci.date === date);
+      const existing = prev.find((ci) => ci.habitId === habitId && ci.date === date && !ci.deletedAt);
 
       if (habit.goalType === 'count') {
         if (!existing) return prev;
         if (existing.count <= 1) {
-          return prev.filter((ci) => ci.id !== existing.id);
+          // Soft-delete the check-in
+          return prev.map((ci) =>
+            ci.id === existing.id ? { ...ci, deletedAt: now, updatedAt: now } : ci
+          );
         }
-        return prev.map((ci) => ci.id === existing.id ? { ...ci, count: ci.count - 1 } : ci);
+        return prev.map((ci) =>
+          ci.id === existing.id ? { ...ci, count: ci.count - 1, updatedAt: now, completedAt: now } : ci
+        );
       } else {
-        if (existing) return prev.filter((ci) => ci.id !== existing.id);
+        if (existing) {
+          // Soft-delete the check-in
+          return prev.map((ci) =>
+            ci.id === existing.id ? { ...ci, deletedAt: now, updatedAt: now } : ci
+          );
+        }
         return [...prev, {
           id: `${habitId}_${date}`,
           habitId, date, count: 1,
-          completedAt: new Date().toISOString(),
+          completedAt: now,
+          updatedAt: now,
         }];
       }
     });
+    scheduleSync();
   };
 
   const handleIncrementCount = (habitId: string, date: string) => {
     showKarmaPopup(1);
+    const now = new Date().toISOString();
 
     setCheckIns((prev) => {
-      const existing = prev.find((ci) => ci.habitId === habitId && ci.date === date);
+      const existing = prev.find((ci) => ci.habitId === habitId && ci.date === date && !ci.deletedAt);
       if (existing) {
         return prev.map((ci) =>
           ci.id === existing.id
-            ? { ...ci, count: ci.count + 1, completedAt: new Date().toISOString() }
+            ? { ...ci, count: ci.count + 1, completedAt: now, updatedAt: now }
             : ci
         );
       }
       return [...prev, {
         id: `${habitId}_${date}`,
         habitId, date, count: 1,
-        completedAt: new Date().toISOString(),
+        completedAt: now,
+        updatedAt: now,
       }];
     });
+    scheduleSync();
   };
 
   const handleOpenNewHabit = () => {
@@ -1180,20 +1276,27 @@ export default function App() {
   };
 
   const handleSaveMilestone = (milestone: Milestone) => {
+    const now = new Date().toISOString();
     setMilestones((prev) => {
       const existing = prev.findIndex((m) => m.id === milestone.id);
+      const stamped = { ...milestone, updatedAt: now };
       if (existing >= 0) {
         const next = [...prev];
-        next[existing] = milestone;
+        next[existing] = stamped;
         return next;
       }
-      return [...prev, milestone];
+      return [...prev, stamped];
     });
     triggerHaptic('success');
+    scheduleSync();
   };
 
   const handleDeleteMilestone = (id: string) => {
-    setMilestones((prev) => prev.filter((m) => m.id !== id));
+    const now = new Date().toISOString();
+    setMilestones((prev) =>
+      prev.map((m) => (m.id === id ? { ...m, deletedAt: now, updatedAt: now } : m))
+    );
+    scheduleSync();
   };
 
   const completedCount = visibleTasks.filter((t) => t.status === 'completed').length;
@@ -1319,7 +1422,7 @@ export default function App() {
         });
       });
 
-    habits
+    visibleHabits
       .filter((h) => !h.archivedAt)
       .forEach((h) => list.push({
         id: `habit-${h.id}`,
@@ -1337,8 +1440,7 @@ export default function App() {
 
     return list;
     // eslint-disable-next-line
-  }, [visibleTasks, habits, defaultQuadrant]);
-
+  }, [visibleTasks, visibleHabits, defaultQuadrant]);
   return (
     <div className="min-h-screen bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col transition-colors duration-200 overflow-x-hidden w-full">
       <OnboardingScreen
@@ -1366,7 +1468,7 @@ export default function App() {
           />
 
           <MilestoneBanner
-            milestones={milestones}
+            milestones={visibleMilestones}
             onOpen={() => setIsMilestoneModalOpen(true)}
           />
 
@@ -1442,15 +1544,15 @@ export default function App() {
             {activeTab === 'review' && (
               <WeeklyReviewView
                 tasks={visibleTasks}
-                habits={habits}
-                checkIns={checkIns}
+                habits={visibleHabits}
+                checkIns={visibleCheckIns}
                 streakCount={streakData.currentStreak}
               />
             )}
             {activeTab === 'habits' && (
               <HabitView
-                habits={habits}
-                checkIns={checkIns}
+                habits={visibleHabits}
+                checkIns={visibleCheckIns}
                 onToggleCheckIn={handleToggleCheckIn}
                 onIncrementCount={handleIncrementCount}
                 onEditHabit={handleEditHabit}
@@ -1462,9 +1564,9 @@ export default function App() {
             {activeTab === 'export' && (
               <NativePackagingHub
                 tasks={visibleTasks}
-                habits={habits}
-                checkIns={checkIns}
-                milestones={milestones}
+                habits={visibleHabits}
+                checkIns={visibleCheckIns}
+                milestones={visibleMilestones}
                 onOpenInstallModal={() => setIsInstallModalOpen(true)}
                 onOpenSettings={() => setIsSettingsOpen(true)}
               />
@@ -1581,7 +1683,13 @@ export default function App() {
         onSyncNow={() => runSync()}
         isSyncing={isSyncing}
         lastSyncedAt={lastSyncedAt}
-        syncError={syncError}
+        syncError={syncError}       
+        syncCounts={{
+          tasks: visibleTasks.length,
+          habits: visibleHabits.length,
+          checkIns: visibleCheckIns.length,
+          milestones: visibleMilestones.length,
+        }}
       />
 
       <CommandPalette
@@ -1593,7 +1701,7 @@ export default function App() {
       <MilestoneModal
         isOpen={isMilestoneModalOpen}
         onClose={() => setIsMilestoneModalOpen(false)}
-        milestones={milestones}
+        milestones={visibleMilestones}
         onSaveMilestone={handleSaveMilestone}
         onDeleteMilestone={handleDeleteMilestone}
       />

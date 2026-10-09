@@ -23,7 +23,12 @@ const tasksCollection = db.collection('tasks');
 const habitRemindersCollection = db.collection('habitReminders');
 const delegateCollection = db.collection('delegates');
 const prefsCollection = db.collection('preferences');
+
+// Two-way sync collections (4 data types)
 const syncTasksCollection = db.collection('syncTasks');
+const syncHabitsCollection = db.collection('syncHabits');
+const syncHabitCheckinsCollection = db.collection('syncHabitCheckins');
+const syncMilestonesCollection = db.collection('syncMilestones');
 
 const app = express();
 app.use(cors({ origin: '*' }));
@@ -47,6 +52,9 @@ async function handleStaleToken(externalId, err) {
   return true;
 }
 
+// ============================================================
+//                    TASK TIMERS (reminders only)
+// ============================================================
 const scheduledTimers = {};
 
 function computeNextDueDate(fromISO, rec) {
@@ -59,9 +67,7 @@ function computeNextDueDate(fromISO, rec) {
     const next = new Date(d.getTime());
     const interval = Math.max(1, rec.interval || 1);
     switch (rec.frequency) {
-      case 'daily':
-        next.setDate(next.getDate() + interval);
-        break;
+      case 'daily': next.setDate(next.getDate() + interval); break;
       case 'weekdays':
         do { next.setDate(next.getDate() + 1); }
         while (next.getDay() === 0 || next.getDay() === 6);
@@ -84,11 +90,8 @@ function computeNextDueDate(fromISO, rec) {
         next.setDate(Math.min(target, daysInMonth));
         break;
       }
-      case 'yearly':
-        next.setFullYear(next.getFullYear() + interval);
-        break;
-      default:
-        return null;
+      case 'yearly': next.setFullYear(next.getFullYear() + interval); break;
+      default: return null;
     }
     return next;
   };
@@ -194,6 +197,9 @@ async function rescheduleAllTasks() {
   } catch (err) { console.error('Failed to reschedule tasks:', err); }
 }
 
+// ============================================================
+//                    HABIT TIMERS
+// ============================================================
 const scheduledHabitTimers = {};
 
 function computeNextHabitFire(habit, fromTimeMs = Date.now()) {
@@ -267,6 +273,9 @@ async function rescheduleAllHabitReminders() {
   await rescheduleAllHabitReminders();
 })();
 
+// ============================================================
+//                    TASK ROUTES (reminders)
+// ============================================================
 app.post('/api/register-device', async (req, res) => {
   const { userId, fcmToken } = req.body;
   if (!userId || !fcmToken) return res.status(400).json({ error: 'Missing fields' });
@@ -322,6 +331,9 @@ app.post('/api/cancel-reminder', async (req, res) => {
   res.json({ success: true });
 });
 
+// ============================================================
+//                    TWO-WAY SYNC — TASKS ONLY (legacy, kept)
+// ============================================================
 app.get('/api/sync/:userId', async (req, res) => {
   const { userId } = req.params;
   const since = req.query.since ? String(req.query.since) : null;
@@ -337,12 +349,8 @@ app.get('/api/sync/:userId', async (req, res) => {
     snapshot.forEach((doc) => {
       const data = doc.data();
       const serverTs = new Date(data.serverUpdatedAt || 0).getTime();
-      if (serverTs > sinceTs) {
-        tasks.push({ ...data, id: doc.id });
-      }
-      if (serverTs > new Date(maxServerUpdatedAt).getTime()) {
-        maxServerUpdatedAt = data.serverUpdatedAt;
-      }
+      if (serverTs > sinceTs) tasks.push({ ...data, id: doc.id });
+      if (serverTs > new Date(maxServerUpdatedAt).getTime()) maxServerUpdatedAt = data.serverUpdatedAt;
     });
 
     console.log(`📤 sync pull: user=${userId} since=${since || 'first'} → ${tasks.length} task(s)`);
@@ -369,12 +377,7 @@ app.post('/api/sync/:userId', async (req, res) => {
     for (const task of tasks.slice(0, CAP)) {
       if (!task || !task.id) continue;
       const ref = syncTasksCollection.doc(String(task.id));
-      const payload = {
-        ...task,
-        externalId: userId,
-        serverUpdatedAt: now,
-      };
-      batch.set(ref, payload, { merge: false });
+      batch.set(ref, { ...task, externalId: userId, serverUpdatedAt: now }, { merge: false });
       applied++;
     }
 
@@ -400,6 +403,106 @@ app.post('/api/sync/:userId/delete', async (req, res) => {
   }
 });
 
+// ============================================================
+//                    TWO-WAY SYNC — ALL TYPES (new)
+// ============================================================
+// GET pulls tasks + habits + checkIns + milestones for this user
+// in ONE round trip. Single serverTime. Client merges each list.
+app.get('/api/sync/:userId/full', async (req, res) => {
+  const { userId } = req.params;
+  const since = req.query.since ? String(req.query.since) : null;
+  if (!userId) return res.status(400).json({ error: 'userId required' });
+
+  try {
+    const serverTime = new Date().toISOString();
+    const sinceTs = since ? new Date(since).getTime() : 0;
+
+    const [tasksSnap, habitsSnap, checkInsSnap, milestonesSnap] = await Promise.all([
+      syncTasksCollection.where('externalId', '==', userId).get(),
+      syncHabitsCollection.where('externalId', '==', userId).get(),
+      syncHabitCheckinsCollection.where('externalId', '==', userId).get(),
+      syncMilestonesCollection.where('externalId', '==', userId).get(),
+    ]);
+
+    const filterSince = (snap) => {
+      const out = [];
+      snap.forEach((doc) => {
+        const data = doc.data();
+        const ts = new Date(data.serverUpdatedAt || 0).getTime();
+        if (ts > sinceTs) out.push({ ...data, id: doc.id });
+      });
+      return out;
+    };
+
+    const tasks = filterSince(tasksSnap);
+    const habits = filterSince(habitsSnap);
+    const checkIns = filterSince(checkInsSnap);
+    const milestones = filterSince(milestonesSnap);
+
+    console.log(`📤 syncPullAll: user=${userId} since=${since || 'first'} → tasks:${tasks.length} habits:${habits.length} checkins:${checkIns.length} milestones:${milestones.length}`);
+    res.json({
+      success: true,
+      tasks,
+      habits,
+      checkIns,
+      milestones,
+      serverTime,
+      count: tasks.length + habits.length + checkIns.length + milestones.length,
+    });
+  } catch (err) {
+    console.error('❌ syncPullAll failed:', err);
+    res.status(500).json({ error: 'Failed' });
+  }
+});
+
+// POST pushes any combination of the four types in one batch.
+// Writes are chunked to 450 per commit (Firestore batch limit is 500).
+app.post('/api/sync/:userId/full', async (req, res) => {
+  const { userId } = req.params;
+  const { tasks = [], habits = [], checkIns = [], milestones = [] } = req.body || {};
+  if (!userId) return res.status(400).json({ error: 'userId required' });
+
+  try {
+    const now = new Date().toISOString();
+    const sources = [
+      { items: tasks, collection: syncTasksCollection },
+      { items: habits, collection: syncHabitsCollection },
+      { items: checkIns, collection: syncHabitCheckinsCollection },
+      { items: milestones, collection: syncMilestonesCollection },
+    ];
+
+    const ops = [];
+    for (const { items, collection } of sources) {
+      for (const item of items) {
+        if (!item || !item.id) continue;
+        ops.push({
+          ref: collection.doc(String(item.id)),
+          payload: { ...item, externalId: userId, serverUpdatedAt: now },
+        });
+      }
+    }
+
+    const CHUNK = 450;
+    let applied = 0;
+    for (let i = 0; i < ops.length; i += CHUNK) {
+      const batch = db.batch();
+      const slice = ops.slice(i, i + CHUNK);
+      for (const op of slice) batch.set(op.ref, op.payload, { merge: false });
+      await batch.commit();
+      applied += slice.length;
+    }
+
+    console.log(`📥 syncPushAll: user=${userId} → ${applied} applied`);
+    res.json({ success: true, applied, serverTime: now });
+  } catch (err) {
+    console.error('❌ syncPushAll failed:', err);
+    res.status(500).json({ error: 'Failed' });
+  }
+});
+
+// ============================================================
+//                  USER PREFERENCES
+// ============================================================
 app.get('/api/preferences/:userId', async (req, res) => {
   const { userId } = req.params;
   if (!userId) return res.status(400).json({ error: 'userId required' });
@@ -426,6 +529,9 @@ app.post('/api/preferences/:userId', async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'Failed' }); }
 });
 
+// ============================================================
+//                    HABIT ROUTES (reminders)
+// ============================================================
 app.post('/api/schedule-habit-reminder', async (req, res) => {
   const { habitId, externalId, name, emoji, reminderTime, daysOfWeek, timezoneOffsetMinutes } = req.body;
   if (!habitId || !externalId || !reminderTime) return res.status(400).json({ error: 'Missing fields' });
@@ -457,6 +563,9 @@ app.post('/api/cancel-habit-reminder', async (req, res) => {
   res.json({ success: true });
 });
 
+// ============================================================
+//                    DELEGATE HUB
+// ============================================================
 app.post('/api/delegate/create', async (req, res) => {
   const { taskId, title, description, dueDate, externalId, senderName } = req.body;
   if (!taskId || !title) return res.status(400).json({ error: 'Missing taskId or title' });
@@ -547,9 +656,9 @@ app.get('/delegate/:delegateId', async (req, res) => {
 // ============================================================
 //                    TOMBSTONE GARBAGE COLLECTION
 // ============================================================
-// Deleted tasks stay in Firestore as "tombstones" (docs with a
-// deletedAt timestamp) so the deletion propagates across devices.
-// After TOMBSTONE_TTL_DAYS days, everyone has synced and the
+// Deleted items (tasks, habits, check-ins, milestones) stay in
+// Firestore as "tombstones" so deletions propagate across devices.
+// After TOMBSTONE_TTL_DAYS days, everyone has synced, and the
 // tombstone is dead weight — we hard-delete it to keep Firestore lean.
 const TOMBSTONE_TTL_DAYS = 30;
 const GC_INTERVAL_MS = 24 * 60 * 60 * 1000; // once per day
@@ -557,28 +666,35 @@ const GC_INTERVAL_MS = 24 * 60 * 60 * 1000; // once per day
 async function garbageCollectTombstones() {
   try {
     const cutoff = new Date(Date.now() - TOMBSTONE_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString();
-    const snapshot = await syncTasksCollection
-      .where('deletedAt', '<', cutoff)
-      .get();
+    const collections = [
+      { name: 'tasks', coll: syncTasksCollection },
+      { name: 'habits', coll: syncHabitsCollection },
+      { name: 'checkins', coll: syncHabitCheckinsCollection },
+      { name: 'milestones', coll: syncMilestonesCollection },
+    ];
 
-    if (snapshot.empty) {
+    let totalDeleted = 0;
+    for (const { name, coll } of collections) {
+      const snapshot = await coll.where('deletedAt', '<', cutoff).get();
+      if (snapshot.empty) continue;
+
+      const docs = snapshot.docs;
+      const CHUNK = 450;
+      for (let i = 0; i < docs.length; i += CHUNK) {
+        const batch = db.batch();
+        const slice = docs.slice(i, i + CHUNK);
+        for (const d of slice) batch.delete(d.ref);
+        await batch.commit();
+        totalDeleted += slice.length;
+      }
+      console.log(`🧹 GC(${name}): hard-deleted ${snapshot.size} tombstone(s)`);
+    }
+
+    if (totalDeleted === 0) {
       console.log(`🧹 GC: no tombstones older than ${TOMBSTONE_TTL_DAYS} days`);
-      return;
+    } else {
+      console.log(`🧹 GC: total ${totalDeleted} tombstone(s) removed`);
     }
-
-    // Firestore batch limit is 500 writes — chunk accordingly.
-    const docs = snapshot.docs;
-    const CHUNK = 450;
-    let deleted = 0;
-    for (let i = 0; i < docs.length; i += CHUNK) {
-      const batch = db.batch();
-      const slice = docs.slice(i, i + CHUNK);
-      for (const d of slice) batch.delete(d.ref);
-      await batch.commit();
-      deleted += slice.length;
-    }
-
-    console.log(`🧹 GC: hard-deleted ${deleted} tombstone(s) older than ${TOMBSTONE_TTL_DAYS} days`);
   } catch (err) {
     console.error('❌ GC failed:', err);
   }
