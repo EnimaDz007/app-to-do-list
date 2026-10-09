@@ -1,14 +1,15 @@
 // ─────────────────────────────────────────────────────────────
 //  FILE: src/components/SettingsModal.tsx
-//  Full — Sync tab + clean restore + "Sync now" indicator
+//  Full — Clerk signed-in card + Cloud Sync status
 // ─────────────────────────────────────────────────────────────
 
 import React, { useState, useRef, useEffect } from 'react';
+import { useUser, useClerk } from '@clerk/clerk-react';
 import {
   X, Settings, Sun, Moon, Globe, Download, Upload,
   FileSpreadsheet, FileCode, Bell, Check, AlertCircle, ShieldCheck,
   Smartphone, Info, Volume2, Play, Clock, Sunrise, AlarmClock,
-  CalendarPlus, CalendarCheck, Copy, RefreshCw, Link2, TriangleAlert,
+  CalendarPlus, CalendarCheck, RefreshCw, Link2, LogOut, User as UserIcon,
 } from 'lucide-react';
 import { Task } from '../types';
 import { triggerHaptic } from '../utils/haptics';
@@ -39,7 +40,6 @@ interface SettingsModalProps {
   escalation: EscalationConfig;
   onChangeEscalation: (next: EscalationConfig) => void;
 
-  // ── Sync (new) ────────────────────────────────────────────
   onSyncNow?: () => void | Promise<void>;
   isSyncing?: boolean;
   lastSyncedAt?: string | null;
@@ -51,85 +51,38 @@ type LocalLang = 'en' | 'fr' | 'ar';
 type HourFormat = '24' | '12';
 
 const HOUR_FORMAT_KEY = 'taskflow_hour_format';
-const USER_ID_KEY = 'taskflow_user_id';
-const RESTORE_PENDING_KEY = 'taskflow_restore_pending';
-const SERVER_URL = 'https://task-priority-server-pir6.onrender.com';
 
 const SYNC_COPY: Record<LocalLang, {
   tab: string;
   title: string;
   desc: string;
-  yourCode: string;
-  copy: string;
-  copied: string;
-  restoreTitle: string;
-  restoreDesc: string;
-  restorePlaceholder: string;
-  restoreBtn: string;
-  okRestored: string;
-  errNotFound: string;
-  errInvalid: string;
-  errNetwork: string;
-  confirmTitle: string;
-  confirmBody: string;
-  codeHint: string;
+  signedInAs: string;
+  signOut: string;
+  accountHint: string;
 }> = {
   en: {
     tab: 'Sync',
     title: 'Sync across devices',
-    desc: 'Carry your theme and tasks to a new install or a new phone.',
-    yourCode: 'Your sync code',
-    copy: 'Copy',
-    copied: 'Copied',
-    restoreTitle: 'Restore from a code',
-    restoreDesc: 'Paste a code from another device to bring your data over.',
-    restorePlaceholder: 'user_...',
-    restoreBtn: 'Restore',
-    okRestored: 'Restored. Reloading…',
-    errNotFound: 'No data found for that code.',
-    errInvalid: 'That doesn\u2019t look like a valid sync code.',
-    errNetwork: 'Couldn\u2019t reach the server. Try again.',
-    confirmTitle: 'Replace current data?',
-    confirmBody: 'Your current theme and tasks on this device will be replaced with the ones from that code.',
-    codeHint: 'Keep this code safe \u2014 it\u2019s the only way to recover your data on a new device.',
+    desc: 'Sign in to carry your tasks and theme to any device.',
+    signedInAs: 'Signed in as',
+    signOut: 'Sign out',
+    accountHint: 'Your tasks sync automatically to this account. Sign in with the same account on any device to see them.',
   },
   fr: {
     tab: 'Synchro',
     title: 'Synchroniser entre appareils',
-    desc: 'Transf\u00e9rez votre th\u00e8me et vos t\u00e2ches vers une nouvelle installation.',
-    yourCode: 'Votre code de synchro',
-    copy: 'Copier',
-    copied: 'Copi\u00e9',
-    restoreTitle: 'Restaurer depuis un code',
-    restoreDesc: 'Collez un code depuis un autre appareil pour r\u00e9cup\u00e9rer vos donn\u00e9es.',
-    restorePlaceholder: 'user_...',
-    restoreBtn: 'Restaurer',
-    okRestored: 'Restaur\u00e9. Rechargement\u2026',
-    errNotFound: 'Aucune donn\u00e9e pour ce code.',
-    errInvalid: 'Ce code ne semble pas valide.',
-    errNetwork: 'Serveur injoignable. R\u00e9essayez.',
-    confirmTitle: 'Remplacer les donn\u00e9es actuelles ?',
-    confirmBody: 'Votre th\u00e8me et vos t\u00e2ches actuels sur cet appareil seront remplac\u00e9s par ceux de ce code.',
-    codeHint: 'Conservez ce code \u2014 c\u2019est le seul moyen de r\u00e9cup\u00e9rer vos donn\u00e9es sur un nouvel appareil.',
+    desc: 'Connectez-vous pour retrouver vos tâches sur tous vos appareils.',
+    signedInAs: 'Connecté en tant que',
+    signOut: 'Se déconnecter',
+    accountHint: 'Vos tâches se synchronisent automatiquement sur ce compte. Connectez-vous avec le même compte sur n\u2019importe quel appareil pour les retrouver.',
   },
   ar: {
     tab: '\u0627\u0644\u0645\u0632\u0627\u0645\u0646\u0629',
     title: '\u0627\u0644\u0645\u0632\u0627\u0645\u0646\u0629 \u0628\u064a\u0646 \u0627\u0644\u0623\u062c\u0647\u0632\u0629',
-    desc: '\u0627\u0646\u0642\u0644 \u0627\u0644\u062b\u064a\u0645 \u0648\u0627\u0644\u0645\u0647\u0627\u0645 \u0625\u0644\u0649 \u062a\u0646\u0635\u064a\u0628 \u062c\u062f\u064a\u062f \u0623\u0648 \u0647\u0627\u062a\u0641 \u0622\u062e\u0631.',
-    yourCode: '\u0631\u0645\u0632 \u0627\u0644\u0645\u0632\u0627\u0645\u0646\u0629 \u0627\u0644\u062e\u0627\u0635 \u0628\u0643',
-    copy: '\u0646\u0633\u062e',
-    copied: '\u062a\u0645 \u0627\u0644\u0646\u0633\u062e',
-    restoreTitle: '\u0627\u0633\u062a\u0639\u062f\u0627\u062f \u0645\u0646 \u0631\u0645\u0632',
-    restoreDesc: '\u0627\u0644\u0635\u0642 \u0631\u0645\u0632\u0627\u064b \u0645\u0646 \u062c\u0647\u0627\u0632 \u0622\u062e\u0631 \u0644\u0627\u0633\u062a\u0631\u062c\u0627\u0639 \u0628\u064a\u0627\u0646\u0627\u062a\u0643.',
-    restorePlaceholder: 'user_...',
-    restoreBtn: '\u0627\u0633\u062a\u0639\u062f\u0627\u062f',
-    okRestored: '\u062a\u0645 \u0627\u0644\u0627\u0633\u062a\u0639\u062f\u0627\u062f. \u062c\u0627\u0631\u064d \u0627\u0644\u062a\u062d\u062f\u064a\u062b\u2026',
-    errNotFound: '\u0644\u0627 \u062a\u0648\u062c\u062f \u0628\u064a\u0627\u0646\u0627\u062a \u0644\u0647\u0630\u0627 \u0627\u0644\u0631\u0645\u0632.',
-    errInvalid: '\u064a\u0628\u062f\u0648 \u0623\u0646 \u0647\u0630\u0627 \u0627\u0644\u0631\u0645\u0632 \u063a\u064a\u0631 \u0635\u0627\u0644\u062d.',
-    errNetwork: '\u062a\u0639\u0630\u0631 \u0627\u0644\u0627\u062a\u0635\u0627\u0644 \u0628\u0627\u0644\u062e\u0627\u062f\u0645. \u062d\u0627\u0648\u0644 \u0645\u062c\u062f\u062f\u0627\u064b.',
-    confirmTitle: '\u0627\u0633\u062a\u0628\u062f\u0627\u0644 \u0627\u0644\u0628\u064a\u0627\u0646\u0627\u062a \u0627\u0644\u062d\u0627\u0644\u064a\u0629\u061f',
-    confirmBody: '\u0633\u064a\u062a\u0645 \u0627\u0633\u062a\u0628\u062f\u0627\u0644 \u0627\u0644\u062b\u064a\u0645 \u0648\u0627\u0644\u0645\u0647\u0627\u0645 \u0627\u0644\u062d\u0627\u0644\u064a\u0629 \u0639\u0644\u0649 \u0647\u0630\u0627 \u0627\u0644\u062c\u0647\u0627\u0632 \u0628\u0645\u0627 \u0641\u064a \u0647\u0630\u0627 \u0627\u0644\u0631\u0645\u0632.',
-    codeHint: '\u0627\u062d\u0641\u0638 \u0647\u0630\u0627 \u0627\u0644\u0631\u0645\u0632 \u2014 \u0625\u0646\u0647 \u0627\u0644\u0637\u0631\u064a\u0642\u0629 \u0627\u0644\u0648\u062d\u064a\u062f\u0629 \u0644\u0627\u0633\u062a\u0631\u062c\u0627\u0639 \u0628\u064a\u0627\u0646\u0627\u062a\u0643 \u0639\u0644\u0649 \u062c\u0647\u0627\u0632 \u062c\u062f\u064a\u062f.',
+    desc: '\u0633\u062c\u0651\u0644 \u0627\u0644\u062f\u062e\u0648\u0644 \u0644\u0646\u0642\u0644 \u0645\u0647\u0627\u0645\u0643 \u0625\u0644\u0649 \u0623\u064a \u062c\u0647\u0627\u0632.',
+    signedInAs: '\u0645\u0633\u062c\u0651\u0644 \u0627\u0644\u062f\u062e\u0648\u0644 \u0628\u0627\u0633\u0645',
+    signOut: '\u062a\u0633\u062c\u064a\u0644 \u0627\u0644\u062e\u0631\u0648\u062c',
+    accountHint: '\u0645\u0647\u0627\u0645\u0643 \u062a\u062a\u0632\u0627\u0645\u0646 \u062a\u0644\u0642\u0627\u0626\u064a\u0627\u064b \u0645\u0639 \u0647\u0630\u0627 \u0627\u0644\u062d\u0633\u0627\u0628.',
   },
 };
 
@@ -149,11 +102,11 @@ const SOUND_TRANSLATIONS: Record<LocalLang, Record<string, { name: string; descr
     'Urgent Alert':  { name: 'Alerte urgente',   description: 'Double alerte aigu\u00eb',                      tag: 'Fort' },
   },
   ar: {
-    'Silent':        { name: '\u0635\u0627\u0645\u062a',           description: '\u0634\u0631\u064a\u0637 \u0645\u0631\u0626\u064a \u0641\u0642\u0637\u060c \u0628\u062f\u0648\u0646 \u0635\u0648\u062a',         tag: '\u0625\u064a\u0642\u0627\u0641' },
-    'Classic Beep':  { name: '\u0635\u0641\u064a\u0631 \u0643\u0644\u0627\u0633\u064a\u0643\u064a',   description: '\u0646\u063a\u0645\u0629 \u0642\u0635\u064a\u0631\u0629 \u0648\u0627\u062d\u062f\u0629',                tag: '\u0627\u0641\u062a\u0631\u0627\u0636\u064a' },
-    'Soft Chime':    { name: '\u0631\u0646\u064a\u0646 \u0646\u0627\u0639\u0645',      description: '\u0631\u0646\u064a\u0646 \u0644\u0637\u064a\u0641 \u0645\u0646 \u0646\u063a\u0645\u062a\u064a\u0646',             tag: '\u0647\u0627\u062f\u0626' },
-    'Success':       { name: '\u0646\u062c\u0627\u062d',           description: '\u0646\u063a\u0645\u0627\u062a \u0635\u0627\u0639\u062f\u0629 \u0645\u062a\u062a\u0627\u0628\u0639\u0629',             tag: '\u0645\u062a\u0641\u0627\u0626\u0644' },
-    'Urgent Alert':  { name: '\u062a\u0646\u0628\u064a\u0647 \u0639\u0627\u062c\u0644',     description: '\u062a\u0646\u0628\u064a\u0647 \u0645\u0632\u062f\u0648\u062c \u0639\u0627\u0644\u064a \u0627\u0644\u0646\u0628\u0631\u0629',         tag: '\u0639\u0627\u0644\u064d' },
+    'Silent':        { name: '\u0635\u0627\u0645\u062a',           description: '\u0634\u0631\u064a\u0637 \u0645\u0631\u0626\u064a \u0641\u0642\u0637',         tag: '\u0625\u064a\u0642\u0627\u0641' },
+    'Classic Beep':  { name: '\u0635\u0641\u064a\u0631 \u0643\u0644\u0627\u0633\u064a\u0643\u064a',   description: '\u0646\u063a\u0645\u0629 \u0642\u0635\u064a\u0631\u0629',                tag: '\u0627\u0641\u062a\u0631\u0627\u0636\u064a' },
+    'Soft Chime':    { name: '\u0631\u0646\u064a\u0646 \u0646\u0627\u0639\u0645',      description: '\u0631\u0646\u064a\u0646 \u0644\u0637\u064a\u0641',             tag: '\u0647\u0627\u062f\u0626' },
+    'Success':       { name: '\u0646\u062c\u0627\u062d',           description: '\u0646\u063a\u0645\u0627\u062a \u0635\u0627\u0639\u062f\u0629',             tag: '\u0645\u062a\u0641\u0627\u0626\u0644' },
+    'Urgent Alert':  { name: '\u062a\u0646\u0628\u064a\u0647 \u0639\u0627\u062c\u0644',     description: '\u062a\u0646\u0628\u064a\u0647 \u0645\u0632\u062f\u0648\u062c',         tag: '\u0639\u0627\u0644\u064d' },
   },
 };
 
@@ -166,10 +119,9 @@ const PERM_LABELS: Record<LocalLang, Record<string, string>> = {
 const TIME_COPY: Record<LocalLang, { am: string; pm: string; h24: string; h12: string; switchTo24: string; switchTo12: string }> = {
   en: { am: 'AM', pm: 'PM', h24: '24h', h12: 'AM/PM', switchTo24: 'Switch to 24-hour', switchTo12: 'Switch to AM/PM' },
   fr: { am: 'AM', pm: 'PM', h24: '24h', h12: 'AM/PM', switchTo24: 'Passer au format 24h', switchTo12: 'Passer au format AM/PM' },
-  ar: { am: '\u0635', pm: '\u0645', h24: '\u0662\u0664\u0633', h12: '\u0635/\u0645', switchTo24: '\u0627\u0644\u062a\u062d\u0648\u064a\u0644 \u0625\u0644\u0649 \u0646\u0637\u0627\u0645 \u0662\u0664 \u0633\u0627\u0639\u0629', switchTo12: '\u0627\u0644\u062a\u062d\u0648\u064a\u0644 \u0625\u0644\u0649 \u0646\u0637\u0627\u0645 \u0635/\u0645' },
+  ar: { am: '\u0635', pm: '\u0645', h24: '\u0662\u0664\u0633', h12: '\u0635/\u0645', switchTo24: '\u0662\u0664 \u0633\u0627\u0639\u0629', switchTo12: '\u0635/\u0645' },
 };
 
-// ── Relative time helper (new) ────────────────────────────────
 function formatRelative(iso: string | null | undefined): string {
   if (!iso) return 'Never';
   const then = new Date(iso).getTime();
@@ -228,6 +180,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 }) => {
   const { t, language, setLanguage, supportedLanguages } = useLanguage();
   const { theme, setTheme } = useTheme();
+  const { user } = useUser();
+  const { signOut } = useClerk();
   const isDark = theme === 'dark';
   const lang = (language as LocalLang) || 'en';
   const timeCopy = TIME_COPY[lang] ?? TIME_COPY.en;
@@ -246,14 +200,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [icsMessage, setIcsMessage] = useState<string | null>(null);
   const [hourFormat, setHourFormat] = useState<HourFormat>(() => readHourFormat());
 
-  // Sync state
-  const [userId, setUserId] = useState<string>('');
-  const [copied, setCopied] = useState<boolean>(false);
-  const [restoreInput, setRestoreInput] = useState<string>('');
-  const [restoreBusy, setRestoreBusy] = useState<boolean>(false);
-  const [restoreError, setRestoreError] = useState<string | null>(null);
-  const [restoreSuccess, setRestoreSuccess] = useState<string | null>(null);
-
   const fileInputRef = useRef<HTMLInputElement>(null);
   const icsInputRef = useRef<HTMLInputElement>(null);
 
@@ -264,14 +210,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   useEffect(() => {
     try { localStorage.setItem(HOUR_FORMAT_KEY, hourFormat); } catch { /* noop */ }
   }, [hourFormat]);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    try {
-      const id = localStorage.getItem(USER_ID_KEY);
-      if (id) setUserId(id);
-    } catch { /* noop */ }
-  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -382,78 +320,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const toggleHourFormat = () => { triggerHaptic('light'); setHourFormat((v) => (v === '24' ? '12' : '24')); };
   const handleEscalationChange = (intensity: EscalationIntensity) => { triggerHaptic('medium'); onChangeEscalation({ intensity }); };
 
-  // ── Sync handlers ──
-  const handleCopyCode = async () => {
-    if (!userId) return;
+  const handleSignOut = async () => {
     triggerHaptic('medium');
     try {
-      await navigator.clipboard.writeText(userId);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      const ta = document.createElement('textarea');
-      ta.value = userId;
-      ta.style.position = 'fixed';
-      ta.style.opacity = '0';
-      document.body.appendChild(ta);
-      ta.select();
-      try { document.execCommand('copy'); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch { /* noop */ }
-      document.body.removeChild(ta);
-    }
-  };
-
-  const handleRestore = async () => {
-    setRestoreError(null);
-    setRestoreSuccess(null);
-    const code = restoreInput.trim();
-    if (!code || !/^user_[A-Za-z0-9_\-]+$/.test(code)) {
-      triggerHaptic('heavy');
-      setRestoreError(syncCopy.errInvalid);
-      return;
-    }
-    if (code === userId) {
-      setRestoreError(syncCopy.errInvalid);
-      return;
-    }
-    triggerHaptic('medium');
-    setRestoreBusy(true);
-    try {
-      const res = await fetch(`${SERVER_URL}/api/preferences/${encodeURIComponent(code)}`);
-      if (!res.ok) {
-        if (res.status === 404) { setRestoreError(syncCopy.errNotFound); }
-        else { setRestoreError(syncCopy.errNetwork); }
-        setRestoreBusy(false);
-        return;
-      }
-      const data = await res.json();
-      if (!data || data.preferences === null) {
-        try {
-          const tres = await fetch(`${SERVER_URL}/api/tasks/${encodeURIComponent(code)}`);
-          const tdata = tres.ok ? await tres.json() : null;
-          const hasTasks = tdata && Array.isArray(tdata.tasks) && tdata.tasks.length > 0;
-          if (!hasTasks) { setRestoreError(syncCopy.errNotFound); setRestoreBusy(false); return; }
-        } catch {
-          setRestoreError(syncCopy.errNotFound);
-          setRestoreBusy(false);
-          return;
-        }
-      }
-
-      const confirmed = window.confirm(`${syncCopy.confirmTitle}\n\n${syncCopy.confirmBody}`);
-      if (!confirmed) { setRestoreBusy(false); return; }
-
-      try {
-        localStorage.setItem(USER_ID_KEY, code);
-        // Mark a pending restore so App.tsx replaces tasks instead of merging
-        localStorage.setItem(RESTORE_PENDING_KEY, '1');
-      } catch { /* noop */ }
-      triggerHaptic('success');
-      playAudioChime('success');
-      setRestoreSuccess(syncCopy.okRestored);
-      setTimeout(() => { window.location.reload(); }, 700);
-    } catch {
-      setRestoreError(syncCopy.errNetwork);
-      setRestoreBusy(false);
+      await signOut({ redirectUrl: '/' });
+    } catch (err) {
+      console.warn('Sign out failed:', err);
     }
   };
 
@@ -464,6 +336,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     { id: 'notifications', label: t('settings_tab_notifications'), icon: Bell },
     { id: 'about', label: t('settings_tab_about'), icon: Info },
   ];
+
+  const primaryEmail = user?.primaryEmailAddress?.emailAddress || '';
+  const displayName = user?.fullName || user?.firstName || user?.username || primaryEmail || 'User';
+  const initials = displayName
+    .split(' ')
+    .map((s) => s[0])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join('')
+    .toUpperCase();
 
   return (
     <div id="settings-modal-backdrop" className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-150" onClick={onClose}>
@@ -643,7 +525,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-snug">{syncCopy.desc}</p>
               </div>
 
-              {/* ── Cloud sync status card (new) ── */}
+              {/* Cloud sync status card */}
               <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-2.5">
                 <div className="flex items-center justify-between gap-3">
                   <div className="min-w-0 text-start">
@@ -665,61 +547,44 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
               </div>
 
-              <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-2.5">
+              {/* Signed-in account card */}
+              <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-3">
                 <div className="flex items-center gap-2">
                   <div className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 flex items-center justify-center shrink-0">
-                    <ShieldCheck className="w-3.5 h-3.5" />
+                    <UserIcon className="w-3.5 h-3.5" />
                   </div>
-                  <span className="text-xs font-bold text-slate-900 dark:text-white">{syncCopy.yourCode}</span>
+                  <span className="text-xs font-bold text-slate-900 dark:text-white">{syncCopy.signedInAs}</span>
                 </div>
-                <div className="flex items-stretch gap-2">
-                  <div className="flex-1 min-w-0 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 px-2.5 py-2 font-mono text-[11px] text-slate-700 dark:text-slate-300 select-all overflow-x-auto whitespace-nowrap">
-                    {userId || '—'}
-                  </div>
-                  <button onClick={handleCopyCode} disabled={!userId}
-                    className="flex items-center gap-1 px-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-[11px] font-bold shadow-xs transition cursor-pointer shrink-0">
-                    {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                    <span>{copied ? syncCopy.copied : syncCopy.copy}</span>
-                  </button>
-                </div>
-                <p className="text-[10px] text-slate-500 dark:text-slate-400 leading-snug">{syncCopy.codeHint}</p>
-              </div>
 
-              <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-2.5">
-                <div className="flex items-center gap-2">
-                  <div className="w-7 h-7 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
-                    <RefreshCw className="w-3.5 h-3.5" />
+                <div className="flex items-center gap-3">
+                  {user?.imageUrl ? (
+                    <img
+                      src={user.imageUrl}
+                      alt={displayName}
+                      className="w-10 h-10 rounded-full object-cover ring-2 ring-indigo-500/30"
+                    />
+                  ) : (
+                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 text-white font-bold text-sm flex items-center justify-center">
+                      {initials || 'U'}
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-bold text-slate-900 dark:text-white truncate">{displayName}</div>
+                    {primaryEmail && (
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">{primaryEmail}</div>
+                    )}
                   </div>
-                  <span className="text-xs font-bold text-slate-900 dark:text-white">{syncCopy.restoreTitle}</span>
                 </div>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">{syncCopy.restoreDesc}</p>
-                <input
-                  type="text"
-                  value={restoreInput}
-                  onChange={(e) => setRestoreInput(e.target.value)}
-                  placeholder={syncCopy.restorePlaceholder}
-                  spellCheck={false}
-                  autoComplete="off"
-                  className="w-full rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 px-2.5 py-2 font-mono text-[11px] text-slate-800 dark:text-slate-200 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500"
-                />
-                <button onClick={handleRestore} disabled={restoreBusy || !restoreInput.trim()}
-                  className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold shadow-xs transition cursor-pointer">
-                  <RefreshCw className={`w-3.5 h-3.5 ${restoreBusy ? 'animate-spin' : ''}`} />
-                  <span>{restoreBusy ? '...' : syncCopy.restoreBtn}</span>
+
+                <p className="text-[10px] text-slate-500 dark:text-slate-400 leading-snug">{syncCopy.accountHint}</p>
+
+                <button
+                  onClick={handleSignOut}
+                  className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-bold border border-slate-200 dark:border-slate-700 transition cursor-pointer"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span>{syncCopy.signOut}</span>
                 </button>
-
-                {restoreError && (
-                  <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 text-[11px] flex items-center gap-2">
-                    <TriangleAlert className="w-3.5 h-3.5 shrink-0" />
-                    <span>{restoreError}</span>
-                  </div>
-                )}
-                {restoreSuccess && (
-                  <div className="p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 text-[11px] flex items-center gap-2">
-                    <Check className="w-3.5 h-3.5 shrink-0" />
-                    <span>{restoreSuccess}</span>
-                  </div>
-                )}
               </div>
             </div>
           )}

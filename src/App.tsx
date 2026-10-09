@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────────────────────
 //  FILE: src/App.tsx
-//  Full file — with two-way web sync + soft-delete + timestamps
+//  Full file — Clerk auth + two-way sync + soft-delete + timestamps
 // ─────────────────────────────────────────────────────────────
 
 /**
@@ -9,6 +9,7 @@
  */
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useUser } from '@clerk/clerk-react';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { PushNotifications } from '@capacitor/push-notifications';
 import { LocalNotifications } from '@capacitor/local-notifications';
@@ -101,7 +102,7 @@ const DAILY_DIGEST_STORAGE_KEY = 'taskflow_daily_digest';
 const ESCALATION_STORAGE_KEY = 'taskflow_escalation';
 const ONBOARDING_SEEN_KEY = 'taskflow_onboarding_seen';
 const RESTORE_PENDING_KEY = 'taskflow_restore_pending';
-const USER_ID_KEY = 'taskflow_user_id';
+const LEGACY_USER_ID_KEY = 'taskflow_user_id';
 const SERVER_URL = 'https://task-priority-server-pir6.onrender.com';
 
 const OVERDUE_NOTIFICATION_ID = 999_998;
@@ -178,6 +179,9 @@ export default function App() {
   const { toggleTheme } = useTheme();
   const { language } = useLanguage();
 
+  const { user } = useUser();
+  const userId = user?.id ?? '';
+
   const hasSyncedHabitsRef = useRef(false);
   const hasSyncedTasksRef = useRef(false);
 
@@ -185,14 +189,6 @@ export default function App() {
   const escalationRef = useRef<EscalationConfig>(DEFAULT_ESCALATION_CONFIG);
   const handleToggleStatusRef = useRef<((id: string) => Promise<void>) | null>(null);
 
-  // ── Sync state ────────────────────────────────────────────
-  const [userId] = useState<string>(() => {
-    try {
-      return localStorage.getItem(USER_ID_KEY) || 'test-user-123';
-    } catch {
-      return 'test-user-123';
-    }
-  });
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
@@ -282,8 +278,6 @@ export default function App() {
     [customTemplates, language]
   );
 
-  // ── Derived task views ────────────────────────────────────
-  // `tasks` includes tombstones (deletedAt). `visibleTasks` hides them from the UI.
   const visibleTasks = useMemo(() => tasks.filter((t) => !t.deletedAt), [tasks]);
   const activeTasks = visibleTasks.filter((t) => !t.archivedAt);
   const archivedTasks = visibleTasks.filter((t) => t.archivedAt);
@@ -301,9 +295,6 @@ export default function App() {
     }, 1400);
   };
 
-  // ─────────────────────────────────────────────────────────
-  //                    TWO-WAY SYNC
-  // ─────────────────────────────────────────────────────────
   const runSync = useCallback(async (opts?: { silent?: boolean }) => {
     if (!userId) return;
     if (syncingRef.current) return;
@@ -316,7 +307,6 @@ export default function App() {
       const result = await runSyncTasks(userId, tasksRef.current);
       if (!result) return;
 
-      // Merge server result back in, but don't clobber edits made while in flight.
       setTasks((prev) => {
         const merged = new Map<string, Task>();
         for (const t of result.merged) merged.set(t.id, t);
@@ -342,13 +332,22 @@ export default function App() {
     }
   }, [userId]);
 
-  // Debounced trigger — call this after ANY local mutation.
   const scheduleSync = useCallback(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => { void runSync({ silent: true }); }, 1500);
   }, [runSync]);
 
-  // Initial sync + handle restore-from-code (replace local, then pull fresh).
+  useEffect(() => {
+    try {
+      const legacy = localStorage.getItem(LEGACY_USER_ID_KEY);
+      if (legacy) {
+        localStorage.removeItem(LEGACY_USER_ID_KEY);
+        localStorage.removeItem(`taskflow_lastSync_${legacy}`);
+        console.log('🆔 Migrated from legacy device id to Clerk user id');
+      }
+    } catch { /* noop */ }
+  }, []);
+
   useEffect(() => {
     if (!userId) return;
 
@@ -363,7 +362,6 @@ export default function App() {
         localStorage.removeItem(STORAGE_KEY);
         localStorage.removeItem(`taskflow_lastSync_${userId}`);
       } catch {}
-      // Wipe local state before pulling, so we don't push stale tasks to the new account.
       setTasks([]);
       tasksRef.current = [];
     }
@@ -372,14 +370,12 @@ export default function App() {
     void runSync({ silent: true });
   }, [userId, runSync]);
 
-  // Periodic background sync (60s).
   useEffect(() => {
     if (!userId) return;
     const id = setInterval(() => { void runSync({ silent: true }); }, 60_000);
     return () => clearInterval(id);
   }, [userId, runSync]);
 
-  // Sync on reconnect + on tab refocus.
   useEffect(() => {
     if (!userId) return;
     const onOnline = () => { void runSync({ silent: true }); };
@@ -393,10 +389,6 @@ export default function App() {
       document.removeEventListener('visibilitychange', onVisible);
     };
   }, [userId, runSync]);
-
-  // ─────────────────────────────────────────────────────────
-  //                    REMINDERS / NOTIFICATIONS
-  // ─────────────────────────────────────────────────────────
 
   const scheduleTaskReminder = async (task: Task) => {
     if (task.quadrant !== 'do_first') return;
@@ -647,7 +639,6 @@ export default function App() {
     // eslint-disable-next-line
   }, [visibleTasks]);
 
-  // Auto-archive completed tasks 2s after completion.
   useEffect(() => {
     const completedOnes = tasks.filter(
       (t) => t.status === 'completed' && !t.archivedAt && !t.deletedAt && t.completedAt
@@ -1039,7 +1030,6 @@ export default function App() {
   const handleDeleteTask = (taskId: string) => {
     cancelTaskReminder(taskId);
     const now = new Date().toISOString();
-    // Soft-delete: keep a tombstone so the delete propagates via sync.
     setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, deletedAt: now, updatedAt: now } : t)));
     playAudioChime('beep');
     scheduleSync();
@@ -1096,7 +1086,6 @@ export default function App() {
   const handlePermanentDelete = (taskId: string) => {
     cancelTaskReminder(taskId);
     const now = new Date().toISOString();
-    // Soft-delete tombstone — propagates the delete across devices.
     setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, deletedAt: now, updatedAt: now } : t)));
     scheduleSync();
   };
