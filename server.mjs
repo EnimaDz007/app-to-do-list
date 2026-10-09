@@ -544,6 +544,52 @@ app.get('/delegate/:delegateId', async (req, res) => {
   res.set('Content-Type', 'text/html; charset=utf-8').send(html);
 });
 
+// ============================================================
+//                    TOMBSTONE GARBAGE COLLECTION
+// ============================================================
+// Deleted tasks stay in Firestore as "tombstones" (docs with a
+// deletedAt timestamp) so the deletion propagates across devices.
+// After TOMBSTONE_TTL_DAYS days, everyone has synced and the
+// tombstone is dead weight — we hard-delete it to keep Firestore lean.
+const TOMBSTONE_TTL_DAYS = 30;
+const GC_INTERVAL_MS = 24 * 60 * 60 * 1000; // once per day
+
+async function garbageCollectTombstones() {
+  try {
+    const cutoff = new Date(Date.now() - TOMBSTONE_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString();
+    const snapshot = await syncTasksCollection
+      .where('deletedAt', '<', cutoff)
+      .get();
+
+    if (snapshot.empty) {
+      console.log(`🧹 GC: no tombstones older than ${TOMBSTONE_TTL_DAYS} days`);
+      return;
+    }
+
+    // Firestore batch limit is 500 writes — chunk accordingly.
+    const docs = snapshot.docs;
+    const CHUNK = 450;
+    let deleted = 0;
+    for (let i = 0; i < docs.length; i += CHUNK) {
+      const batch = db.batch();
+      const slice = docs.slice(i, i + CHUNK);
+      for (const d of slice) batch.delete(d.ref);
+      await batch.commit();
+      deleted += slice.length;
+    }
+
+    console.log(`🧹 GC: hard-deleted ${deleted} tombstone(s) older than ${TOMBSTONE_TTL_DAYS} days`);
+  } catch (err) {
+    console.error('❌ GC failed:', err);
+  }
+}
+
+// Run once at startup, then every 24 hours.
+(async () => {
+  await garbageCollectTombstones();
+  setInterval(() => { void garbageCollectTombstones(); }, GC_INTERVAL_MS);
+})();
+
 app.get('/', (req, res) => { res.send('Task Priority Server is alive! 🚀'); });
 
 const PORT = process.env.PORT || 5000;
