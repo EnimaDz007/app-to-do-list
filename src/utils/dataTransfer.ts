@@ -15,11 +15,7 @@ export async function exportTasksToJSON(tasks: Task[]): Promise<boolean> {
     };
     const content = JSON.stringify(payload, null, 2);
     const stamp = new Date().toISOString().slice(0, 10);
-    return await exportFile(
-      `task-priority-${stamp}.json`,
-      content,
-      'application/json'
-    );
+    return await exportFile(`task-priority-${stamp}.json`, content, 'application/json');
   } catch (err) {
     console.warn('JSON export failed:', err);
     return false;
@@ -66,11 +62,7 @@ export async function exportTasksToCSV(tasks: Task[]): Promise<boolean> {
 
     const content = lines.join('\n');
     const stamp = new Date().toISOString().slice(0, 10);
-    return await exportFile(
-      `task-priority-${stamp}.csv`,
-      content,
-      'text/csv'
-    );
+    return await exportFile(`task-priority-${stamp}.csv`, content, 'text/csv');
   } catch (err) {
     console.warn('CSV export failed:', err);
     return false;
@@ -81,12 +73,24 @@ export async function exportTasksToCSV(tasks: Task[]): Promise<boolean> {
    IMPORT
    ============================================================ */
 
+/**
+ * FIX (bug #6): support 3 shapes:
+ *  1. Full backup:  { version, exportedAt, appName, data: { tasks: [...] } }
+ *  2. Task export:  { version, exportedAt, count, tasks: [...] }
+ *  3. Raw array:    [ ... ]
+ */
 export async function importTasksFromJSON(file: File): Promise<Task[]> {
   const text = await file.text();
   const parsed = JSON.parse(text);
 
-  // Support both { version, tasks: [...] } and raw [...]
-  const rawTasks: any[] = Array.isArray(parsed) ? parsed : parsed.tasks || [];
+  let rawTasks: any[] = [];
+  if (Array.isArray(parsed)) {
+    rawTasks = parsed;
+  } else if (parsed && parsed.data && Array.isArray(parsed.data.tasks)) {
+    rawTasks = parsed.data.tasks;
+  } else if (parsed && Array.isArray(parsed.tasks)) {
+    rawTasks = parsed.tasks;
+  }
 
   return rawTasks.map(normalizeTask).filter(Boolean) as Task[];
 }
@@ -158,6 +162,15 @@ export async function importTasksFromCSV(file: File): Promise<Task[]> {
    HELPERS
    ============================================================ */
 
+/**
+ * FIX (bug #10): 0 is a valid value. Previously `Number(x) || 3` turned 0 → 3.
+ */
+function numOr(value: any, fallback: number): number {
+  if (value === '' || value === null || value === undefined) return fallback;
+  const n = Number(value);
+  return isNaN(n) ? fallback : n;
+}
+
 function normalizeTask(raw: any): Task | null {
   if (!raw || !raw.title) return null;
 
@@ -169,6 +182,15 @@ function normalizeTask(raw: any): Task | null {
   const category = validCategories.includes(raw.category) ? raw.category : 'Personal';
   const priority = validPriorities.includes(raw.priority) ? raw.priority : 'high';
 
+  // FIX (bug #9): missing dueDate defaults to tomorrow 9am (local) instead
+  // of "now" — avoids imported tasks being instantly overdue.
+  const defaultDueDate = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    d.setHours(9, 0, 0, 0);
+    return d.toISOString();
+  })();
+
   return {
     id: raw.id || `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     title: String(raw.title).slice(0, 200),
@@ -177,10 +199,10 @@ function normalizeTask(raw: any): Task | null {
     category,
     priority,
     status: raw.status === 'completed' ? 'completed' : 'todo',
-    estimatedMinutes: Number(raw.estimatedMinutes) || 30,
-    dueDate: raw.dueDate || new Date().toISOString(),
-    impactScore: Number(raw.impactScore) || 3,
-    effortScore: Number(raw.effortScore) || 3,
+    estimatedMinutes: numOr(raw.estimatedMinutes, 30),
+    dueDate: raw.dueDate || defaultDueDate,
+    impactScore: numOr(raw.impactScore, 3),
+    effortScore: numOr(raw.effortScore, 3),
     createdAt: raw.createdAt || new Date().toISOString(),
     completedAt: raw.completedAt || undefined,
     archivedAt: raw.archivedAt || undefined,

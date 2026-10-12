@@ -333,8 +333,8 @@ export function getDueTasks(tasks: Task[]): Task[] {
   endOfToday.setHours(23, 59, 59, 999);
   const cutoff = endOfToday.getTime();
 
-  return tasks.filter((t: any) => {
-    if (t.completed || t.status === 'completed') return false;
+  return tasks.filter((t) => {
+    if (t.status === 'completed') return false;
     if (!t.dueDate) return false;
     const due = new Date(t.dueDate);
     if (isNaN(due.getTime())) return false;

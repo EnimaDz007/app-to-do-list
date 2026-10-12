@@ -1,8 +1,6 @@
 // ─────────────────────────────────────────────────────────────
 //  FILE: src/App.tsx
-//  Full file — Clerk auth + two-way sync + QuickAddBar + reminders
-//  + Bulk actions + Full backup/restore + Reset (tombstone-safe)
-//  + Fixed: streak sync, nag ID overflow, delegate user id
+//  Full file — all bug fixes applied (streak, nag IDs, delegate, digest i18n)
 // ─────────────────────────────────────────────────────────────
 
 /**
@@ -82,6 +80,7 @@ import {
   getDigestNotificationIds,
   computeDigestSchedule,
   buildDigestBody,
+  getDigestTitle,
 } from './utils/dailyDigest';
 import {
   EscalationConfig,
@@ -129,11 +128,7 @@ const AlarmNative = registerPlugin<{
   stopAlarm: (options?: { taskId?: string }) => Promise<{ success: boolean }>;
 }>('AlarmNative');
 
-/**
- * FIX (bug #3): clamp hash to 1,000,000 so notification IDs derived from
- * it never exceed int32 range on Android (max ~2.14 billion).
- * Used for task reminders (id = hash + 1) and custom reminders (hash + 100).
- */
+// Notification ID hash — clamped to 1M to avoid int32 overflow on Android.
 const hashTaskId = (taskId: string): number => {
   let hash = 0;
   for (let i = 0; i < taskId.length; i++) {
@@ -156,7 +151,11 @@ const computeNextDueDate = (dueDate: string | undefined, recurrence: string): st
   return next.toISOString();
 };
 
-async function scheduleDailyDigests(config: DailyDigestConfig, tasks: Task[]): Promise<void> {
+async function scheduleDailyDigests(
+  config: DailyDigestConfig,
+  tasks: Task[],
+  language: 'en' | 'fr' | 'ar',
+): Promise<void> {
   if (!Capacitor.isNativePlatform()) return;
   try {
     await LocalNotifications.cancel({
@@ -175,8 +174,8 @@ async function scheduleDailyDigests(config: DailyDigestConfig, tasks: Task[]): P
   if (occurrences.length === 0) return;
   const notifications = occurrences.map(({ id, when }) => ({
     id,
-    title: '🌅 Morning Digest',
-    body: buildDigestBody(when, tasks),
+    title: getDigestTitle(language),
+    body: buildDigestBody(when, tasks, language),
     schedule: { at: when },
     extra: { type: 'digest' },
   }));
@@ -306,10 +305,7 @@ export default function App() {
     [customTemplates, language]
   );
 
-  // ─────────────────────────────────────────────────────────────
-  //  FIX (bug #4): persist the current Clerk user id so delegateShare.ts
-  //  can pick it up without needing to be threaded through every caller.
-  // ─────────────────────────────────────────────────────────────
+  // Persist current user id for delegateShare fallback.
   useEffect(() => {
     try {
       if (userId) localStorage.setItem(CURRENT_USER_KEY, userId);
@@ -335,10 +331,7 @@ export default function App() {
   const visibleMilestones = useMemo(() => milestones.filter((m) => !m.deletedAt), [milestones]);
   const visibleProjects = useMemo(() => projects.filter((p) => !p.deletedAt), [projects]);
 
-  // ─────────────────────────────────────────────────────────────
-  //  FIX (bug #1 + #2): streak now derived from tasks array.
-  //  Uses local dates and syncs across devices automatically.
-  // ─────────────────────────────────────────────────────────────
+  // Streak now derived from tasks (local dates, syncs across devices).
   const streakData = useStreak(visibleTasks);
   const karma = useKarma(visibleTasks, visibleHabits, visibleCheckIns, visibleMilestones, streakData.currentStreak);
 
@@ -825,13 +818,13 @@ export default function App() {
   }, [visibleTasks, streakData.currentStreak, karma.total, karma.level.emoji, karma.level.name, karma.progressToNext]);
 
   useEffect(() => {
-    scheduleDailyDigests(dailyDigest, tasksRef.current);
+    scheduleDailyDigests(dailyDigest, tasksRef.current, language as 'en' | 'fr' | 'ar');
     // eslint-disable-next-line
   }, [dailyDigest]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      scheduleDailyDigests(dailyDigest, tasksRef.current);
+      scheduleDailyDigests(dailyDigest, tasksRef.current, language as 'en' | 'fr' | 'ar');
     }, 2500);
     return () => clearTimeout(timer);
     // eslint-disable-next-line
@@ -1494,13 +1487,9 @@ export default function App() {
     scheduleSync();
   };
 
-  // ─── FULL BACKUP: RESTORE + RESET ───
-
   const handleRestoreFullBackup = (backup: FullBackup) => {
     const now = new Date().toISOString();
 
-    // Always stamp with a fresh `now` so restored items beat any tombstones
-    // that may still be on the server from a previous reset.
     const stampedTasks = backup.data.tasks.map((t) => ({ ...t, updatedAt: now }));
     const stampedHabits = backup.data.habits.map((h) => ({ ...h, updatedAt: now }));
     const stampedCheckIns = backup.data.checkIns.map((ci) => ({ ...ci, updatedAt: now }));
@@ -1564,8 +1553,6 @@ export default function App() {
 
     setTimeout(() => { void runSync({ silent: true }); }, 500);
   };
-
-  // ─── BULK ACTIONS ───
 
   const handleBulkComplete = (taskIds: string[]) => {
     const now = new Date().toISOString();
