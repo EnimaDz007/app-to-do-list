@@ -28,6 +28,19 @@ export interface Recurrence {
   endDate?: string;
 }
 
+/** A user-defined reminder that fires at a specific time before the due date. */
+export interface TaskReminder {
+  /** Unique id, stable across edits — used to build the notification id. */
+  id: string;
+  /** ISO timestamp when this reminder should fire. */
+  fireAt: string;
+  /**
+   * Minutes before the dueDate. 0 = at due time.
+   * Kept for display ("1h before") and to recompute fireAt if dueDate changes.
+   */
+  minutesBefore: number;
+}
+
 export type HabitFrequency = 'daily' | 'weekly' | 'custom';
 
 export type HabitGoalType = 'check' | 'count';
@@ -46,8 +59,6 @@ export interface Habit {
   reminderEnabled: boolean;
   createdAt: string;
   archivedAt?: string;
-
-  // ── Sync fields ─────────────────────────────────────────
   updatedAt?: string;
   deletedAt?: string;
 }
@@ -59,8 +70,6 @@ export interface HabitCheckIn {
   count: number;
   note?: string;
   completedAt: string;
-
-  // ── Sync fields ─────────────────────────────────────────
   updatedAt?: string;
   deletedAt?: string;
 }
@@ -69,7 +78,7 @@ export interface Subtask {
   id: string;
   title: string;
   done: boolean;
-  subtasks?: Subtask[];   // recursive — enables unlimited nesting
+  subtasks?: Subtask[];
 }
 
 export interface Milestone {
@@ -80,8 +89,6 @@ export interface Milestone {
   color: string;
   createdAt: string;
   archivedAt?: string;
-
-  // ── Sync fields ─────────────────────────────────────────
   updatedAt?: string;
   deletedAt?: string;
 }
@@ -113,14 +120,12 @@ export interface Task {
   delegateCompletedBy?: string;
   delegateCompletedAt?: string;
 
-  // ── Sync fields ─────────────────────────────────────────
+  /** Custom user-defined reminders (fired by LocalNotifications / server push). */
+  reminders?: TaskReminder[];
+
   updatedAt?: string;
   deletedAt?: string;
 }
-
-/* ─────────────────────────────────────────────────────────
-   NEW — Task Templates
-   ───────────────────────────────────────────────────────── */
 
 export interface Template {
   id: string;

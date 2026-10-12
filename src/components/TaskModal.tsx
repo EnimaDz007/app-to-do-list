@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { X, Save, Clock, Target, Dumbbell, Mic, Repeat, Calendar, Tag, Check, Share2, LayoutTemplate, Wand2, Sparkles } from 'lucide-react';
-import { Task, Subtask, Template, QuadrantId, TaskCategory, PriorityLevel, Recurrence, RecurrenceFrequency, CONTEXT_DEFINITIONS } from '../types';
+import { Task, TaskReminder, Subtask, Template, QuadrantId, TaskCategory, PriorityLevel, Recurrence, RecurrenceFrequency, CONTEXT_DEFINITIONS } from '../types';
 import { QUADRANT_CONFIGS } from '../data/initialTasks';
 import { triggerHaptic } from '../utils/haptics';
 import { useLanguage } from '../context/LanguageContext';
@@ -8,9 +8,11 @@ import { TranslationKey } from '../i18n/translations';
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
 import { parseSpokenTask } from '../utils/voiceParser';
 import { parseQuickAdd } from '../utils/quickAddParser';
+import { recomputeReminder } from '../utils/reminderScheduler';
 import { cloneSubtaskTree, countTemplateSubtasks } from '../utils/templateHelpers';
 import { TemplatePicker } from './TemplatePicker';
 import { LocalizedDateInput } from './LocalizedDateInput';
+import { ReminderPicker } from './ReminderPicker';
 
 interface TaskModalProps {
   isOpen: boolean;
@@ -18,7 +20,6 @@ interface TaskModalProps {
   onSaveTask: (taskData: Omit<Task, 'id' | 'createdAt'> & { id?: string }) => void;
   editingTask?: Task | null;
   defaultQuadrant?: QuadrantId;
-  /** Pre-fills the due date for a NEW task (YYYY-MM-DD) */
   defaultDueDate?: string;
   onShareTask?: (task: Task) => void;
   templates?: Template[];
@@ -73,6 +74,13 @@ const COPY: Record<LocalLang, {
   weekdaysShort: string[];
   freqLabels: Record<'daily'|'weekdays'|'weekly'|'monthly'|'yearly', string>;
   contexts: Record<string, string>;
+  reminderTitle: string;
+  reminderAdd: string;
+  reminderEmpty: string;
+  reminderHint: string;
+  reminderMax: string;
+  reminderNoDate: string;
+  reminderPast: string;
 }> = {
   en: {
     startFromTpl: 'Start from a template',
@@ -120,6 +128,13 @@ const COPY: Record<LocalLang, {
     weekdaysShort: ['S','M','T','W','T','F','S'],
     freqLabels: { daily:'Daily', weekdays:'Weekdays', weekly:'Weekly', monthly:'Monthly', yearly:'Yearly' },
     contexts: { home: 'Home', work: 'Work', call: 'Call', computer: 'Deep Work', errand: 'Errand', health: 'Health' },
+    reminderTitle: 'Reminders',
+    reminderAdd: 'Add reminder',
+    reminderEmpty: 'No reminders yet — pick a preset above.',
+    reminderHint: 'Get notified at custom times before the task is due.',
+    reminderMax: 'Max 5 reminders per task',
+    reminderNoDate: 'Set a due date first',
+    reminderPast: 'That time is already in the past',
   },
   fr: {
     startFromTpl: 'Partir d’un modèle',
@@ -167,6 +182,13 @@ const COPY: Record<LocalLang, {
     weekdaysShort: ['D','L','M','M','J','V','S'],
     freqLabels: { daily:'Quotidien', weekdays:'Jours ouvrés', weekly:'Hebdo', monthly:'Mensuel', yearly:'Annuel' },
     contexts: { home: 'Maison', work: 'Travail', call: 'Appel', computer: 'Travail profond', errand: 'Courses', health: 'Santé' },
+    reminderTitle: 'Rappels',
+    reminderAdd: 'Ajouter un rappel',
+    reminderEmpty: 'Aucun rappel — choisissez un préréglage ci-dessus.',
+    reminderHint: 'Recevez une notification avant l’échéance de la tâche.',
+    reminderMax: 'Max 5 rappels par tâche',
+    reminderNoDate: 'Définissez d’abord une date',
+    reminderPast: 'Cette heure est déjà passée',
   },
   ar: {
     startFromTpl: 'ابدأ من قالب',
@@ -214,6 +236,13 @@ const COPY: Record<LocalLang, {
     weekdaysShort: ['ح','ن','ث','ر','خ','ج','س'],
     freqLabels: { daily:'يومياً', weekdays:'أيام الأسبوع', weekly:'أسبوعياً', monthly:'شهرياً', yearly:'سنوياً' },
     contexts: { home: 'المنزل', work: 'العمل', call: 'مكالمة', computer: 'عمل عميق', errand: 'مشاوير', health: 'الصحة' },
+    reminderTitle: 'التذكيرات',
+    reminderAdd: 'إضافة تذكير',
+    reminderEmpty: 'لا توجد تذكيرات — اختر إعداداً مسبقاً أعلاه.',
+    reminderHint: 'احصل على إشعار في أوقات مخصصة قبل موعد المهمة.',
+    reminderMax: 'الحد الأقصى 5 تذكيرات لكل مهمة',
+    reminderNoDate: 'حدد تاريخاً أولاً',
+    reminderPast: 'هذا الوقت قد مضى بالفعل',
   },
 };
 
@@ -288,12 +317,14 @@ export const TaskModal: React.FC<TaskModalProps> = ({
   const [recurrence, setRecurrence] = useState<Recurrence | undefined>(undefined);
   const [contexts, setContexts] = useState<string[]>([]);
   const [subtasks, setSubtasks] = useState<Subtask[]>([]);
+  const [reminders, setReminders] = useState<TaskReminder[]>([]);
   const [appliedTemplateName, setAppliedTemplateName] = useState<string | null>(null);
   const [isTemplatePickerOpen, setIsTemplatePickerOpen] = useState(false);
   const [autoFilled, setAutoFilled] = useState(false);
   const [titleFocused, setTitleFocused] = useState(false);
 
   const userEditedTitleRef = useRef(false);
+  const prevDueDateRef = useRef<string>('');
 
   const {
     isSupported, isListening, transcript, interimTranscript,
@@ -302,16 +333,11 @@ export const TaskModal: React.FC<TaskModalProps> = ({
 
   const speechLangMap: Record<string, string> = { en: 'en-US', fr: 'fr-FR', ar: 'ar-SA' };
 
-  // ── Smart-input detection ──
-  // If the title contains structured syntax (date, category, priority,
-  // context, or duration tokens), show the wand button.
   const quickAddPreview = useMemo(() => {
     if (!title.trim() || title.trim().length < 4) return null;
     try {
       const parsed = parseQuickAdd(title);
       if (!parsed.isValid) return null;
-      // Detect meaningful extraction: parser changed the title (removed tokens)
-      // or found structured info that differs from defaults.
       const titleChanged = parsed.title.trim() !== title.trim();
       const hasContexts = parsed.contexts.length > 0;
       const hasDuration = parsed.estimatedMinutes !== 30;
@@ -341,6 +367,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
       setRecurrence(editingTask.recurrence);
       setContexts(editingTask.contexts || []);
       setSubtasks(editingTask.subtasks || []);
+      setReminders(editingTask.reminders || []);
       setDueDate(() => {
         const d = editingTask.dueDate ? new Date(editingTask.dueDate) : new Date(Date.now() + 15 * 60000);
         if (isNaN(d.getTime())) return dateToLocalInputString(new Date(Date.now() + 15 * 60000));
@@ -357,6 +384,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
       setRecurrence(undefined);
       setContexts([]);
       setSubtasks([]);
+      setReminders([]);
       setDueDate(() => {
         if (defaultDueDate) {
           const isToday = defaultDueDate === dateToLocalInputString(new Date()).slice(0, 10);
@@ -377,6 +405,17 @@ export const TaskModal: React.FC<TaskModalProps> = ({
     stopListening();
     // eslint-disable-next-line
   }, [isOpen, editingTask, defaultQuadrant, defaultDueDate]);
+
+  // Auto-recompute reminder fireAt when the due date changes
+  useEffect(() => {
+    if (!dueDate) return;
+    const iso = localInputStringToISO(dueDate);
+    if (prevDueDateRef.current === iso) return;
+    prevDueDateRef.current = iso;
+    if (reminders.length === 0) return;
+    setReminders((prev) => prev.map((r) => recomputeReminder(r, iso)));
+    // eslint-disable-next-line
+  }, [dueDate]);
 
   useEffect(() => {
     if (!transcript) return;
@@ -488,6 +527,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
       recurrence,
       contexts: contexts.length > 0 ? contexts : undefined,
       subtasks: subtasks.length > 0 ? subtasks : undefined,
+      reminders: reminders.length > 0 ? reminders : undefined,
       delegateId: editingTask?.delegateId,
       delegateStatus: editingTask?.delegateStatus,
       delegateCompletedBy: editingTask?.delegateCompletedBy,
@@ -768,6 +808,21 @@ export const TaskModal: React.FC<TaskModalProps> = ({
               </label>
               <LocalizedDateInput value={dueDate} onChange={setDueDate} withTime />
             </div>
+
+            <ReminderPicker
+              dueDateIso={dueDate ? localInputStringToISO(dueDate) : ''}
+              reminders={reminders}
+              onChange={setReminders}
+              labels={{
+                title: copy.reminderTitle,
+                add: copy.reminderAdd,
+                empty: copy.reminderEmpty,
+                hint: copy.reminderHint,
+                max: copy.reminderMax,
+                noDate: copy.reminderNoDate,
+                past: copy.reminderPast,
+              }}
+            />
 
             <div>
               <label className="block font-medium text-slate-700 dark:text-slate-300 mb-1">

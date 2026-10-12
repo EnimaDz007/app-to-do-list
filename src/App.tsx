@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────────────────────
 //  FILE: src/App.tsx
-//  Full file — Clerk auth + two-way sync + QuickAddBar
+//  Full file — Clerk auth + two-way sync + QuickAddBar + custom reminders
 // ─────────────────────────────────────────────────────────────
 
 /**
@@ -92,6 +92,7 @@ import {
   getLastSyncAt,
   setLastSyncAt as storeLastSyncAt,
 } from './utils/sync';
+import { scheduleTaskReminders, cancelTaskReminders } from './utils/reminderScheduler';
 import { Mic } from 'lucide-react';
 import { triggerHaptic } from './utils/haptics';
 
@@ -185,6 +186,7 @@ export default function App() {
 
   const hasSyncedHabitsRef = useRef(false);
   const hasSyncedTasksRef = useRef(false);
+  const hasBootstrappedRemindersRef = useRef(false);
 
   const tasksRef = useRef<Task[]>([]);
   const habitsRef = useRef<Habit[]>([]);
@@ -501,6 +503,7 @@ export default function App() {
           dueTime: task.dueDate,
           taskId: task.id,
           recurrence: task.recurrence,
+          reminders: task.reminders,
           fullTask: task,
         }),
       });
@@ -650,16 +653,27 @@ export default function App() {
     // eslint-disable-next-line
   }, []);
 
+  // Boot-up scheduling: run once per app launch. Two jobs:
+  //  1. Legacy do_first heads-up (scheduleTaskReminder)
+  //  2. Custom user reminders (scheduleTaskReminders)
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
     if (hasSyncedTasksRef.current) return;
+    if (hasBootstrappedRemindersRef.current) return;
+    hasBootstrappedRemindersRef.current = true;
     hasSyncedTasksRef.current = true;
 
-    tasks.forEach((task) => {
-      if (task.quadrant === 'do_first' && task.status !== 'completed' && task.dueDate && !task.deletedAt) {
-        scheduleTaskReminder(task);
+    (async () => {
+      for (const task of tasks) {
+        if (task.deletedAt || task.status === 'completed') continue;
+        if (task.quadrant === 'do_first' && task.dueDate) {
+          await scheduleTaskReminder(task);
+        }
+        if (task.reminders && task.reminders.length > 0) {
+          await scheduleTaskReminders(task, userId);
+        }
       }
-    });
+    })();
     // eslint-disable-next-line
   }, []);
 
@@ -962,6 +976,7 @@ export default function App() {
 
   const handleToggleStatus = async (taskId: string) => {
     cancelTaskReminder(taskId);
+    void cancelTaskReminders(taskId);
     const task = tasks.find((t) => t.id === taskId);
     if (!task) return;
     const isNowDone = task.status !== 'completed';
@@ -992,7 +1007,12 @@ export default function App() {
         const stampedNext = { ...nextTaskFromServer, updatedAt: new Date().toISOString() };
         setTasks((prev) => [stampedNext, ...prev]);
         scheduleSync();
-        setTimeout(() => scheduleTaskReminder(stampedNext), 200);
+        setTimeout(() => {
+          scheduleTaskReminder(stampedNext);
+          if (stampedNext.reminders && stampedNext.reminders.length > 0) {
+            void scheduleTaskReminders(stampedNext, userId);
+          }
+        }, 200);
       } else {
         const recurrence = (task as any).recurrence;
         if (recurrence && recurrence !== 'none') {
@@ -1009,7 +1029,12 @@ export default function App() {
           };
           setTasks((prev) => [localNext, ...prev]);
           scheduleSync();
-          setTimeout(() => scheduleTaskReminder(localNext), 200);
+          setTimeout(() => {
+            scheduleTaskReminder(localNext);
+            if (localNext.reminders && localNext.reminders.length > 0) {
+              void scheduleTaskReminders(localNext, userId);
+            }
+          }, 200);
         }
       }
     }
@@ -1079,9 +1104,14 @@ export default function App() {
     const now = new Date().toISOString();
     if (taskData.id) {
       cancelTaskReminder(taskData.id);
+      void cancelTaskReminders(taskData.id);
       const updatedTask = { ...taskData, id: taskData.id, updatedAt: now } as Task;
       setTasks((prev) => prev.map((t) => (t.id === taskData.id ? { ...t, ...taskData, updatedAt: now } : t)));
-      scheduleTaskReminder({ ...updatedTask, createdAt: new Date().toISOString() } as Task);
+      const completeTask = { ...updatedTask, createdAt: new Date().toISOString() } as Task;
+      scheduleTaskReminder(completeTask);
+      if (completeTask.reminders && completeTask.reminders.length > 0) {
+        void scheduleTaskReminders(completeTask, userId);
+      }
       playAudioChime('beep');
     } else {
       const newTask: Task = {
@@ -1092,6 +1122,9 @@ export default function App() {
       };
       setTasks((prev) => [newTask, ...prev]);
       scheduleTaskReminder(newTask);
+      if (newTask.reminders && newTask.reminders.length > 0) {
+        void scheduleTaskReminders(newTask, userId);
+      }
       playAudioChime('beep');
     }
     scheduleSync();
@@ -1099,6 +1132,7 @@ export default function App() {
 
   const handleDeleteTask = (taskId: string) => {
     cancelTaskReminder(taskId);
+    void cancelTaskReminders(taskId);
     const now = new Date().toISOString();
     setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, deletedAt: now, updatedAt: now } : t)));
     playAudioChime('beep');
@@ -1155,6 +1189,7 @@ export default function App() {
 
   const handlePermanentDelete = (taskId: string) => {
     cancelTaskReminder(taskId);
+    void cancelTaskReminders(taskId);
     const now = new Date().toISOString();
     setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, deletedAt: now, updatedAt: now } : t)));
     scheduleSync();
@@ -1297,7 +1332,6 @@ export default function App() {
   const completedCount = visibleTasks.filter((t) => t.status === 'completed').length;
   const urgentCount = visibleTasks.filter((t) => t.quadrant === 'do_first' && t.status !== 'completed').length;
 
-  // Show QuickAddBar only on task-relevant tabs
   const showQuickAdd = activeTab === 'matrix' || activeTab === 'list';
 
   useEffect(() => {
@@ -1471,7 +1505,6 @@ export default function App() {
             onOpen={() => setIsMilestoneModalOpen(true)}
           />
 
-          {/* ── NATURAL LANGUAGE QUICK ADD ── */}
           {showQuickAdd && (
             <div className="px-4 pt-3 pb-1">
               <QuickAddBar onAddTask={handleSaveTask} />
