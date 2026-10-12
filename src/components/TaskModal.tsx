@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { X, Save, Clock, Target, Dumbbell, Mic, Repeat, Calendar, Tag, Check, Share2, LayoutTemplate } from 'lucide-react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { X, Save, Clock, Target, Dumbbell, Mic, Repeat, Calendar, Tag, Check, Share2, LayoutTemplate, Wand2, Sparkles } from 'lucide-react';
 import { Task, Subtask, Template, QuadrantId, TaskCategory, PriorityLevel, Recurrence, RecurrenceFrequency, CONTEXT_DEFINITIONS } from '../types';
 import { QUADRANT_CONFIGS } from '../data/initialTasks';
 import { triggerHaptic } from '../utils/haptics';
@@ -7,6 +7,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { TranslationKey } from '../i18n/translations';
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
 import { parseSpokenTask } from '../utils/voiceParser';
+import { parseQuickAdd } from '../utils/quickAddParser';
 import { cloneSubtaskTree, countTemplateSubtasks } from '../utils/templateHelpers';
 import { TemplatePicker } from './TemplatePicker';
 import { LocalizedDateInput } from './LocalizedDateInput';
@@ -66,6 +67,9 @@ const COPY: Record<LocalLang, {
   shareGenerate: string;
   shareBtn: string;
   shareOpen: string;
+  smartHint: string;
+  autoFillBtn: string;
+  autoFilled: string;
   weekdaysShort: string[];
   freqLabels: Record<'daily'|'weekdays'|'weekly'|'monthly'|'yearly', string>;
   contexts: Record<string, string>;
@@ -110,6 +114,9 @@ const COPY: Record<LocalLang, {
     shareGenerate: 'Generate a link — they just tap "Done"',
     shareBtn: 'Share',
     shareOpen: 'Open',
+    smartHint: 'Try typing "Buy milk tomorrow 5pm #personal !high @errand" — we\'ll auto-fill.',
+    autoFillBtn: 'Auto-fill',
+    autoFilled: 'Auto-filled from text ✨',
     weekdaysShort: ['S','M','T','W','T','F','S'],
     freqLabels: { daily:'Daily', weekdays:'Weekdays', weekly:'Weekly', monthly:'Monthly', yearly:'Yearly' },
     contexts: { home: 'Home', work: 'Work', call: 'Call', computer: 'Deep Work', errand: 'Errand', health: 'Health' },
@@ -154,6 +161,9 @@ const COPY: Record<LocalLang, {
     shareGenerate: 'Générez un lien — il suffit d’appuyer sur « Terminé »',
     shareBtn: 'Partager',
     shareOpen: 'Ouvrir',
+    smartHint: 'Essayez « Acheter lait demain 17h #personal !high @errand » — on remplit tout.',
+    autoFillBtn: 'Remplir',
+    autoFilled: 'Rempli depuis le texte ✨',
     weekdaysShort: ['D','L','M','M','J','V','S'],
     freqLabels: { daily:'Quotidien', weekdays:'Jours ouvrés', weekly:'Hebdo', monthly:'Mensuel', yearly:'Annuel' },
     contexts: { home: 'Maison', work: 'Travail', call: 'Appel', computer: 'Travail profond', errand: 'Courses', health: 'Santé' },
@@ -198,6 +208,9 @@ const COPY: Record<LocalLang, {
     shareGenerate: 'أنشئ رابطاً — يكفي أن يضغط "تم"',
     shareBtn: 'مشاركة',
     shareOpen: 'فتح',
+    smartHint: 'جرّب: "اشترِ حليباً غداً 5 مساءً #شخصي !عالي @تسوق" — سنملأ كل شيء تلقائياً.',
+    autoFillBtn: 'تعبئة تلقائية',
+    autoFilled: 'تم التعبئة من النص ✨',
     weekdaysShort: ['ح','ن','ث','ر','خ','ج','س'],
     freqLabels: { daily:'يومياً', weekdays:'أيام الأسبوع', weekly:'أسبوعياً', monthly:'شهرياً', yearly:'سنوياً' },
     contexts: { home: 'المنزل', work: 'العمل', call: 'مكالمة', computer: 'عمل عميق', errand: 'مشاوير', health: 'الصحة' },
@@ -277,6 +290,8 @@ export const TaskModal: React.FC<TaskModalProps> = ({
   const [subtasks, setSubtasks] = useState<Subtask[]>([]);
   const [appliedTemplateName, setAppliedTemplateName] = useState<string | null>(null);
   const [isTemplatePickerOpen, setIsTemplatePickerOpen] = useState(false);
+  const [autoFilled, setAutoFilled] = useState(false);
+  const [titleFocused, setTitleFocused] = useState(false);
 
   const userEditedTitleRef = useRef(false);
 
@@ -287,11 +302,35 @@ export const TaskModal: React.FC<TaskModalProps> = ({
 
   const speechLangMap: Record<string, string> = { en: 'en-US', fr: 'fr-FR', ar: 'ar-SA' };
 
+  // ── Smart-input detection ──
+  // If the title contains structured syntax (date, category, priority,
+  // context, or duration tokens), show the wand button.
+  const quickAddPreview = useMemo(() => {
+    if (!title.trim() || title.trim().length < 4) return null;
+    try {
+      const parsed = parseQuickAdd(title);
+      if (!parsed.isValid) return null;
+      // Detect meaningful extraction: parser changed the title (removed tokens)
+      // or found structured info that differs from defaults.
+      const titleChanged = parsed.title.trim() !== title.trim();
+      const hasContexts = parsed.contexts.length > 0;
+      const hasDuration = parsed.estimatedMinutes !== 30;
+      const hasNonDefaultCategory = parsed.category !== 'Personal';
+      if (!titleChanged && !hasContexts && !hasDuration && !hasNonDefaultCategory) {
+        return null;
+      }
+      return parsed;
+    } catch {
+      return null;
+    }
+  }, [title]);
+
   useEffect(() => {
     if (!isOpen) return;
     userEditedTitleRef.current = false;
     setAppliedTemplateName(null);
     setIsTemplatePickerOpen(false);
+    setAutoFilled(false);
 
     if (editingTask) {
       setTitle(editingTask.title);
@@ -369,6 +408,23 @@ export const TaskModal: React.FC<TaskModalProps> = ({
     } else {
       startListening(speechLangMap[language] || 'en-US');
     }
+  };
+
+  const handleAutoParse = () => {
+    if (!quickAddPreview) return;
+    triggerHaptic('success');
+    setTitle(quickAddPreview.title);
+    if (quickAddPreview.dueDate) {
+      const d = new Date(quickAddPreview.dueDate);
+      if (!isNaN(d.getTime())) setDueDate(dateToLocalInputString(d));
+    }
+    setCategory(quickAddPreview.category);
+    setQuadrant(quickAddPreview.quadrant);
+    if (quickAddPreview.contexts.length > 0) setContexts(quickAddPreview.contexts);
+    if (quickAddPreview.estimatedMinutes) setEstimatedMinutes(quickAddPreview.estimatedMinutes);
+    userEditedTitleRef.current = true;
+    setAutoFilled(true);
+    setTimeout(() => setAutoFilled(false), 2200);
   };
 
   const handleFrequencyChange = (freq: RecurrenceFrequency | null) => {
@@ -468,6 +524,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
   const showShareButton = !!(editingTask && onShareTask && quadrant === 'delegate');
   const subtaskCount = countTemplateSubtasks(subtasks);
   const showTemplateButton = !editingTask && templates.length > 0;
+  const showSmartHint = !editingTask && !title.trim() && titleFocused;
 
   return (
     <>
@@ -530,19 +587,32 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                 <label className="block font-medium text-slate-700 dark:text-slate-300">
                   {t('modal_field_title')} <span className="text-rose-500">*</span>
                 </label>
-                <button
-                  id="btn-taskmodal-mic"
-                  type="button"
-                  onClick={handleMicTap}
-                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-bold transition cursor-pointer ${
-                    isListening
-                      ? 'bg-rose-500 text-white shadow-xs ring-2 ring-rose-500/30'
-                      : 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-900/60'
-                  }`}
-                >
-                  <Mic className={`w-3.5 h-3.5 ${isListening ? 'animate-bounce' : ''}`} />
-                  <span>{isListening ? copy.listening : copy.tapToTalk}</span>
-                </button>
+                <div className="flex items-center gap-1.5">
+                  {quickAddPreview && (
+                    <button
+                      type="button"
+                      onClick={handleAutoParse}
+                      title={copy.autoFillBtn}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-xl text-[11px] font-bold transition cursor-pointer bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white shadow-sm hover:from-violet-600 hover:to-fuchsia-600"
+                    >
+                      <Wand2 className="w-3.5 h-3.5" />
+                      <span>{copy.autoFillBtn}</span>
+                    </button>
+                  )}
+                  <button
+                    id="btn-taskmodal-mic"
+                    type="button"
+                    onClick={handleMicTap}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-bold transition cursor-pointer ${
+                      isListening
+                        ? 'bg-rose-500 text-white shadow-xs ring-2 ring-rose-500/30'
+                        : 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-900/60'
+                    }`}
+                  >
+                    <Mic className={`w-3.5 h-3.5 ${isListening ? 'animate-bounce' : ''}`} />
+                    <span>{isListening ? copy.listening : copy.tapToTalk}</span>
+                  </button>
+                </div>
               </div>
               <div className="relative">
                 <input
@@ -554,6 +624,8 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                     userEditedTitleRef.current = true;
                     setTitle(e.target.value);
                   }}
+                  onFocus={() => setTitleFocused(true)}
+                  onBlur={() => setTimeout(() => setTitleFocused(false), 200)}
                   placeholder={t('modal_field_title_placeholder')}
                   className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2.5 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500 transition"
                 />
@@ -561,6 +633,24 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                   <div className="text-[11px] text-indigo-500 italic mt-1 px-1">"{interimTranscript}..."</div>
                 )}
               </div>
+
+              {showSmartHint && (
+                <div className="mt-1.5 px-2.5 py-1.5 rounded-lg bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-200/70 dark:border-indigo-900/50 flex items-start gap-1.5">
+                  <Sparkles className="w-3 h-3 text-indigo-500 shrink-0 mt-0.5" />
+                  <p className="text-[10px] text-indigo-900/90 dark:text-indigo-200/90 leading-snug">
+                    {copy.smartHint}
+                  </p>
+                </div>
+              )}
+
+              {autoFilled && (
+                <div className="mt-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-50/80 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/60 flex items-center gap-1.5 animate-in fade-in slide-in-from-top-1">
+                  <Check className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                  <p className="text-[10px] font-semibold text-emerald-800 dark:text-emerald-200">
+                    {copy.autoFilled}
+                  </p>
+                </div>
+              )}
             </div>
 
             <div>
