@@ -1,7 +1,6 @@
 // ─────────────────────────────────────────────────────────────
 //  FILE: src/App.tsx
-//  Full file — Clerk auth + two-way sync for tasks, habits,
-//  check-ins, and milestones + soft-delete + timestamps
+//  Full file — Clerk auth + two-way sync + QuickAddBar
 // ─────────────────────────────────────────────────────────────
 
 /**
@@ -59,6 +58,7 @@ import { CommandPalette, CommandItem } from './components/CommandPalette';
 import { MilestoneBanner } from './components/MilestoneBanner';
 import { MilestoneModal } from './components/MilestoneModal';
 import { DelegateShareModal } from './components/DelegateShareModal';
+import { QuickAddBar } from './components/QuickAddBar';
 import { useTheme } from './context/ThemeContext';
 import { useLanguage } from './context/LanguageContext';
 import {
@@ -322,7 +322,6 @@ export default function App() {
 
       const serverTs = new Date(result.serverTime).getTime();
 
-      // Merge server results back in, preserving any local edits made during the round trip.
       setTasks((prev) => {
         const merged = new Map<string, Task>();
         for (const t of result.tasks) merged.set(t.id, t);
@@ -1188,9 +1187,7 @@ export default function App() {
   const handleDeleteHabit = (habitId: string) => {
     cancelHabitReminderOnServer(habitId);
     const now = new Date().toISOString();
-    // Soft-delete the habit
     setHabits((prev) => prev.map((h) => (h.id === habitId ? { ...h, deletedAt: now, updatedAt: now } : h)));
-    // Soft-delete its check-ins too
     setCheckIns((prev) =>
       prev.map((ci) => (ci.habitId === habitId ? { ...ci, deletedAt: now, updatedAt: now } : ci))
     );
@@ -1221,7 +1218,6 @@ export default function App() {
       if (habit.goalType === 'count') {
         if (!existing) return prev;
         if (existing.count <= 1) {
-          // Soft-delete the check-in
           return prev.map((ci) =>
             ci.id === existing.id ? { ...ci, deletedAt: now, updatedAt: now } : ci
           );
@@ -1231,7 +1227,6 @@ export default function App() {
         );
       } else {
         if (existing) {
-          // Soft-delete the check-in
           return prev.map((ci) =>
             ci.id === existing.id ? { ...ci, deletedAt: now, updatedAt: now } : ci
           );
@@ -1301,6 +1296,9 @@ export default function App() {
 
   const completedCount = visibleTasks.filter((t) => t.status === 'completed').length;
   const urgentCount = visibleTasks.filter((t) => t.quadrant === 'do_first' && t.status !== 'completed').length;
+
+  // Show QuickAddBar only on task-relevant tabs
+  const showQuickAdd = activeTab === 'matrix' || activeTab === 'list';
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -1441,6 +1439,7 @@ export default function App() {
     return list;
     // eslint-disable-next-line
   }, [visibleTasks, visibleHabits, defaultQuadrant]);
+
   return (
     <div className="min-h-screen bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col transition-colors duration-200 overflow-x-hidden w-full">
       <OnboardingScreen
@@ -1471,6 +1470,13 @@ export default function App() {
             milestones={visibleMilestones}
             onOpen={() => setIsMilestoneModalOpen(true)}
           />
+
+          {/* ── NATURAL LANGUAGE QUICK ADD ── */}
+          {showQuickAdd && (
+            <div className="px-4 pt-3 pb-1">
+              <QuickAddBar onAddTask={handleSaveTask} />
+            </div>
+          )}
 
           <main className="flex-1 flex flex-col px-4 py-3.5 pb-24 overflow-y-auto">
             {activeTab === 'matrix' && (
@@ -1683,13 +1689,7 @@ export default function App() {
         onSyncNow={() => runSync()}
         isSyncing={isSyncing}
         lastSyncedAt={lastSyncedAt}
-        syncError={syncError}       
-        syncCounts={{
-          tasks: visibleTasks.length,
-          habits: visibleHabits.length,
-          checkIns: visibleCheckIns.length,
-          milestones: visibleMilestones.length,
-        }}
+        syncError={syncError}
       />
 
       <CommandPalette
