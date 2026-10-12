@@ -1,13 +1,16 @@
-import React from 'react';
-import { motion } from 'framer-motion';
-import { Archive, RotateCcw, Trash2 } from 'lucide-react';
+import React, { useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Archive, RotateCcw, Trash2, AlertTriangle } from 'lucide-react';
 import { Task } from '../types';
 import { useLanguage } from '../context/LanguageContext';
+import { triggerHaptic } from '../utils/haptics';
 
 interface ArchiveViewProps {
   tasks: Task[];
   onRestore: (taskId: string) => void;
   onDelete: (taskId: string) => void;
+  /** Soft-deletes every archived task at once. */
+  onClearAll: () => void;
 }
 
 type LocalLang = 'en' | 'fr' | 'ar';
@@ -15,8 +18,8 @@ type LocalLang = 'en' | 'fr' | 'ar';
 const COPY: Record<LocalLang, {
   locale: string;
   badge: string;
-  yourLabel: string;   // "Your"
-  archiveWord: string; // italic word
+  yourLabel: string;
+  archiveWord: string;
   totalDone: string;
   thisWeek: string;
   avgPerDay: string;
@@ -24,6 +27,11 @@ const COPY: Record<LocalLang, {
   emptyDesc: string;
   restore: string;
   deleteForever: string;
+  clearAll: string;
+  clearAllConfirmTitle: string;
+  clearAllConfirmBody: (count: number) => string;
+  cancel: string;
+  confirmClear: string;
 }> = {
   en: {
     locale: 'en-US',
@@ -37,6 +45,12 @@ const COPY: Record<LocalLang, {
     emptyDesc: 'Completed tasks will appear here',
     restore: 'Restore',
     deleteForever: 'Delete forever',
+    clearAll: 'Clear all',
+    clearAllConfirmTitle: 'Delete all archived tasks?',
+    clearAllConfirmBody: (count) =>
+      `This will delete ${count} archived task${count === 1 ? '' : 's'}. You can't undo this from the app, but archived tasks auto-clean after 30 days anyway.`,
+    cancel: 'Cancel',
+    confirmClear: 'Clear all',
   },
   fr: {
     locale: 'fr-FR',
@@ -50,6 +64,12 @@ const COPY: Record<LocalLang, {
     emptyDesc: 'Les tâches terminées apparaîtront ici',
     restore: 'Restaurer',
     deleteForever: 'Supprimer définitivement',
+    clearAll: 'Tout supprimer',
+    clearAllConfirmTitle: 'Supprimer toutes les tâches archivées ?',
+    clearAllConfirmBody: (count) =>
+      `Cela supprimera ${count} tâche${count === 1 ? '' : 's'} archivée${count === 1 ? '' : 's'}. Action irréversible depuis l’app, mais les tâches archivées sont nettoyées automatiquement après 30 jours.`,
+    cancel: 'Annuler',
+    confirmClear: 'Tout supprimer',
   },
   ar: {
     locale: 'ar-EG',
@@ -63,6 +83,12 @@ const COPY: Record<LocalLang, {
     emptyDesc: 'ستظهر المهام المكتملة هنا',
     restore: 'استعادة',
     deleteForever: 'حذف نهائي',
+    clearAll: 'حذف الكل',
+    clearAllConfirmTitle: 'حذف جميع المهام المؤرشفة؟',
+    clearAllConfirmBody: (count) =>
+      `سيتم حذف ${count} مهمة مؤرشفة. لا يمكن التراجع من التطبيق، لكن يتم تنظيف المهام المؤرشفة تلقائياً بعد 30 يوماً.`,
+    cancel: 'إلغاء',
+    confirmClear: 'حذف الكل',
   },
 };
 
@@ -70,10 +96,14 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
   tasks,
   onRestore,
   onDelete,
+  onClearAll,
 }) => {
   const { language } = useLanguage();
   const lang = (language as LocalLang) || 'en';
   const copy = COPY[lang] ?? COPY.en;
+  const isRtl = lang === 'ar';
+
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
 
   const archivedTasks = tasks.filter((task) => task.archivedAt);
   const thisWeekTasks = archivedTasks.filter((task) => {
@@ -85,10 +115,30 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
 
   const avgPerDay = thisWeekTasks.length > 0 ? (thisWeekTasks.length / 7).toFixed(1) : '0';
 
+  const handleClearAll = () => {
+    triggerHaptic('heavy');
+    onClearAll();
+    setShowClearConfirm(false);
+  };
+
   return (
-    <div className="w-full min-h-screen bg-gradient-to-b from-[#FDFBFF] to-[#F5F3FF] dark:from-[#0F172A] dark:to-[#1E1B4B] pb-32">
+    <div dir={isRtl ? 'rtl' : 'ltr'} className="w-full min-h-screen bg-gradient-to-b from-[#FDFBFF] to-[#F5F3FF] dark:from-[#0F172A] dark:to-[#1E1B4B] pb-32">
       {/* Header */}
-      <div className="px-6 pt-6 pb-4 text-center">
+      <div className="relative px-6 pt-6 pb-4 text-center">
+        {/* Clear all — top corner */}
+        {archivedTasks.length > 0 && (
+          <button
+            onClick={() => {
+              triggerHaptic('medium');
+              setShowClearConfirm(true);
+            }}
+            className="absolute top-6 end-4 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 text-[11px] font-bold hover:bg-rose-100 dark:hover:bg-rose-950/60 transition cursor-pointer"
+          >
+            <Trash2 className="w-3 h-3" />
+            <span>{copy.clearAll}</span>
+          </button>
+        )}
+
         <div className="inline-flex items-center gap-1.5 rounded-full border border-violet-300/60 dark:border-violet-500/40 bg-white/80 dark:bg-slate-800/80 backdrop-blur-xl px-3 py-1">
           <span className="text-[9px] font-extrabold tracking-[2px] uppercase text-violet-600 dark:text-violet-300">
             {copy.badge}
@@ -222,6 +272,56 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
           </div>
         )}
       </div>
+
+      {/* Clear-all confirmation modal */}
+      <AnimatePresence>
+        {showClearConfirm && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[90] bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-5"
+            onClick={() => setShowClearConfirm(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.92 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.92 }}
+              transition={{ type: 'spring', stiffness: 400, damping: 28 }}
+              onClick={(e) => e.stopPropagation()}
+              dir={isRtl ? 'rtl' : 'ltr'}
+              className="w-full max-w-sm rounded-3xl bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-900 shadow-2xl p-6"
+            >
+              <div className="w-12 h-12 rounded-2xl bg-rose-100 dark:bg-rose-950/60 flex items-center justify-center mx-auto mb-4">
+                <AlertTriangle className="w-5 h-5 text-rose-600 dark:text-rose-400" />
+              </div>
+              <h3 className="text-base font-black text-rose-700 dark:text-rose-400 tracking-tight text-center mb-2">
+                {copy.clearAllConfirmTitle}
+              </h3>
+              <p className="text-[12px] text-slate-500 dark:text-slate-400 text-center leading-relaxed mb-5">
+                {copy.clearAllConfirmBody(archivedTasks.length)}
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    triggerHaptic('light');
+                    setShowClearConfirm(false);
+                  }}
+                  className="flex-1 py-3 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-sm font-black hover:bg-slate-200 dark:hover:bg-slate-700 transition cursor-pointer"
+                >
+                  {copy.cancel}
+                </button>
+                <button
+                  onClick={handleClearAll}
+                  className="flex-1 py-3 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-sm font-black shadow-lg shadow-rose-600/20 transition cursor-pointer"
+                >
+                  {copy.confirmClear}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

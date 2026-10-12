@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────────────────────
 //  FILE: src/App.tsx
-//  Full file — all bug fixes applied (streak, nag IDs, delegate, digest i18n)
+//  Full file — with Clear All archived + 30-day auto-cleanup
 // ─────────────────────────────────────────────────────────────
 
 /**
@@ -116,6 +116,12 @@ const SERVER_URL = 'https://task-priority-server-pir6.onrender.com';
 
 const OVERDUE_NOTIFICATION_ID = 999_998;
 
+/** Archived tasks get auto-soft-deleted after this many days. */
+const ARCHIVE_TTL_DAYS = 30;
+const ARCHIVE_TTL_MS = ARCHIVE_TTL_DAYS * 24 * 60 * 60 * 1000;
+/** How often to scan for expired archives. 1 hour. */
+const ARCHIVE_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
+
 const KARMA_PER_QUADRANT: Record<QuadrantId, number> = {
   do_first: 5,
   schedule: 3,
@@ -128,7 +134,6 @@ const AlarmNative = registerPlugin<{
   stopAlarm: (options?: { taskId?: string }) => Promise<{ success: boolean }>;
 }>('AlarmNative');
 
-// Notification ID hash — clamped to 1M to avoid int32 overflow on Android.
 const hashTaskId = (taskId: string): number => {
   let hash = 0;
   for (let i = 0; i < taskId.length; i++) {
@@ -305,7 +310,6 @@ export default function App() {
     [customTemplates, language]
   );
 
-  // Persist current user id for delegateShare fallback.
   useEffect(() => {
     try {
       if (userId) localStorage.setItem(CURRENT_USER_KEY, userId);
@@ -331,7 +335,6 @@ export default function App() {
   const visibleMilestones = useMemo(() => milestones.filter((m) => !m.deletedAt), [milestones]);
   const visibleProjects = useMemo(() => projects.filter((p) => !p.deletedAt), [projects]);
 
-  // Streak now derived from tasks (local dates, syncs across devices).
   const streakData = useStreak(visibleTasks);
   const karma = useKarma(visibleTasks, visibleHabits, visibleCheckIns, visibleMilestones, streakData.currentStreak);
 
@@ -503,6 +506,47 @@ export default function App() {
     return () => {
       window.removeEventListener('online', onOnline);
       document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [userId, runSync]);
+
+  // ─────────────────────────────────────────────────────────────
+  //  AUTO-CLEANUP: soft-delete archived tasks older than 30 days.
+  //  Runs on mount + every hour. Syncs to server after each pass.
+  // ─────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!userId) return;
+
+    const sweep = () => {
+      const now = Date.now();
+      let changed = false;
+
+      setTasks((prev) => {
+        const next = prev.map((t) => {
+          if (t.deletedAt) return t;
+          if (!t.archivedAt) return t;
+          const archivedTs = new Date(t.archivedAt).getTime();
+          if (isNaN(archivedTs)) return t;
+          if (now - archivedTs < ARCHIVE_TTL_MS) return t;
+          changed = true;
+          return { ...t, deletedAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+        });
+        return changed ? next : prev;
+      });
+
+      if (changed) {
+        console.log(`🧹 Auto-cleanup: soft-deleted archived tasks older than ${ARCHIVE_TTL_DAYS}d`);
+        setTimeout(() => { void runSync({ silent: true }); }, 500);
+      }
+    };
+
+    // First sweep shortly after boot (let sync finish first)
+    const bootTimer = setTimeout(sweep, 5000);
+    // Then every hour
+    const interval = setInterval(sweep, ARCHIVE_CLEANUP_INTERVAL_MS);
+
+    return () => {
+      clearTimeout(bootTimer);
+      clearInterval(interval);
     };
   }, [userId, runSync]);
 
@@ -1284,6 +1328,27 @@ export default function App() {
     scheduleSync();
   };
 
+  // ─── NEW: Clear all archived tasks ───
+  const handleClearAllArchived = () => {
+    const now = new Date().toISOString();
+    let count = 0;
+    setTasks((prev) =>
+      prev.map((t) => {
+        if (t.archivedAt && !t.deletedAt) {
+          count++;
+          cancelTaskReminder(t.id);
+          void cancelTaskReminders(t.id);
+          return { ...t, deletedAt: now, updatedAt: now };
+        }
+        return t;
+      })
+    );
+    triggerHaptic('heavy');
+    playAudioChime('beep');
+    scheduleSync();
+    console.log(`🧹 Cleared ${count} archived task(s)`);
+  };
+
   const handleEditTask = (task: Task) => { setEditingTask(task); setIsTaskModalOpen(true); };
 
   const handleSummaryEdit = (task: Task) => {
@@ -1923,7 +1988,14 @@ export default function App() {
                 onTaskClick={handleEditTask}
               />
             )}
-            {activeTab === 'archive' && <ArchiveView tasks={visibleTasks} onRestore={handleRestoreFromArchive} onDelete={handlePermanentDelete} />}
+            {activeTab === 'archive' && (
+              <ArchiveView
+                tasks={visibleTasks}
+                onRestore={handleRestoreFromArchive}
+                onDelete={handlePermanentDelete}
+                onClearAll={handleClearAllArchived}
+              />
+            )}
             {activeTab === 'export' && (
               <NativePackagingHub
                 tasks={visibleTasks}
