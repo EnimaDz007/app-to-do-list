@@ -23,8 +23,6 @@ const tasksCollection = db.collection('tasks');
 const habitRemindersCollection = db.collection('habitReminders');
 const delegateCollection = db.collection('delegates');
 const prefsCollection = db.collection('preferences');
-
-// Two-way sync collections (4 data types)
 const syncTasksCollection = db.collection('syncTasks');
 const syncHabitsCollection = db.collection('syncHabits');
 const syncHabitCheckinsCollection = db.collection('syncHabitCheckins');
@@ -56,6 +54,7 @@ async function handleStaleToken(externalId, err) {
 //                    TASK TIMERS (reminders only)
 // ============================================================
 const scheduledTimers = {};
+const scheduledReminderTimers = {}; // key: `${taskId}::${reminderId}`
 
 function computeNextDueDate(fromISO, rec) {
   if (!rec || !rec.frequency) return null;
@@ -67,7 +66,9 @@ function computeNextDueDate(fromISO, rec) {
     const next = new Date(d.getTime());
     const interval = Math.max(1, rec.interval || 1);
     switch (rec.frequency) {
-      case 'daily': next.setDate(next.getDate() + interval); break;
+      case 'daily':
+        next.setDate(next.getDate() + interval);
+        break;
       case 'weekdays':
         do { next.setDate(next.getDate() + 1); }
         while (next.getDay() === 0 || next.getDay() === 6);
@@ -90,8 +91,11 @@ function computeNextDueDate(fromISO, rec) {
         next.setDate(Math.min(target, daysInMonth));
         break;
       }
-      case 'yearly': next.setFullYear(next.getFullYear() + interval); break;
-      default: return null;
+      case 'yearly':
+        next.setFullYear(next.getFullYear() + interval);
+        break;
+      default:
+        return null;
     }
     return next;
   };
@@ -132,11 +136,13 @@ async function createNextOccurrence(task) {
     dueTime: nextDue,
     taskId: nextTaskId,
     recurrence: task.recurrence,
+    reminders: task.reminders,
     fullTask: nextFullTask,
   };
   await tasksCollection.doc(nextTaskId).set(nextRecord);
   console.log(`🔁 Auto-created next occurrence: "${task.title}" → ${nextDue}`);
   scheduleTask(nextRecord);
+  scheduleTaskReminders(nextRecord);
   return nextFullTask;
 }
 
@@ -182,6 +188,103 @@ function scheduleTask(task) {
   return true;
 }
 
+// ─────────────────────────────────────────────
+//   CUSTOM REMINDERS
+// ─────────────────────────────────────────────
+
+function reminderBody(reminder, taskTitle) {
+  if (!reminder || typeof reminder.minutesBefore !== 'number') {
+    return 'Your task is coming up.';
+  }
+  const mins = reminder.minutesBefore;
+  if (mins === 0) return 'Your task is due now.';
+  if (mins < 60) return `Due in ${mins} min.`;
+  if (mins < 1440) {
+    const h = mins / 60;
+    return `Due in ${h % 1 === 0 ? h : h.toFixed(1)}h.`;
+  }
+  const d = mins / 1440;
+  return `Due in ${d % 1 === 0 ? d : d.toFixed(1)}d.`;
+}
+
+async function sendReminderPush(taskId, reminderId) {
+  const key = `${taskId}::${reminderId}`;
+  console.log(`🔔 Custom reminder fired: ${key}`);
+  try {
+    const taskDoc = await tasksCollection.doc(taskId).get();
+    if (!taskDoc.exists) {
+      delete scheduledReminderTimers[key];
+      return;
+    }
+    const task = taskDoc.data();
+    const reminder = (task.reminders || []).find((r) => r.id === reminderId);
+    if (!reminder) {
+      delete scheduledReminderTimers[key];
+      return;
+    }
+
+    const tokenDoc = await tokensCollection.doc(task.externalId).get();
+    if (tokenDoc.exists) {
+      const fcmToken = tokenDoc.data().fcmToken;
+      try {
+        await getMessaging().send({
+          token: fcmToken,
+          notification: {
+            title: `⏰ ${task.title}`,
+            body: reminderBody(reminder, task.title),
+          },
+          android: {
+            priority: 'high',
+            notification: { channelId: 'task-reminders-critical' },
+          },
+          data: {
+            taskId,
+            quadrant: task.quadrant || 'do_first',
+            reminderId,
+          },
+        });
+        console.log(`🚀 Custom reminder push sent for "${task.title}" (${reminderId})`);
+      } catch (err) {
+        const cleaned = await handleStaleToken(task.externalId, err);
+        if (!cleaned) console.error('❌ Custom reminder push error:', err);
+      }
+    }
+  } catch (err) {
+    console.error('❌ sendReminderPush error:', err);
+  }
+  delete scheduledReminderTimers[key];
+}
+
+/**
+ * Schedule all upcoming reminders from a task record.
+ * Clears previous timers for this task first (safe re-schedule).
+ */
+function scheduleTaskReminders(task) {
+  const taskId = task.taskId;
+  // Clear existing
+  for (const key of Object.keys(scheduledReminderTimers)) {
+    if (key.startsWith(`${taskId}::`)) {
+      clearTimeout(scheduledReminderTimers[key]);
+      delete scheduledReminderTimers[key];
+    }
+  }
+  if (!task.reminders || !Array.isArray(task.reminders)) return;
+  const now = Date.now();
+  for (const r of task.reminders) {
+    if (!r || !r.id || !r.fireAt) continue;
+    const fireAt = new Date(r.fireAt).getTime();
+    if (isNaN(fireAt) || fireAt <= now) continue;
+    const delay = fireAt - now;
+    if (delay > 24 * 60 * 60 * 1000 * 30) continue; // safety: skip >30d
+    const key = `${taskId}::${r.id}`;
+    scheduledReminderTimers[key] = setTimeout(
+      () => sendReminderPush(taskId, r.id),
+      delay
+    );
+    console.log(`⏰ Scheduled custom reminder ${r.id} for "${task.title}" in ${Math.round(delay/1000)}s`);
+  }
+}
+
 async function rescheduleAllTasks() {
   try {
     const snapshot = await tasksCollection.get();
@@ -192,6 +295,7 @@ async function rescheduleAllTasks() {
       const task = doc.data();
       task.taskId = doc.id;
       if (!scheduleTask(task)) toDelete.push(doc.id);
+      else scheduleTaskReminders(task);
     });
     for (const id of toDelete) await tasksCollection.doc(id).delete();
   } catch (err) { console.error('Failed to reschedule tasks:', err); }
@@ -286,18 +390,29 @@ app.post('/api/register-device', async (req, res) => {
 });
 
 app.post('/api/schedule-reminder', async (req, res) => {
-  const { externalId, title, dueTime, taskId, recurrence, fullTask } = req.body;
+  const { externalId, title, dueTime, taskId, recurrence, reminders, fullTask } = req.body;
   if (!externalId || !dueTime || !taskId) return res.status(400).json({ error: 'Missing required fields' });
   const dueTimestamp = new Date(dueTime).getTime();
-  if (isNaN(dueTimestamp) || dueTimestamp <= Date.now()) {
-    return res.status(400).json({ error: 'Invalid or overdue dueTime' });
+  if (isNaN(dueTimestamp)) {
+    return res.status(400).json({ error: 'Invalid dueTime' });
   }
   try {
     const taskRecord = { externalId, title, dueTime, taskId };
     if (recurrence && recurrence.frequency) taskRecord.recurrence = recurrence;
     if (fullTask) taskRecord.fullTask = fullTask;
+    // Save custom reminders so they survive server restarts
+    if (Array.isArray(reminders)) {
+      taskRecord.reminders = reminders;
+    }
     await tasksCollection.doc(taskId).set(taskRecord);
-    scheduleTask(taskRecord);
+
+    // Schedule the legacy "task due now" timer only if not overdue
+    if (dueTimestamp > Date.now()) {
+      scheduleTask(taskRecord);
+    }
+    // Schedule the custom reminders
+    scheduleTaskReminders(taskRecord);
+
     res.json({ success: true, fireInMs: dueTimestamp - Date.now() });
   } catch (err) { res.status(500).json({ error: 'Failed to schedule reminder' }); }
 });
@@ -314,6 +429,13 @@ app.post('/api/complete-reminder', async (req, res) => {
       clearTimeout(scheduledTimers[taskId]);
       delete scheduledTimers[taskId];
     }
+    // Cancel any custom reminder timers for this task
+    for (const key of Object.keys(scheduledReminderTimers)) {
+      if (key.startsWith(`${taskId}::`)) {
+        clearTimeout(scheduledReminderTimers[key]);
+        delete scheduledReminderTimers[key];
+      }
+    }
     const nextTask = await createNextOccurrence(task);
     await tasksCollection.doc(taskId).delete();
     res.json({ success: true, nextTask });
@@ -327,12 +449,18 @@ app.post('/api/cancel-reminder', async (req, res) => {
     clearTimeout(scheduledTimers[taskId]);
     delete scheduledTimers[taskId];
   }
+  for (const key of Object.keys(scheduledReminderTimers)) {
+    if (key.startsWith(`${taskId}::`)) {
+      clearTimeout(scheduledReminderTimers[key]);
+      delete scheduledReminderTimers[key];
+    }
+  }
   try { await tasksCollection.doc(taskId).delete(); } catch {}
   res.json({ success: true });
 });
 
 // ============================================================
-//                    TWO-WAY SYNC — TASKS ONLY (legacy, kept)
+//                    TWO-WAY SYNC — TASKS
 // ============================================================
 app.get('/api/sync/:userId', async (req, res) => {
   const { userId } = req.params;
@@ -404,10 +532,8 @@ app.post('/api/sync/:userId/delete', async (req, res) => {
 });
 
 // ============================================================
-//                    TWO-WAY SYNC — ALL TYPES (new)
+//                    TWO-WAY SYNC — ALL TYPES
 // ============================================================
-// GET pulls tasks + habits + checkIns + milestones for this user
-// in ONE round trip. Single serverTime. Client merges each list.
 app.get('/api/sync/:userId/full', async (req, res) => {
   const { userId } = req.params;
   const since = req.query.since ? String(req.query.since) : null;
@@ -455,8 +581,6 @@ app.get('/api/sync/:userId/full', async (req, res) => {
   }
 });
 
-// POST pushes any combination of the four types in one batch.
-// Writes are chunked to 450 per commit (Firestore batch limit is 500).
 app.post('/api/sync/:userId/full', async (req, res) => {
   const { userId } = req.params;
   const { tasks = [], habits = [], checkIns = [], milestones = [] } = req.body || {};
@@ -530,7 +654,7 @@ app.post('/api/preferences/:userId', async (req, res) => {
 });
 
 // ============================================================
-//                    HABIT ROUTES (reminders)
+//                    HABIT ROUTES
 // ============================================================
 app.post('/api/schedule-habit-reminder', async (req, res) => {
   const { habitId, externalId, name, emoji, reminderTime, daysOfWeek, timezoneOffsetMinutes } = req.body;
@@ -656,12 +780,8 @@ app.get('/delegate/:delegateId', async (req, res) => {
 // ============================================================
 //                    TOMBSTONE GARBAGE COLLECTION
 // ============================================================
-// Deleted items (tasks, habits, check-ins, milestones) stay in
-// Firestore as "tombstones" so deletions propagate across devices.
-// After TOMBSTONE_TTL_DAYS days, everyone has synced, and the
-// tombstone is dead weight — we hard-delete it to keep Firestore lean.
 const TOMBSTONE_TTL_DAYS = 30;
-const GC_INTERVAL_MS = 24 * 60 * 60 * 1000; // once per day
+const GC_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 async function garbageCollectTombstones() {
   try {
@@ -700,7 +820,6 @@ async function garbageCollectTombstones() {
   }
 }
 
-// Run once at startup, then every 24 hours.
 (async () => {
   await garbageCollectTombstones();
   setInterval(() => { void garbageCollectTombstones(); }, GC_INTERVAL_MS);

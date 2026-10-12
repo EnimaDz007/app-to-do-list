@@ -1,4 +1,4 @@
-import type { Template, Subtask } from '../types';
+import type { Template, Subtask, Task } from '../types';
 
 type Lang = 'en' | 'fr' | 'ar';
 
@@ -7,6 +7,12 @@ interface TemplateStrings {
   description: string;
   subtasks: Record<string, string>;
 }
+
+/* ─────────────────────────────────────────────
+   Translations for every built-in template.
+   Each subtask has a stable ID used for lookup,
+   so switching languages works even on cloned tasks.
+   ───────────────────────────────────────────── */
 
 const TPL_COPY: Record<Lang, Record<string, TemplateStrings>> = {
   en: {
@@ -71,6 +77,77 @@ const TPL_COPY: Record<Lang, Record<string, TemplateStrings>> = {
         tpl_review_4_3: 'Review upcoming deadlines',
         tpl_review_5: 'Update milestones',
         tpl_review_6: 'Tidy workspace',
+      },
+    },
+    tpl_morning_routine: {
+      name: 'Morning Routine',
+      description: 'Start the day on purpose — hydrate, move, plan, go.',
+      subtasks: {
+        tpl_morning_1: 'Drink a full glass of water',
+        tpl_morning_2: 'Make the bed',
+        tpl_morning_3: 'Stretch or work out (10 min)',
+        tpl_morning_4: 'Review today’s top 3 priorities',
+        tpl_morning_5: 'Eat breakfast (no phone)',
+        tpl_morning_6: 'Leave for work on time',
+      },
+    },
+    tpl_evening_winddown: {
+      name: 'Evening Wind-Down',
+      description: 'Close the day cleanly so tomorrow starts easy.',
+      subtasks: {
+        tpl_evening_1: 'Wash the dishes',
+        tpl_evening_2: 'Lay out tomorrow’s clothes',
+        tpl_evening_3: 'Plan tomorrow’s top 3 priorities',
+        tpl_evening_4: 'Journal 3 lines (wins, worries, gratitude)',
+        tpl_evening_5: 'Phone on airplane mode',
+        tpl_evening_6: 'Lights out by target time',
+      },
+    },
+    tpl_grocery_run: {
+      name: 'Grocery Run',
+      description: 'A clean, repeatable grocery shopping trip.',
+      subtasks: {
+        tpl_grocery_1: 'Check fridge & pantry',
+        tpl_grocery_2: 'Write shopping list',
+        tpl_grocery_3: 'Produce',
+        tpl_grocery_4: 'Dairy & eggs',
+        tpl_grocery_5: 'Proteins',
+        tpl_grocery_6: 'Pantry staples',
+        tpl_grocery_7: 'Household items',
+        tpl_grocery_8: 'Unpack & store at home',
+      },
+    },
+    tpl_deep_clean: {
+      name: 'Deep Clean',
+      description: 'Room-by-room reset for the whole home.',
+      subtasks: {
+        tpl_clean_1: 'Declutter surfaces',
+        tpl_clean_2: 'Dust all shelves & sills',
+        tpl_clean_3: 'Vacuum floors & rugs',
+        tpl_clean_4: 'Mop hard floors',
+        tpl_clean_5: 'Clean kitchen counters & stove',
+        tpl_clean_6: 'Scrub bathroom sink, tub, toilet',
+        tpl_clean_7: 'Change bed sheets',
+        tpl_clean_8: 'Take out trash & recycling',
+        tpl_clean_9: 'Wipe mirrors & windows',
+      },
+    },
+    tpl_moving_homes: {
+      name: 'Moving Homes',
+      description: 'End-to-end moving checklist — from packing to new-home setup.',
+      subtasks: {
+        tpl_move_1: 'Book movers or truck',
+        tpl_move_2: 'Forward mail',
+        tpl_move_3: 'Transfer utilities',
+        tpl_move_4: 'Pack room by room',
+        tpl_move_5: 'Label all boxes by room',
+        tpl_move_6: 'Pack essentials box (first-night kit)',
+        tpl_move_7: 'Take photos of old place for deposit',
+        tpl_move_8: 'Clean old place',
+        tpl_move_9: 'Move furniture in',
+        tpl_move_10: 'Unpack kitchen & bedroom first',
+        tpl_move_11: 'Update address with bank, work, subscriptions',
+        tpl_move_12: 'Return old keys',
       },
     },
   },
@@ -139,6 +216,77 @@ const TPL_COPY: Record<Lang, Record<string, TemplateStrings>> = {
         tpl_review_6: 'Ranger l’espace de travail',
       },
     },
+    tpl_morning_routine: {
+      name: 'Routine matinale',
+      description: 'Commencez la journée avec intention — hydratez, bougez, planifiez.',
+      subtasks: {
+        tpl_morning_1: 'Boire un grand verre d’eau',
+        tpl_morning_2: 'Faire le lit',
+        tpl_morning_3: 'S’étirer ou s’entraîner (10 min)',
+        tpl_morning_4: 'Revoir les 3 priorités du jour',
+        tpl_morning_5: 'Prendre le petit-déjeuner (sans téléphone)',
+        tpl_morning_6: 'Partir au travail à l’heure',
+      },
+    },
+    tpl_evening_winddown: {
+      name: 'Routine du soir',
+      description: 'Clôturez la journée proprement pour un lendemain facile.',
+      subtasks: {
+        tpl_evening_1: 'Faire la vaisselle',
+        tpl_evening_2: 'Préparer les vêtements de demain',
+        tpl_evening_3: 'Planifier les 3 priorités de demain',
+        tpl_evening_4: 'Écrire 3 lignes dans un journal',
+        tpl_evening_5: 'Mettre le téléphone en mode avion',
+        tpl_evening_6: 'Éteindre les lumières à l’heure cible',
+      },
+    },
+    tpl_grocery_run: {
+      name: 'Courses',
+      description: 'Une virée courses propre et répétable.',
+      subtasks: {
+        tpl_grocery_1: 'Vérifier le frigo et les placards',
+        tpl_grocery_2: 'Écrire la liste de courses',
+        tpl_grocery_3: 'Fruits et légumes',
+        tpl_grocery_4: 'Produits laitiers et œufs',
+        tpl_grocery_5: 'Protéines',
+        tpl_grocery_6: 'Épicerie de base',
+        tpl_grocery_7: 'Produits ménagers',
+        tpl_grocery_8: 'Ranger à la maison',
+      },
+    },
+    tpl_deep_clean: {
+      name: 'Grand nettoyage',
+      description: 'Un reset pièce par pièce de toute la maison.',
+      subtasks: {
+        tpl_clean_1: 'Désencombrer les surfaces',
+        tpl_clean_2: 'Épousseter les étagères et rebords',
+        tpl_clean_3: 'Passer l’aspirateur',
+        tpl_clean_4: 'Laver les sols durs',
+        tpl_clean_5: 'Nettoyer les plans de travail et la cuisinière',
+        tpl_clean_6: 'Récurer la salle de bain',
+        tpl_clean_7: 'Changer les draps',
+        tpl_clean_8: 'Sortir les poubelles',
+        tpl_clean_9: 'Nettoyer les miroirs et vitres',
+      },
+    },
+    tpl_moving_homes: {
+      name: 'Déménagement',
+      description: 'Checklist complète — de l’emballage à l’installation.',
+      subtasks: {
+        tpl_move_1: 'Réserver les déménageurs ou un camion',
+        tpl_move_2: 'Faire suivre le courrier',
+        tpl_move_3: 'Transférer les services publics',
+        tpl_move_4: 'Emballer pièce par pièce',
+        tpl_move_5: 'Étiqueter toutes les boîtes par pièce',
+        tpl_move_6: 'Préparer une boîte d’essentiels (première nuit)',
+        tpl_move_7: 'Prendre des photos de l’ancien logement',
+        tpl_move_8: 'Nettoyer l’ancien logement',
+        tpl_move_9: 'Installer les meubles',
+        tpl_move_10: 'Déballer cuisine et chambre en premier',
+        tpl_move_11: 'Mettre à jour l’adresse (banque, travail, abonnements)',
+        tpl_move_12: 'Rendre les anciennes clés',
+      },
+    },
   },
 
   ar: {
@@ -205,9 +353,79 @@ const TPL_COPY: Record<Lang, Record<string, TemplateStrings>> = {
         tpl_review_6: 'ترتيب مساحة العمل',
       },
     },
+    tpl_morning_routine: {
+      name: 'روتين الصباح',
+      description: 'ابدأ يومك بهدف — اشرب، تحرّك، خطّط، انطلق.',
+      subtasks: {
+        tpl_morning_1: 'اشرب كوباً كاملاً من الماء',
+        tpl_morning_2: 'رتّب السرير',
+        tpl_morning_3: 'تمارين إطالة أو رياضة (١٠ دقائق)',
+        tpl_morning_4: 'راجع أهم ٣ أولويات لليوم',
+        tpl_morning_5: 'تناول الفطور (بدون هاتف)',
+        tpl_morning_6: 'اذهب للعمل في الوقت المحدد',
+      },
+    },
+    tpl_evening_winddown: {
+      name: 'روتين المساء',
+      description: 'أغلق يومك بنظافة ليبدأ غدك بسهولة.',
+      subtasks: {
+        tpl_evening_1: 'اغسل الأطباق',
+        tpl_evening_2: 'جهّز ملابس الغد',
+        tpl_evening_3: 'خطّط لأهم ٣ أولويات للغد',
+        tpl_evening_4: 'اكتب ٣ أسطر في مفكرتك',
+        tpl_evening_5: 'ضع الهاتف على وضع الطيران',
+        tpl_evening_6: 'أطفئ الأنوار في الوقت المحدد',
+      },
+    },
+    tpl_grocery_run: {
+      name: 'التسوق',
+      description: 'رحلة تسوق نظيفة وقابلة للتكرار.',
+      subtasks: {
+        tpl_grocery_1: 'افحص الثلاجة والخزانة',
+        tpl_grocery_2: 'اكتب قائمة التسوق',
+        tpl_grocery_3: 'فواكه وخضروات',
+        tpl_grocery_4: 'ألبان وبيض',
+        tpl_grocery_5: 'بروتينات',
+        tpl_grocery_6: 'مواد أساسية',
+        tpl_grocery_7: 'مواد منزلية',
+        tpl_grocery_8: 'افرغ وارتّب في المنزل',
+      },
+    },
+    tpl_deep_clean: {
+      name: 'تنظيف عميق',
+      description: 'إعادة ترتيب المنزل غرفة بغرفة.',
+      subtasks: {
+        tpl_clean_1: 'تخلّص من الفوضى على الأسطح',
+        tpl_clean_2: 'امسح الرفوف والحواف',
+        tpl_clean_3: 'نظّف الأرضيات والسجاد بالمكنسة',
+        tpl_clean_4: 'امسح الأرضيات الصلبة',
+        tpl_clean_5: 'نظّف أسطح المطبخ والموقد',
+        tpl_clean_6: 'افرك الحمام والمغسلة والمرحاض',
+        tpl_clean_7: 'غيّر ملاءات السرير',
+        tpl_clean_8: 'أخرج القمامة وإعادة التدوير',
+        tpl_clean_9: 'امسح المرايا والنوافذ',
+      },
+    },
+    tpl_moving_homes: {
+      name: 'الانتقال إلى منزل جديد',
+      description: 'قائمة شاملة للانتقال — من التغليف إلى التركيب.',
+      subtasks: {
+        tpl_move_1: 'احجز شركة نقل أو شاحنة',
+        tpl_move_2: 'حوّل البريد',
+        tpl_move_3: 'انقل الخدمات (كهرباء، ماء، إنترنت)',
+        tpl_move_4: 'غلّف غرفة بغرفة',
+        tpl_move_5: 'ضع لصقات على كل الصندوق حسب الغرفة',
+        tpl_move_6: 'جهّز صندوق الضروريات (الليلة الأولى)',
+        tpl_move_7: 'صوّر المنزل القديم للتأمين',
+        tpl_move_8: 'نظّف المنزل القديم',
+        tpl_move_9: 'أدخل الأثاث',
+        tpl_move_10: 'افرغ المطبخ وغرفة النوم أولاً',
+        tpl_move_11: 'حدّث عنوانك (البنك، العمل، الاشتراكات)',
+        tpl_move_12: 'أعد المفاتيح القديمة',
+      },
+    },
   },
 };
-
 /* ─────────────────────────────────────────────
    Raw subtask trees (language-agnostic — IDs only)
    ───────────────────────────────────────────── */
@@ -274,6 +492,62 @@ const RAW_REVIEW: Subtask[] = [
   { id: 'tpl_review_6', title: '', done: false },
 ];
 
+const RAW_MORNING: Subtask[] = [
+  { id: 'tpl_morning_1', title: '', done: false },
+  { id: 'tpl_morning_2', title: '', done: false },
+  { id: 'tpl_morning_3', title: '', done: false },
+  { id: 'tpl_morning_4', title: '', done: false },
+  { id: 'tpl_morning_5', title: '', done: false },
+  { id: 'tpl_morning_6', title: '', done: false },
+];
+
+const RAW_EVENING: Subtask[] = [
+  { id: 'tpl_evening_1', title: '', done: false },
+  { id: 'tpl_evening_2', title: '', done: false },
+  { id: 'tpl_evening_3', title: '', done: false },
+  { id: 'tpl_evening_4', title: '', done: false },
+  { id: 'tpl_evening_5', title: '', done: false },
+  { id: 'tpl_evening_6', title: '', done: false },
+];
+
+const RAW_GROCERY: Subtask[] = [
+  { id: 'tpl_grocery_1', title: '', done: false },
+  { id: 'tpl_grocery_2', title: '', done: false },
+  { id: 'tpl_grocery_3', title: '', done: false },
+  { id: 'tpl_grocery_4', title: '', done: false },
+  { id: 'tpl_grocery_5', title: '', done: false },
+  { id: 'tpl_grocery_6', title: '', done: false },
+  { id: 'tpl_grocery_7', title: '', done: false },
+  { id: 'tpl_grocery_8', title: '', done: false },
+];
+
+const RAW_CLEAN: Subtask[] = [
+  { id: 'tpl_clean_1', title: '', done: false },
+  { id: 'tpl_clean_2', title: '', done: false },
+  { id: 'tpl_clean_3', title: '', done: false },
+  { id: 'tpl_clean_4', title: '', done: false },
+  { id: 'tpl_clean_5', title: '', done: false },
+  { id: 'tpl_clean_6', title: '', done: false },
+  { id: 'tpl_clean_7', title: '', done: false },
+  { id: 'tpl_clean_8', title: '', done: false },
+  { id: 'tpl_clean_9', title: '', done: false },
+];
+
+const RAW_MOVE: Subtask[] = [
+  { id: 'tpl_move_1', title: '', done: false },
+  { id: 'tpl_move_2', title: '', done: false },
+  { id: 'tpl_move_3', title: '', done: false },
+  { id: 'tpl_move_4', title: '', done: false },
+  { id: 'tpl_move_5', title: '', done: false },
+  { id: 'tpl_move_6', title: '', done: false },
+  { id: 'tpl_move_7', title: '', done: false },
+  { id: 'tpl_move_8', title: '', done: false },
+  { id: 'tpl_move_9', title: '', done: false },
+  { id: 'tpl_move_10', title: '', done: false },
+  { id: 'tpl_move_11', title: '', done: false },
+  { id: 'tpl_move_12', title: '', done: false },
+];
+
 /* ─────────────────────────────────────────────
    Fill helper — injects translated titles by id
    ───────────────────────────────────────────── */
@@ -287,66 +561,93 @@ function fillSubtasks(tree: Subtask[], dict: Record<string, string>): Subtask[] 
 }
 
 /* ─────────────────────────────────────────────
-   Build the three templates for a given language
+   Build the built-in templates for a given language
    ───────────────────────────────────────────── */
 
 export function getDefaultTemplates(lang: Lang = 'en'): Template[] {
   const copy = TPL_COPY[lang] ?? TPL_COPY.en;
-  const t1 = copy.tpl_trip_planning;
-  const t2 = copy.tpl_product_launch;
-  const t3 = copy.tpl_weekly_review;
+  const CREATED = '2024-01-01T00:00:00.000Z';
 
   return [
     {
-      id: 'tpl_trip_planning',
-      name: t1.name,
-      emoji: '✈️',
-      description: t1.description,
+      id: 'tpl_morning_routine',
+      name: copy.tpl_morning_routine.name,
+      emoji: '🌅',
+      description: copy.tpl_morning_routine.description,
       isBuiltIn: true,
-      createdAt: '2024-01-01T00:00:00.000Z',
-      preset: {
-        category: 'Personal',
-        quadrant: 'schedule',
-        estimatedMinutes: 120,
-        impactScore: 4,
-        effortScore: 3,
-        contexts: ['home', 'errand'],
-      },
-      subtasks: fillSubtasks(RAW_TRIP, t1.subtasks),
+      createdAt: CREATED,
+      preset: { category: 'Personal', quadrant: 'do_first', estimatedMinutes: 30, contexts: ['home'] },
+      subtasks: fillSubtasks(RAW_MORNING, copy.tpl_morning_routine.subtasks),
     },
     {
-      id: 'tpl_product_launch',
-      name: t2.name,
-      emoji: '🚀',
-      description: t2.description,
+      id: 'tpl_evening_winddown',
+      name: copy.tpl_evening_winddown.name,
+      emoji: '🌙',
+      description: copy.tpl_evening_winddown.description,
       isBuiltIn: true,
-      createdAt: '2024-01-01T00:00:00.000Z',
-      preset: {
-        category: 'Product',
-        quadrant: 'do_first',
-        estimatedMinutes: 480,
-        impactScore: 5,
-        effortScore: 4,
-        contexts: ['work', 'computer'],
-      },
-      subtasks: fillSubtasks(RAW_LAUNCH, t2.subtasks),
+      createdAt: CREATED,
+      preset: { category: 'Personal', quadrant: 'schedule', estimatedMinutes: 30, contexts: ['home'] },
+      subtasks: fillSubtasks(RAW_EVENING, copy.tpl_evening_winddown.subtasks),
     },
     {
       id: 'tpl_weekly_review',
-      name: t3.name,
+      name: copy.tpl_weekly_review.name,
       emoji: '📊',
-      description: t3.description,
+      description: copy.tpl_weekly_review.description,
       isBuiltIn: true,
-      createdAt: '2024-01-01T00:00:00.000Z',
-      preset: {
-        category: 'Personal',
-        quadrant: 'schedule',
-        estimatedMinutes: 45,
-        impactScore: 4,
-        effortScore: 2,
-        contexts: ['home', 'computer'],
-      },
-      subtasks: fillSubtasks(RAW_REVIEW, t3.subtasks),
+      createdAt: CREATED,
+      preset: { category: 'Personal', quadrant: 'schedule', estimatedMinutes: 45, contexts: ['home', 'computer'] },
+      subtasks: fillSubtasks(RAW_REVIEW, copy.tpl_weekly_review.subtasks),
+    },
+    {
+      id: 'tpl_grocery_run',
+      name: copy.tpl_grocery_run.name,
+      emoji: '🛒',
+      description: copy.tpl_grocery_run.description,
+      isBuiltIn: true,
+      createdAt: CREATED,
+      preset: { category: 'Personal', quadrant: 'schedule', estimatedMinutes: 60, contexts: ['errand'] },
+      subtasks: fillSubtasks(RAW_GROCERY, copy.tpl_grocery_run.subtasks),
+    },
+    {
+      id: 'tpl_deep_clean',
+      name: copy.tpl_deep_clean.name,
+      emoji: '🧹',
+      description: copy.tpl_deep_clean.description,
+      isBuiltIn: true,
+      createdAt: CREATED,
+      preset: { category: 'Personal', quadrant: 'schedule', estimatedMinutes: 180, contexts: ['home'] },
+      subtasks: fillSubtasks(RAW_CLEAN, copy.tpl_deep_clean.subtasks),
+    },
+    {
+      id: 'tpl_trip_planning',
+      name: copy.tpl_trip_planning.name,
+      emoji: '✈️',
+      description: copy.tpl_trip_planning.description,
+      isBuiltIn: true,
+      createdAt: CREATED,
+      preset: { category: 'Personal', quadrant: 'schedule', estimatedMinutes: 120, contexts: ['home', 'errand'] },
+      subtasks: fillSubtasks(RAW_TRIP, copy.tpl_trip_planning.subtasks),
+    },
+    {
+      id: 'tpl_moving_homes',
+      name: copy.tpl_moving_homes.name,
+      emoji: '📦',
+      description: copy.tpl_moving_homes.description,
+      isBuiltIn: true,
+      createdAt: CREATED,
+      preset: { category: 'Personal', quadrant: 'do_first', estimatedMinutes: 480, contexts: ['home', 'errand'] },
+      subtasks: fillSubtasks(RAW_MOVE, copy.tpl_moving_homes.subtasks),
+    },
+    {
+      id: 'tpl_product_launch',
+      name: copy.tpl_product_launch.name,
+      emoji: '🚀',
+      description: copy.tpl_product_launch.description,
+      isBuiltIn: true,
+      createdAt: CREATED,
+      preset: { category: 'Product', quadrant: 'do_first', estimatedMinutes: 480, contexts: ['work', 'computer'] },
+      subtasks: fillSubtasks(RAW_LAUNCH, copy.tpl_product_launch.subtasks),
     },
   ];
 }
@@ -356,35 +657,31 @@ export const DEFAULT_TEMPLATES: Template[] = getDefaultTemplates('en');
 
 /* ─────────────────────────────────────────────
    Runtime translation lookups
-   (for rendering already-saved tasks in the
-   current language — even if IDs were regenerated)
    ───────────────────────────────────────────── */
 
-const MERGED_SUBTASK_DICTS: Record<Lang, Record<string, string>> = {
-  en: {
-    ...TPL_COPY.en.tpl_trip_planning.subtasks,
-    ...TPL_COPY.en.tpl_product_launch.subtasks,
-    ...TPL_COPY.en.tpl_weekly_review.subtasks,
-  },
-  fr: {
-    ...TPL_COPY.fr.tpl_trip_planning.subtasks,
-    ...TPL_COPY.fr.tpl_product_launch.subtasks,
-    ...TPL_COPY.fr.tpl_weekly_review.subtasks,
-  },
-  ar: {
-    ...TPL_COPY.ar.tpl_trip_planning.subtasks,
-    ...TPL_COPY.ar.tpl_product_launch.subtasks,
-    ...TPL_COPY.ar.tpl_weekly_review.subtasks,
-  },
-};
+const ALL_TEMPLATE_KEYS = [
+  'tpl_trip_planning',
+  'tpl_product_launch',
+  'tpl_weekly_review',
+  'tpl_morning_routine',
+  'tpl_evening_winddown',
+  'tpl_grocery_run',
+  'tpl_deep_clean',
+  'tpl_moving_homes',
+] as const;
 
-/* Build reverse map: any-language title → translated title for target lang.
-   Catches subtasks whose IDs were regenerated at clone time. */
+const MERGED_SUBTASK_DICTS: Record<Lang, Record<string, string>> = {
+  en: {}, fr: {}, ar: {},
+};
+for (const lang of ['en', 'fr', 'ar'] as const) {
+  for (const key of ALL_TEMPLATE_KEYS) {
+    Object.assign(MERGED_SUBTASK_DICTS[lang], TPL_COPY[lang][key].subtasks);
+  }
+}
+
 function buildTitleLookup(target: Lang): Record<string, string> {
   const lookup: Record<string, string> = {};
-  const keys = ['tpl_trip_planning', 'tpl_product_launch', 'tpl_weekly_review'] as const;
-
-  for (const key of keys) {
+  for (const key of ALL_TEMPLATE_KEYS) {
     const enSubs = TPL_COPY.en[key].subtasks;
     for (const id of Object.keys(enSubs)) {
       const targetTitle = TPL_COPY[target][key].subtasks[id];
@@ -406,11 +703,9 @@ const TITLE_LOOKUP: Record<Lang, Record<string, string>> = {
   ar: buildTitleLookup('ar'),
 };
 
-/* Template title lookup: any-language template name → target-language name. */
 function buildTaskTitleLookup(target: Lang): Record<string, string> {
   const lookup: Record<string, string> = {};
-  const keys = ['tpl_trip_planning', 'tpl_product_launch', 'tpl_weekly_review'] as const;
-  for (const key of keys) {
+  for (const key of ALL_TEMPLATE_KEYS) {
     const targetName = TPL_COPY[target][key].name;
     lookup[TPL_COPY.en[key].name] = targetName;
     lookup[TPL_COPY.fr[key].name] = targetName;
@@ -425,11 +720,9 @@ const TASK_TITLE_LOOKUP: Record<Lang, Record<string, string>> = {
   ar: buildTaskTitleLookup('ar'),
 };
 
-/* Description lookup: source description (any language) → target description. */
 function buildDescLookup(target: Lang): Record<string, string> {
   const lookup: Record<string, string> = {};
-  const keys = ['tpl_trip_planning', 'tpl_product_launch', 'tpl_weekly_review'] as const;
-  for (const key of keys) {
+  for (const key of ALL_TEMPLATE_KEYS) {
     const targetDesc = TPL_COPY[target][key].description;
     lookup[TPL_COPY.en[key].description] = targetDesc;
     lookup[TPL_COPY.fr[key].description] = targetDesc;
@@ -446,8 +739,7 @@ const TASK_DESC_LOOKUP: Record<Lang, Record<string, string>> = {
 
 /** Returns translated title for a built-in template subtask id, or null if custom. */
 export function translateSubtaskTitle(id: string, lang: Lang): string | null {
-  const dict = MERGED_SUBTASK_DICTS[lang];
-  return dict?.[id] ?? null;
+  return MERGED_SUBTASK_DICTS[lang]?.[id] ?? null;
 }
 
 /** Returns translated description if it matches a built-in template description, else null. */
@@ -462,8 +754,7 @@ export function translateTaskTitle(title: string | undefined, lang: Lang): strin
   return TASK_TITLE_LOOKUP[lang]?.[title] ?? null;
 }
 
-/** Recursively translate a subtask tree.
- *  Tries ID match first, then title match (for cloned tasks with regenerated IDs). */
+/** Recursively translate a subtask tree. Tries ID match, then title match. */
 export function translateSubtaskTree(tree: Subtask[], lang: Lang): Subtask[] {
   const titleMap = TITLE_LOOKUP[lang] ?? {};
   return tree.map((node) => {
@@ -476,4 +767,42 @@ export function translateSubtaskTree(tree: Subtask[], lang: Lang): Subtask[] {
       subtasks: node.subtasks ? translateSubtaskTree(node.subtasks, lang) : undefined,
     };
   });
+}
+
+/* ─────────────────────────────────────────────
+   NEW — localize a cloned task in place.
+   Detects whether the task originated from a built-in template
+   (via ID or title match) and, if so, replaces its title,
+   description, and subtask titles with the target language.
+   Custom tasks are returned untouched.
+   ───────────────────────────────────────────── */
+
+export function localizeClonedTask(task: Task, lang: Lang): Task {
+  const translatedTitle = translateTaskTitle(task.title, lang);
+  const translatedDesc = translateTaskDescription(task.description, lang);
+  const nextSubtasks = task.subtasks ? translateSubtaskTree(task.subtasks, lang) : undefined;
+
+  const titleChanged = translatedTitle !== null && translatedTitle !== task.title;
+  const descChanged = translatedDesc !== null && translatedDesc !== task.description;
+  const subsChanged = !!nextSubtasks && JSON.stringify(nextSubtasks) !== JSON.stringify(task.subtasks);
+
+  if (!titleChanged && !descChanged && !subsChanged) return task;
+
+  return {
+    ...task,
+    title: translatedTitle ?? task.title,
+    description: translatedDesc ?? task.description,
+    subtasks: nextSubtasks ?? task.subtasks,
+  };
+}
+
+/** Same as above, but runs over an array (one pass, cheap). */
+export function localizeClonedTasks(tasks: Task[], lang: Lang): Task[] {
+  let changed = false;
+  const next = tasks.map((t) => {
+    const localized = localizeClonedTask(t, lang);
+    if (localized !== t) changed = true;
+    return localized;
+  });
+  return changed ? next : tasks;
 }

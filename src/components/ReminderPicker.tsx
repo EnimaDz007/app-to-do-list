@@ -1,12 +1,11 @@
 // ─────────────────────────────────────────────────────────────
 //  FILE: src/components/ReminderPicker.tsx
 //  UI for managing custom reminders on a task.
-//  Preset chips ("15 min before", "1h before"...) + add/remove list.
-//  Emits updated TaskReminder[] via onChange.
+//  Chips that would fire in the past are visually disabled.
 // ─────────────────────────────────────────────────────────────
 
 import React, { useState } from 'react';
-import { Bell, Plus, X, Check } from 'lucide-react';
+import { Bell, Plus, X, Check, Clock } from 'lucide-react';
 import { TaskReminder } from '../types';
 import { triggerHaptic } from '../utils/haptics';
 import {
@@ -16,12 +15,10 @@ import {
 } from '../utils/reminderScheduler';
 
 interface ReminderPickerProps {
-  /** The task's current due date (ISO string) — required to compute fireAt */
   dueDateIso: string;
   reminders: TaskReminder[];
   onChange: (next: TaskReminder[]) => void;
   disabled?: boolean;
-  /** Localized label overrides */
   labels?: Partial<{
     title: string;
     add: string;
@@ -30,6 +27,7 @@ interface ReminderPickerProps {
     max: string;
     noDate: string;
     past: string;
+    pastHint: string;
   }>;
 }
 
@@ -45,6 +43,7 @@ export const ReminderPicker: React.FC<ReminderPickerProps> = ({
   const [showCustom, setShowCustom] = useState(false);
   const [customValue, setCustomValue] = useState<number>(45);
   const [customUnit, setCustomUnit] = useState<'min' | 'hour' | 'day'>('min');
+  const [toast, setToast] = useState<string | null>(null);
 
   const L = {
     title: labels?.title ?? 'Reminders',
@@ -53,33 +52,60 @@ export const ReminderPicker: React.FC<ReminderPickerProps> = ({
     hint: labels?.hint ?? 'Get notified at custom times before the task is due.',
     max: labels?.max ?? `Max ${MAX_REMINDERS} reminders per task`,
     noDate: labels?.noDate ?? 'Set a due date first',
-    past: labels?.past ?? 'That time is already in the past',
+    past: labels?.past ?? 'past',
+    pastHint: labels?.pastHint ?? 'That reminder would fire in the past',
   };
 
-  const hasValidDate = !!dueDateIso && !isNaN(new Date(dueDateIso).getTime());
+  const dueTs = dueDateIso ? new Date(dueDateIso).getTime() : NaN;
+  const hasValidDate = !isNaN(dueTs);
+  const now = Date.now();
 
-  /** Quick check: is this offset already used? (avoid duplicates) */
+  /** Would this offset fire in the past? */
+  const isPastOffset = (minutes: number): boolean => {
+    if (!hasValidDate) return false;
+    return dueTs - minutes * 60 * 1000 <= now;
+  };
+
+  /** Already added? */
   const hasOffset = (minutes: number) =>
     reminders.some((r) => r.minutesBefore === minutes);
 
+  const flashToast = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 2200);
+  };
+
   const handlePresetTap = (minutes: number) => {
     if (!hasValidDate || disabled) return;
-    triggerHaptic('medium');
 
-    // Toggle behavior: tap again to remove
+    // Toggle behavior: tap an active chip to remove it
     if (hasOffset(minutes)) {
+      triggerHaptic('medium');
       onChange(reminders.filter((r) => r.minutesBefore !== minutes));
       return;
     }
 
-    if (reminders.length >= MAX_REMINDERS) return;
+    // Would it fire in the past?
+    if (isPastOffset(minutes)) {
+      triggerHaptic('heavy');
+      flashToast(L.pastHint);
+      return;
+    }
+
+    if (reminders.length >= MAX_REMINDERS) {
+      triggerHaptic('heavy');
+      flashToast(L.max);
+      return;
+    }
 
     const fresh = makeReminder(minutes, dueDateIso);
     if (!fresh) {
       triggerHaptic('heavy');
+      flashToast(L.pastHint);
       return;
     }
-    // Insert sorted by fireAt (soonest first)
+
+    triggerHaptic('medium');
     const next = [...reminders, fresh].sort(
       (a, b) => new Date(a.fireAt).getTime() - new Date(b.fireAt).getTime()
     );
@@ -88,19 +114,30 @@ export const ReminderPicker: React.FC<ReminderPickerProps> = ({
 
   const handleAddCustom = () => {
     if (!hasValidDate || disabled) return;
-    if (reminders.length >= MAX_REMINDERS) return;
+    if (reminders.length >= MAX_REMINDERS) {
+      flashToast(L.max);
+      return;
+    }
 
     const multiplier = customUnit === 'min' ? 1 : customUnit === 'hour' ? 60 : 1440;
     const minutes = Math.max(1, Math.round(customValue * multiplier));
 
     if (hasOffset(minutes)) {
+      flashToast('That reminder is already added');
       setShowCustom(false);
+      return;
+    }
+
+    if (isPastOffset(minutes)) {
+      triggerHaptic('heavy');
+      flashToast(L.pastHint);
       return;
     }
 
     const fresh = makeReminder(minutes, dueDateIso);
     if (!fresh) {
       triggerHaptic('heavy');
+      flashToast(L.pastHint);
       setShowCustom(false);
       return;
     }
@@ -146,20 +183,28 @@ export const ReminderPicker: React.FC<ReminderPickerProps> = ({
       <div className="flex flex-wrap gap-1.5 mb-2">
         {REMINDER_PRESETS.map((p) => {
           const active = hasOffset(p.minutes);
+          const past = !active && isPastOffset(p.minutes);
           const atMax = reminders.length >= MAX_REMINDERS && !active;
+
           return (
             <button
               key={p.minutes}
               type="button"
               onClick={() => handlePresetTap(p.minutes)}
-              disabled={!hasValidDate || atMax || disabled}
-              className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full text-[11px] font-semibold border transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
+              disabled={!hasValidDate || disabled || past}
+              title={past ? L.pastHint : undefined}
+              className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full text-[11px] font-semibold border transition cursor-pointer disabled:cursor-not-allowed ${
                 active
                   ? 'bg-amber-500 text-white border-amber-500 shadow-xs'
+                  : past
+                  ? 'bg-slate-50/60 dark:bg-slate-800/40 text-slate-400 dark:text-slate-500 border-slate-200/60 dark:border-slate-700/40 line-through'
+                  : atMax
+                  ? 'bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 opacity-50'
                   : 'bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700'
               }`}
             >
               {active && <Check className="w-3 h-3" />}
+              {past && <Clock className="w-3 h-3" />}
               <span>{p.label}</span>
             </button>
           );
@@ -183,6 +228,16 @@ export const ReminderPicker: React.FC<ReminderPickerProps> = ({
           <span>Custom</span>
         </button>
       </div>
+
+      {/* ── Toast hint (past / max / duplicate) ── */}
+      {toast && (
+        <div className="mb-2 px-2.5 py-1.5 rounded-lg bg-rose-50/80 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/60 flex items-center gap-1.5 animate-in fade-in slide-in-from-top-1">
+          <Clock className="w-3 h-3 text-rose-600 dark:text-rose-400 shrink-0" />
+          <p className="text-[10px] font-semibold text-rose-800 dark:text-rose-200">
+            {toast}
+          </p>
+        </div>
+      )}
 
       {/* ── Custom input row ── */}
       {showCustom && hasValidDate && (
@@ -245,7 +300,7 @@ export const ReminderPicker: React.FC<ReminderPickerProps> = ({
                 </span>
                 {isPast && (
                   <span className="text-[9px] uppercase tracking-wider font-bold ms-1">
-                    past
+                    {L.past}
                   </span>
                 )}
                 <button
