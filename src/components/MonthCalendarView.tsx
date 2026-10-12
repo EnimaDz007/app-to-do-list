@@ -8,7 +8,8 @@ import { useLanguage } from '../context/LanguageContext';
 interface MonthCalendarViewProps {
   tasks: Task[];
   onToggleStatus: (taskId: string) => void;
-  onEditTask: (task: Task) => void;
+  /** Opens the read-only summary sheet. */
+  onTaskSummary: (task: Task) => void;
   /** Reports the currently selected day (YYYY-MM-DD) to the parent */
   onDateSelect?: (dateKey: string) => void;
 }
@@ -22,16 +23,19 @@ const QUADRANT_COLORS: Record<QuadrantId, string> = {
   eliminate: '#64748B',
 };
 
+const MAX_CHIPS_PER_CELL = 2;
+
 const COPY: Record<LocalLang, {
   locale: string;
   today: string;
-  tasksThisMonth: string;   // "{count} tasks this month"
-  task: string;             // singular
-  tasks: string;            // plural
+  tasksThisMonth: string;
+  task: string;
+  tasks: string;
   nothingScheduled: string;
   prevMonth: string;
   nextMonth: string;
   toggleComplete: string;
+  moreAriaLabel: (n: number) => string;
   quadrants: Record<QuadrantId, string>;
   contexts: Record<string, string>;
   weekDaysShort: string[];
@@ -47,6 +51,7 @@ const COPY: Record<LocalLang, {
     prevMonth: 'Previous month',
     nextMonth: 'Next month',
     toggleComplete: 'Toggle complete',
+    moreAriaLabel: (n) => `${n} more task${n === 1 ? '' : 's'}`,
     quadrants: { do_first: 'Do First', schedule: 'Schedule', delegate: 'Delegate', eliminate: 'Eliminate' },
     contexts: { home: 'Home', work: 'Work', call: 'Call', computer: 'Deep Work', errand: 'Errand', health: 'Health' },
     weekDaysShort: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
@@ -62,6 +67,7 @@ const COPY: Record<LocalLang, {
     prevMonth: 'Mois précédent',
     nextMonth: 'Mois suivant',
     toggleComplete: 'Marquer comme fait',
+    moreAriaLabel: (n) => `${n} tâche${n === 1 ? '' : 's'} de plus`,
     quadrants: { do_first: 'À faire', schedule: 'Planifier', delegate: 'Déléguer', eliminate: 'Éliminer' },
     contexts: { home: 'Maison', work: 'Travail', call: 'Appel', computer: 'Travail profond', errand: 'Courses', health: 'Santé' },
     weekDaysShort: ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'],
@@ -77,6 +83,7 @@ const COPY: Record<LocalLang, {
     prevMonth: 'الشهر السابق',
     nextMonth: 'الشهر التالي',
     toggleComplete: 'تبديل الإكمال',
+    moreAriaLabel: (n) => `${n} مهمة أخرى`,
     quadrants: { do_first: 'ابدأ به فوراً', schedule: 'جدولة وتخطيط', delegate: 'تفويض', eliminate: 'استبعاد وإلغاء' },
     contexts: { home: 'المنزل', work: 'العمل', call: 'مكالمة', computer: 'عمل عميق', errand: 'مشاوير', health: 'الصحة' },
     weekDaysShort: ['أحد', 'إثن', 'ثلا', 'أرب', 'خمي', 'جمع', 'سبت'],
@@ -94,12 +101,13 @@ function toLocalDateKey(d: Date): string {
 export const MonthCalendarView: React.FC<MonthCalendarViewProps> = ({
   tasks,
   onToggleStatus,
-  onEditTask,
+  onTaskSummary,
   onDateSelect,
 }) => {
   const { language } = useLanguage();
   const lang = (language as LocalLang) || 'en';
   const copy = COPY[lang] ?? COPY.en;
+  const isRtl = lang === 'ar';
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -108,7 +116,6 @@ export const MonthCalendarView: React.FC<MonthCalendarViewProps> = ({
   const [viewMonth, setViewMonth] = useState(today.getMonth());
   const [selectedDateKey, setSelectedDateKey] = useState<string>(toLocalDateKey(today));
 
-  // Report the selected day up to App so the "+" button can pre-fill the due date
   const onDateSelectRef = useRef(onDateSelect);
   useEffect(() => { onDateSelectRef.current = onDateSelect; });
   useEffect(() => {
@@ -157,22 +164,14 @@ export const MonthCalendarView: React.FC<MonthCalendarViewProps> = ({
 
   const goPrevMonth = () => {
     triggerHaptic('light');
-    if (viewMonth === 0) {
-      setViewMonth(11);
-      setViewYear((y) => y - 1);
-    } else {
-      setViewMonth((m) => m - 1);
-    }
+    if (viewMonth === 0) { setViewMonth(11); setViewYear((y) => y - 1); }
+    else { setViewMonth((m) => m - 1); }
   };
 
   const goNextMonth = () => {
     triggerHaptic('light');
-    if (viewMonth === 11) {
-      setViewMonth(0);
-      setViewYear((y) => y + 1);
-    } else {
-      setViewMonth((m) => m + 1);
-    }
+    if (viewMonth === 11) { setViewMonth(0); setViewYear((y) => y + 1); }
+    else { setViewMonth((m) => m + 1); }
   };
 
   const goToday = () => {
@@ -185,8 +184,19 @@ export const MonthCalendarView: React.FC<MonthCalendarViewProps> = ({
   const selectedDayTasks = tasksByDate[selectedDateKey] || [];
   const selectedDate = new Date(selectedDateKey + 'T00:00:00');
 
+  const handleSelectDay = (key: string) => {
+    triggerHaptic('light');
+    setSelectedDateKey(key);
+  };
+
+  const handleChipTap = (task: Task, e: React.MouseEvent) => {
+    e.stopPropagation();
+    triggerHaptic('light');
+    onTaskSummary(task);
+  };
+
   return (
-    <div className="w-full space-y-3 pb-4">
+    <div className="w-full space-y-3 pb-4" dir={isRtl ? 'rtl' : 'ltr'}>
       {/* Header with month nav */}
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
@@ -215,14 +225,14 @@ export const MonthCalendarView: React.FC<MonthCalendarViewProps> = ({
             className="p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 transition cursor-pointer"
             aria-label={copy.prevMonth}
           >
-            <ChevronLeft className="w-4 h-4" />
+            {isRtl ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
           </button>
           <button
             onClick={goNextMonth}
             className="p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 transition cursor-pointer"
             aria-label={copy.nextMonth}
           >
-            <ChevronRight className="w-4 h-4" />
+            {isRtl ? <ChevronLeft className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
           </button>
         </div>
       </div>
@@ -246,48 +256,104 @@ export const MonthCalendarView: React.FC<MonthCalendarViewProps> = ({
           const key = toLocalDateKey(day);
           const dayTasks = tasksByDate[key] || [];
           const isCurrentMonth = day.getMonth() === viewMonth;
-          const isToday = toLocalDateKey(day) === toLocalDateKey(today);
+          const isToday = key === toLocalDateKey(today);
           const isSelected = key === selectedDateKey;
 
-          const quadrantColors = Array.from(
-            new Set(dayTasks.map((t) => t.quadrant))
-          ).slice(0, 4);
-
+          const visibleChips = dayTasks.slice(0, MAX_CHIPS_PER_CELL);
+          const overflow = Math.max(0, dayTasks.length - MAX_CHIPS_PER_CELL);
           const allDone = dayTasks.length > 0 && dayTasks.every((t) => t.status === 'completed');
 
           return (
-            <button
+            <div
               key={idx}
-              onClick={() => {
-                triggerHaptic('light');
-                setSelectedDateKey(key);
+              role="button"
+              tabIndex={0}
+              onClick={() => handleSelectDay(key)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  handleSelectDay(key);
+                }
               }}
-              className={`relative aspect-square rounded-xl flex flex-col items-center justify-start pt-1 pb-1 transition cursor-pointer ${
+              className={`relative min-h-[72px] sm:min-h-[88px] rounded-xl flex flex-col p-1 transition cursor-pointer overflow-hidden ${
                 isSelected
-                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/30'
+                  ? 'bg-indigo-600 shadow-md shadow-indigo-500/30 ring-2 ring-indigo-500'
                   : isToday
-                  ? 'bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 ring-2 ring-indigo-400 dark:ring-indigo-500'
+                  ? 'bg-indigo-50 dark:bg-indigo-950/40 ring-2 ring-indigo-400 dark:ring-indigo-500'
                   : isCurrentMonth
-                  ? 'bg-white dark:bg-slate-800/60 text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
-                  : 'bg-slate-50/50 dark:bg-slate-900/40 text-slate-400 dark:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800/60'
+                  ? 'bg-white dark:bg-slate-800/60 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  : 'bg-slate-50/60 dark:bg-slate-900/40 hover:bg-slate-100 dark:hover:bg-slate-800/60'
               }`}
             >
-              <span className={`text-[13px] font-bold leading-none ${allDone && !isSelected ? 'line-through opacity-60' : ''}`}>
-                {day.getDate()}
-              </span>
-
-              <div className="flex items-center justify-center gap-0.5 mt-1">
-                {quadrantColors.map((q, i) => (
+              {/* Day number row */}
+              <div className="flex items-center justify-between mb-0.5 shrink-0">
+                <span
+                  className={`text-[12px] font-bold leading-none px-1 ${
+                    isSelected
+                      ? 'text-white'
+                      : isToday
+                      ? 'text-indigo-700 dark:text-indigo-300'
+                      : isCurrentMonth
+                      ? 'text-slate-800 dark:text-slate-200'
+                      : 'text-slate-400 dark:text-slate-600'
+                  } ${allDone && !isSelected ? 'line-through opacity-60' : ''}`}
+                >
+                  {day.getDate()}
+                </span>
+                {dayTasks.length > 0 && !isSelected && (
                   <span
-                    key={i}
-                    className="w-1 h-1 rounded-full"
-                    style={{
-                      backgroundColor: isSelected ? 'rgba(255,255,255,0.9)' : QUADRANT_COLORS[q],
-                    }}
+                    className="w-1.5 h-1.5 rounded-full shrink-0"
+                    style={{ backgroundColor: QUADRANT_COLORS[dayTasks[0].quadrant] }}
                   />
-                ))}
+                )}
               </div>
-            </button>
+
+              {/* Task chips */}
+              <div className="flex flex-col gap-0.5 min-h-0 flex-1">
+                {visibleChips.map((task) => {
+                  const color = QUADRANT_COLORS[task.quadrant];
+                  const isDone = task.status === 'completed';
+                  const chipBg = isSelected ? 'rgba(255,255,255,0.22)' : `${color}22`;
+                  const chipText = isSelected ? '#ffffff' : color;
+                  const stripe = isSelected ? 'rgba(255,255,255,0.85)' : color;
+
+                  return (
+                    <button
+                      key={task.id}
+                      onClick={(e) => handleChipTap(task, e)}
+                      title={task.title}
+                      className="group w-full text-start rounded-[4px] overflow-hidden flex items-stretch transition hover:brightness-110 active:scale-[0.97] cursor-pointer"
+                      style={{ backgroundColor: chipBg }}
+                    >
+                      <span
+                        className="w-[2px] shrink-0"
+                        style={{ backgroundColor: stripe }}
+                      />
+                      <span
+                        className={`text-[8px] sm:text-[9px] font-bold leading-tight px-1 py-0.5 truncate flex-1 ${
+                          isDone ? 'line-through opacity-70' : ''
+                        }`}
+                        style={{ color: chipText }}
+                      >
+                        {task.title}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* +N more indicator */}
+              {overflow > 0 && (
+                <div
+                  className={`text-[8px] sm:text-[9px] font-black text-center shrink-0 mt-0.5 ${
+                    isSelected ? 'text-white/85' : 'text-slate-500 dark:text-slate-400'
+                  }`}
+                  aria-label={copy.moreAriaLabel(overflow)}
+                >
+                  +{overflow}
+                </div>
+              )}
+            </div>
           );
         })}
       </div>
@@ -369,9 +435,9 @@ export const MonthCalendarView: React.FC<MonthCalendarViewProps> = ({
                       onClick={(e) => {
                         e.stopPropagation();
                         triggerHaptic('light');
-                        onEditTask(task);
+                        onTaskSummary(task);
                       }}
-                      className="flex-1 min-w-0 text-left rtl:text-right cursor-pointer"
+                      className="flex-1 min-w-0 text-start cursor-pointer"
                     >
                       <p
                         className={`text-[12.5px] font-semibold text-slate-800 dark:text-slate-100 leading-tight ${
@@ -384,10 +450,7 @@ export const MonthCalendarView: React.FC<MonthCalendarViewProps> = ({
                       <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                         <span
                           className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold"
-                          style={{
-                            backgroundColor: `${color}18`,
-                            color: color,
-                          }}
+                          style={{ backgroundColor: `${color}18`, color }}
                         >
                           {label}
                         </span>
@@ -402,14 +465,14 @@ export const MonthCalendarView: React.FC<MonthCalendarViewProps> = ({
                         {task.contexts && task.contexts.slice(0, 2).map((ctxId) => {
                           const def = CONTEXT_DEFINITIONS.find((c) => c.id === ctxId);
                           const emoji = def?.emoji ?? '🏷️';
-                          const label = copy.contexts[ctxId] ?? def?.label ?? ctxId;
+                          const labelCtx = copy.contexts[ctxId] ?? def?.label ?? ctxId;
                           return (
                             <span
                               key={ctxId}
                               className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-bold bg-violet-50 dark:bg-violet-950/40 text-violet-700 dark:text-violet-300"
                             >
                               <span>{emoji}</span>
-                              <span>{label}</span>
+                              <span>{labelCtx}</span>
                             </span>
                           );
                         })}

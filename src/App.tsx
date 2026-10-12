@@ -46,6 +46,7 @@ import { ProgressAnalyticsView } from './components/ProgressAnalyticsView';
 import { WeeklyReviewView } from './components/WeeklyReviewView';
 import { NativePackagingHub } from './components/NativePackagingHub';
 import { TaskModal } from './components/TaskModal';
+import { TaskSummarySheet } from './components/TaskSummarySheet';
 import { VoiceTaskModal } from './components/VoiceTaskModal';
 import { PWAInstallModal } from './components/PWAInstallModal';
 import { OfflineIndicator } from './components/OfflineIndicator';
@@ -94,7 +95,7 @@ import {
   getLastSyncAt,
   setLastSyncAt as storeLastSyncAt,
 } from './utils/sync';
-import { scheduleTaskReminders, cancelTaskReminders } from './utils/reminderScheduler';
+import { scheduleTaskReminders, cancelTaskReminders, recomputeReminder } from './utils/reminderScheduler';
 import { Mic } from 'lucide-react';
 import { triggerHaptic } from './utils/haptics';
 
@@ -296,9 +297,6 @@ export default function App() {
     [customTemplates, language]
   );
 
-  // Auto-localize built-in template tasks whenever language changes.
-  // Only touches tasks that came from a built-in template (ID match or
-  // title match). Custom tasks pass through untouched.
   useEffect(() => {
     const next = localizeClonedTasks(tasksRef.current, language as 'en' | 'fr' | 'ar');
     if (next !== tasksRef.current) {
@@ -694,9 +692,6 @@ export default function App() {
     // eslint-disable-next-line
   }, []);
 
-  // Boot-up scheduling: run once per app launch. Two jobs:
-  //  1. Legacy do_first heads-up (scheduleTaskReminder)
-  //  2. Custom user reminders (scheduleTaskReminders)
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
     if (hasSyncedTasksRef.current) return;
@@ -823,6 +818,7 @@ export default function App() {
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [isVoiceModalOpen, setIsVoiceModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [summaryTask, setSummaryTask] = useState<Task | null>(null);
   const [defaultQuadrant, setDefaultQuadrant] = useState<QuadrantId>('do_first');
   const [calendarSelectedDate, setCalendarSelectedDate] = useState<string | null>(null);
   const [pendingDueDate, setPendingDueDate] = useState<string | null>(null);
@@ -1138,6 +1134,34 @@ export default function App() {
     scheduleSync();
   };
 
+  const handleUpdateTaskDueDate = (taskId: string, newDueDateIso: string) => {
+    const now = new Date().toISOString();
+    const task = tasksRef.current.find((t) => t.id === taskId);
+    if (!task) return;
+
+    const recomputedReminders = (task.reminders || []).map((r) =>
+      recomputeReminder(r, newDueDateIso)
+    );
+
+    const updatedTask: Task = {
+      ...task,
+      dueDate: newDueDateIso,
+      reminders: task.reminders && task.reminders.length > 0 ? recomputedReminders : task.reminders,
+      updatedAt: now,
+    };
+
+    setTasks((prev) => prev.map((t) => (t.id === taskId ? updatedTask : t)));
+
+    void cancelTaskReminder(taskId);
+    void cancelTaskReminders(taskId);
+    void scheduleTaskReminder(updatedTask);
+    if (updatedTask.reminders && updatedTask.reminders.length > 0) {
+      void scheduleTaskReminders(updatedTask, userId);
+    }
+
+    scheduleSync();
+  };
+
   const handleImportTasks = (newTasks: Task[], mode: 'replace' | 'append') => {
     const now = new Date().toISOString();
     const stamped = newTasks.map((t) => ({ ...t, updatedAt: t.updatedAt || now }));
@@ -1244,6 +1268,15 @@ export default function App() {
   };
 
   const handleEditTask = (task: Task) => { setEditingTask(task); setIsTaskModalOpen(true); };
+
+  // Called from TaskSummarySheet's "Edit" button — closes summary, opens edit modal
+  const handleSummaryEdit = (task: Task) => {
+    setSummaryTask(null);
+    // Small delay so the sheet animates out before the modal slides up
+    setTimeout(() => {
+      handleEditTask(task);
+    }, 180);
+  };
 
   const handleSaveHabit = (habitData: Omit<Habit, 'id' | 'createdAt'> & { id?: string }) => {
     const now = new Date().toISOString();
@@ -1377,8 +1410,6 @@ export default function App() {
     scheduleSync();
   };
 
-  // ─── PROJECTS ───
-
   const handleNewProject = () => {
     setEditingProject(null);
     setIsProjectModalOpen(true);
@@ -1416,11 +1447,9 @@ export default function App() {
 
   const handleDeleteProject = (id: string) => {
     const now = new Date().toISOString();
-    // Soft-delete the project
     setProjects((prev) =>
       prev.map((p) => (p.id === id ? { ...p, deletedAt: now, updatedAt: now } : p))
     );
-    // Un-assign tasks pointing to this project — prevents orphans once GC runs
     setTasks((prev) =>
       prev.map((t) =>
         t.projectId === id ? { ...t, projectId: undefined, updatedAt: now } : t
@@ -1433,11 +1462,6 @@ export default function App() {
   const completedCount = visibleTasks.filter((t) => t.status === 'completed').length;
   const urgentCount = visibleTasks.filter((t) => t.quadrant === 'do_first' && t.status !== 'completed').length;
 
-  // ─────────────────────────────────────────────────────────────
-  //  IMPORTANT: QuickAddBar only on 'matrix'.
-  //  PriorityListView has its OWN quick-add + voice + search bar.
-  //  Showing this one on 'list' creates 3 stacked bars.
-  // ─────────────────────────────────────────────────────────────
   const showQuickAdd = activeTab === 'matrix';
 
   useEffect(() => {
@@ -1690,8 +1714,9 @@ export default function App() {
                 activeSubTab={activeTab as 'timeline' | 'calendar' | 'flow'}
                 onChangeSubTab={(sub) => setActiveTab(sub)}
                 onToggleStatus={handleToggleStatus}
-                onEditTask={handleEditTask}
+                onTaskSummary={setSummaryTask}
                 onDateSelect={handleCalendarDateSelect}
+                onUpdateTaskDueDate={handleUpdateTaskDueDate}
               />
             )}
             {activeTab === 'analytics' && <ProgressAnalyticsView tasks={visibleTasks} />}
@@ -1823,6 +1848,15 @@ export default function App() {
         onShareTask={handleShareTask}
         templates={allTemplates}
         onDeleteTemplate={handleDeleteTemplate}
+        projects={visibleProjects}
+      />
+
+      <TaskSummarySheet
+        isOpen={!!summaryTask}
+        task={summaryTask}
+        onClose={() => setSummaryTask(null)}
+        onEdit={handleSummaryEdit}
+        onToggleComplete={handleToggleStatus}
         projects={visibleProjects}
       />
 

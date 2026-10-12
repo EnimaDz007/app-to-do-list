@@ -7,7 +7,10 @@ import { useLanguage } from '../context/LanguageContext';
 interface FlowTimelineViewProps {
   tasks: Task[];
   onToggleStatus: (taskId: string) => void;
-  onEditTask: (task: Task) => void;
+  /** Opens the read-only summary sheet. */
+  onTaskSummary: (task: Task) => void;
+  /** Called after a drag-drop commits. If not provided, drag is disabled. */
+  onUpdateTaskDueDate?: (taskId: string, newDueDateIso: string) => void;
 }
 
 type LocalLang = 'en' | 'fr' | 'ar';
@@ -19,10 +22,15 @@ const QUADRANT_COLORS: Record<QuadrantId, { color: string; colorLight: string; e
   eliminate: { color: '#64748B', colorLight: '#94A3B8', emoji: '🗑️' },
 };
 
-const HOUR_WIDTH = 48;
-const DAY_HEIGHT = 46;
-const RULER_HEIGHT = 26;
+const HOUR_WIDTH = 160;
+const DAY_HEIGHT = 72;
+const RULER_HEIGHT = 32;
 const TOTAL_WIDTH = 24 * HOUR_WIDTH;
+const MIN_BAR_WIDTH = 64;
+
+const LONG_PRESS_MS = 180;
+const MOVE_CANCEL_PX = 6;
+const SNAP_MINUTES = 15;
 
 const COPY: Record<LocalLang, {
   locale: string;
@@ -103,14 +111,40 @@ function formatHourLabel(h: number, lang: LocalLang): string {
   return `${h - 12}p`;
 }
 
+function formatTimeLabel(minuteOfDay: number, locale: string): string {
+  const h = Math.floor(minuteOfDay / 60);
+  const m = minuteOfDay % 60;
+  const d = new Date();
+  d.setHours(h, m, 0, 0);
+  try {
+    return d.toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit' });
+  } catch {
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  }
+}
+
 function dayKey(d: Date): string {
   return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
 }
 
+type DragState = {
+  taskId: string;
+  title: string;
+  emoji: string;
+  color: string;
+  durationMinutes: number;
+  grabOffsetMinutes: number;
+  clientX: number;
+  clientY: number;
+  targetDayIndex: number;
+  targetMinuteOfDay: number;
+};
+
 export const FlowTimelineView: React.FC<FlowTimelineViewProps> = ({
   tasks,
   onToggleStatus,
-  onEditTask,
+  onTaskSummary,
+  onUpdateTaskDueDate,
 }) => {
   const { language } = useLanguage();
   const lang = (language as LocalLang) || 'en';
@@ -122,6 +156,22 @@ export const FlowTimelineView: React.FC<FlowTimelineViewProps> = ({
 
   const [weekOffset, setWeekOffset] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  const daysGridRef = useRef<HTMLDivElement>(null);
+  const [drag, setDrag] = useState<DragState | null>(null);
+  const pressRef = useRef<{
+    taskId: string;
+    pointerId: number;
+    target: HTMLElement;
+    startX: number;
+    startY: number;
+    grabOffsetMinutes: number;
+    task: Task;
+  } | null>(null);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wasDraggingRef = useRef(false);
+  const rafRef = useRef<number | null>(null);
+  const pendingMoveRef = useRef<{ clientX: number; clientY: number } | null>(null);
 
   const weekStart = useMemo(() => {
     const d = new Date(today);
@@ -212,9 +262,165 @@ export const FlowTimelineView: React.FC<FlowTimelineViewProps> = ({
     setWeekOffset(0);
   };
 
+  const computeTarget = (
+    clientX: number,
+    clientY: number,
+    grabOffsetMinutes: number,
+  ): { dayIndex: number; minuteOfDay: number } => {
+    const grid = daysGridRef.current;
+    if (!grid) return { dayIndex: 0, minuteOfDay: 0 };
+    const rect = grid.getBoundingClientRect();
+    const relX = clientX - rect.left;
+    const relY = clientY - rect.top;
+
+    const dayIndex = Math.max(0, Math.min(6, Math.floor(relY / DAY_HEIGHT)));
+
+    const rawMinute = (relX / HOUR_WIDTH) * 60 - grabOffsetMinutes;
+    const snapped = Math.round(rawMinute / SNAP_MINUTES) * SNAP_MINUTES;
+    const clamped = Math.max(0, Math.min(24 * 60 - SNAP_MINUTES, snapped));
+
+    return { dayIndex, minuteOfDay: clamped };
+  };
+
+  const handlePointerDown = (task: Task, e: React.PointerEvent<HTMLButtonElement>) => {
+    if (!onUpdateTaskDueDate) return;
+    if (task.status === 'completed') return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+
+    const due = new Date(task.dueDate);
+    if (isNaN(due.getTime())) return;
+
+    const barRect = e.currentTarget.getBoundingClientRect();
+    const fraction = barRect.width > 0 ? (e.clientX - barRect.left) / barRect.width : 0;
+    const duration = Math.max(15, task.estimatedMinutes || 30);
+    const grabOffsetMinutes = Math.max(0, Math.min(duration, fraction * duration));
+
+    pressRef.current = {
+      taskId: task.id,
+      pointerId: e.pointerId,
+      target: e.currentTarget,
+      startX: e.clientX,
+      startY: e.clientY,
+      grabOffsetMinutes,
+      task,
+    };
+
+    if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+    longPressTimerRef.current = setTimeout(() => {
+      const press = pressRef.current;
+      if (!press) return;
+      try {
+        press.target.setPointerCapture(press.pointerId);
+      } catch { /* noop */ }
+
+      triggerHaptic('medium');
+      wasDraggingRef.current = true;
+
+      const meta = QUADRANT_COLORS[press.task.quadrant];
+      const pressDue = new Date(press.task.dueDate);
+      const startMinute = pressDue.getHours() * 60 + pressDue.getMinutes();
+      const initial = computeTarget(press.startX, press.startY, press.grabOffsetMinutes);
+
+      setDrag({
+        taskId: press.task.id,
+        title: press.task.title,
+        emoji: meta.emoji,
+        color: meta.color,
+        durationMinutes: Math.max(15, press.task.estimatedMinutes || 30),
+        grabOffsetMinutes: press.grabOffsetMinutes,
+        clientX: press.startX,
+        clientY: press.startY,
+        targetDayIndex: initial.dayIndex,
+        targetMinuteOfDay: initial.minuteOfDay === 0 ? startMinute : initial.minuteOfDay,
+      });
+    }, LONG_PRESS_MS);
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLButtonElement>) => {
+    const press = pressRef.current;
+
+    if (!drag) {
+      if (!press) return;
+      const dx = Math.abs(e.clientX - press.startX);
+      const dy = Math.abs(e.clientY - press.startY);
+      if (dx > MOVE_CANCEL_PX || dy > MOVE_CANCEL_PX) {
+        if (longPressTimerRef.current) {
+          clearTimeout(longPressTimerRef.current);
+          longPressTimerRef.current = null;
+        }
+        pressRef.current = null;
+      }
+      return;
+    }
+
+    pendingMoveRef.current = { clientX: e.clientX, clientY: e.clientY };
+    if (rafRef.current != null) return;
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null;
+      const p = pendingMoveRef.current;
+      if (!p) return;
+      setDrag((prev) => {
+        if (!prev) return prev;
+        const t = computeTarget(p.clientX, p.clientY, prev.grabOffsetMinutes);
+        return {
+          ...prev,
+          clientX: p.clientX,
+          clientY: p.clientY,
+          targetDayIndex: t.dayIndex,
+          targetMinuteOfDay: t.minuteOfDay,
+        };
+      });
+    });
+  };
+
+  const handlePointerUp = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+
+    const press = pressRef.current;
+    pressRef.current = null;
+
+    if (!drag) return;
+    if (!press) { setDrag(null); return; }
+
+    const day = weekDays[drag.targetDayIndex];
+    if (!day) { setDrag(null); return; }
+
+    const newDate = new Date(day);
+    newDate.setHours(
+      Math.floor(drag.targetMinuteOfDay / 60),
+      drag.targetMinuteOfDay % 60,
+      0,
+      0,
+    );
+
+    try { press.target.releasePointerCapture(e.pointerId); } catch { /* noop */ }
+
+    triggerHaptic('success');
+    onUpdateTaskDueDate?.(drag.taskId, newDate.toISOString());
+    setDrag(null);
+
+    setTimeout(() => { wasDraggingRef.current = false; }, 400);
+  };
+
+  const handlePointerCancel = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    pressRef.current = null;
+    if (drag) {
+      setDrag(null);
+      wasDraggingRef.current = false;
+    }
+  };
+
   const handleBarClick = (task: Task) => {
+    if (wasDraggingRef.current) return;
     triggerHaptic('light');
-    onEditTask(task);
+    onTaskSummary(task);
   };
 
   return (
@@ -260,7 +466,7 @@ export const FlowTimelineView: React.FC<FlowTimelineViewProps> = ({
 
       <div className="rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs">
         <div className="flex">
-          <div className="w-12 shrink-0 border-r border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/80">
+          <div className="w-14 shrink-0 border-r border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/80">
             <div style={{ height: RULER_HEIGHT }} />
             {weekDays.map((d, i) => {
               const isToday = i === todayIdx;
@@ -277,7 +483,7 @@ export const FlowTimelineView: React.FC<FlowTimelineViewProps> = ({
                   }`}>
                     {copy.weekDayShort(d)}
                   </span>
-                  <span className={`text-[11px] font-bold ${
+                  <span className={`text-[12px] font-bold ${
                     isToday ? 'text-indigo-700 dark:text-indigo-300' : 'text-slate-700 dark:text-slate-300'
                   }`}>
                     {d.getDate()}
@@ -299,8 +505,8 @@ export const FlowTimelineView: React.FC<FlowTimelineViewProps> = ({
                     className="absolute top-0 bottom-0 flex items-center justify-center"
                     style={{ left: h * HOUR_WIDTH, width: HOUR_WIDTH }}
                   >
-                    {h % 3 === 0 && (
-                      <span className="text-[9px] font-bold text-slate-400 dark:text-slate-500">
+                    {h % 2 === 0 && (
+                      <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500">
                         {formatHourLabel(h, lang)}
                       </span>
                     )}
@@ -308,7 +514,7 @@ export const FlowTimelineView: React.FC<FlowTimelineViewProps> = ({
                 ))}
               </div>
 
-              <div className="relative">
+              <div ref={daysGridRef} className="relative">
                 {nowLine !== null && (
                   <div
                     className="absolute top-0 bottom-0 w-0.5 bg-rose-500 z-20 pointer-events-none"
@@ -322,6 +528,7 @@ export const FlowTimelineView: React.FC<FlowTimelineViewProps> = ({
                   const key = dayKey(d);
                   const dayTasks = tasksByDay[key] || [];
                   const isToday = dayIdx === todayIdx;
+                  const isDragTarget = !!drag && drag.targetDayIndex === dayIdx;
                   return (
                     <div
                       key={dayIdx}
@@ -334,7 +541,7 @@ export const FlowTimelineView: React.FC<FlowTimelineViewProps> = ({
                         <div
                           key={h}
                           className={`absolute top-0 bottom-0 border-l ${
-                            h % 3 === 0
+                            h % 2 === 0
                               ? 'border-slate-200 dark:border-slate-700/60'
                               : 'border-slate-100 dark:border-slate-800/40'
                           }`}
@@ -349,33 +556,65 @@ export const FlowTimelineView: React.FC<FlowTimelineViewProps> = ({
                         const startMinute = due.getHours() * 60 + due.getMinutes();
                         const duration = Math.max(15, task.estimatedMinutes || 30);
                         const left = (startMinute / 60) * HOUR_WIDTH;
-                        const width = Math.max(28, (duration / 60) * HOUR_WIDTH);
+                        const width = Math.max(MIN_BAR_WIDTH, (duration / 60) * HOUR_WIDTH);
                         const isDone = task.status === 'completed';
+                        const isBeingDragged = drag?.taskId === task.id;
+                        const timeLabel = due.toLocaleTimeString(copy.locale, { hour: 'numeric', minute: '2-digit' });
 
                         return (
                           <button
                             key={task.id}
+                            onPointerDown={(e) => handlePointerDown(task, e)}
+                            onPointerMove={handlePointerMove}
+                            onPointerUp={handlePointerUp}
+                            onPointerCancel={handlePointerCancel}
                             onClick={() => handleBarClick(task)}
-                            title={`${task.title} · ${due.toLocaleTimeString(copy.locale, { hour: 'numeric', minute: '2-digit' })} · ${duration} min`}
-                            className="absolute top-1.5 rounded-md text-left rtl:text-right transition-all hover:z-10 hover:scale-[1.02] active:scale-95 cursor-pointer"
+                            draggable={false}
+                            onDragStart={(e) => e.preventDefault()}
+                            title={`${task.title} · ${timeLabel} · ${duration} min`}
+                            className="absolute top-1.5 rounded-lg text-left rtl:text-right transition-all hover:z-10 hover:scale-[1.01] active:scale-[0.99] cursor-pointer select-none overflow-hidden"
                             style={{
                               left,
                               width,
                               height: DAY_HEIGHT - 12,
                               backgroundColor: meta.color,
-                              opacity: isDone ? 0.45 : 0.95,
-                              boxShadow: `0 2px 8px ${meta.color}55`,
+                              opacity: isBeingDragged ? 0.2 : (isDone ? 0.5 : 1),
+                              boxShadow: isBeingDragged ? 'none' : `0 2px 8px ${meta.color}55`,
+                              touchAction: 'manipulation',
                             }}
                           >
-                            <div className="h-full flex items-center gap-1 px-1.5 overflow-hidden">
-                              <span className="text-[9px] shrink-0">{meta.emoji}</span>
-                              <span className={`text-[10px] font-bold text-white truncate ${isDone ? 'line-through' : ''}`}>
-                                {task.title}
-                              </span>
+                            <div className="h-full w-full flex flex-col justify-center px-2 overflow-hidden pointer-events-none">
+                              <div className="flex items-center gap-1 min-w-0">
+                                <span className="text-[10px] shrink-0 leading-none">{meta.emoji}</span>
+                                <span
+                                  className={`text-[11px] font-bold text-white truncate leading-tight ${
+                                    isDone ? 'line-through opacity-80' : ''
+                                  }`}
+                                >
+                                  {task.title}
+                                </span>
+                              </div>
+                              <div className="text-[9px] font-semibold text-white/85 truncate mt-0.5 tabular-nums leading-tight">
+                                {timeLabel} · {duration}m
+                              </div>
                             </div>
                           </button>
                         );
                       })}
+
+                      {isDragTarget && drag && (
+                        <div
+                          className="absolute top-1.5 rounded-lg pointer-events-none z-30"
+                          style={{
+                            left: (drag.targetMinuteOfDay / 60) * HOUR_WIDTH,
+                            width: Math.max(MIN_BAR_WIDTH, (drag.durationMinutes / 60) * HOUR_WIDTH),
+                            height: DAY_HEIGHT - 12,
+                            backgroundColor: `${drag.color}33`,
+                            border: `2px dashed ${drag.color}`,
+                            boxShadow: `0 0 0 3px ${drag.color}22`,
+                          }}
+                        />
+                      )}
                     </div>
                   );
                 })}
@@ -505,6 +744,29 @@ export const FlowTimelineView: React.FC<FlowTimelineViewProps> = ({
           </div>
         )}
       </div>
+
+      {drag && (
+        <div
+          className="fixed z-[100] pointer-events-none select-none"
+          style={{
+            left: drag.clientX + 14,
+            top: drag.clientY - 12,
+          }}
+        >
+          <div
+            className="px-2.5 py-1.5 rounded-lg shadow-2xl text-white text-[11px] font-bold flex items-center gap-1.5 whitespace-nowrap"
+            style={{ backgroundColor: drag.color }}
+          >
+            <span>{drag.emoji}</span>
+            <span className="truncate max-w-[140px]">{drag.title}</span>
+          </div>
+          <div className="mt-1 px-2 py-0.5 rounded-md bg-slate-900/95 dark:bg-black/90 text-white text-[10px] font-black tabular-nums whitespace-nowrap shadow-lg inline-block">
+            {formatTimeLabel(drag.targetMinuteOfDay, copy.locale)}
+            {' · '}
+            {weekDays[drag.targetDayIndex]?.toLocaleDateString(copy.locale, { weekday: 'short', day: 'numeric' })}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

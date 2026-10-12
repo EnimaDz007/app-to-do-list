@@ -15,9 +15,10 @@ interface CalendarHubViewProps {
   activeSubTab: SubTab;
   onChangeSubTab: (tab: SubTab) => void;
   onToggleStatus: (taskId: string) => void;
-  onEditTask: (task: Task) => void;
-  /** Reports the day selected inside MonthCalendarView up to App */
+  /** Opens the read-only summary sheet. */
+  onTaskSummary: (task: Task) => void;
   onDateSelect?: (dateKey: string) => void;
+  onUpdateTaskDueDate?: (taskId: string, newDueDateIso: string) => void;
 }
 
 const COPY: Record<LocalLang, {
@@ -35,8 +36,9 @@ export const CalendarHubView: React.FC<CalendarHubViewProps> = ({
   activeSubTab,
   onChangeSubTab,
   onToggleStatus,
-  onEditTask,
+  onTaskSummary,
   onDateSelect,
+  onUpdateTaskDueDate,
 }) => {
   const { language } = useLanguage();
   const lang = (language as LocalLang) || 'en';
@@ -54,7 +56,6 @@ export const CalendarHubView: React.FC<CalendarHubViewProps> = ({
 
   return (
     <div className="w-full flex flex-col">
-      {/* Sub-tab switcher */}
       <div className="mb-3 flex items-center justify-center">
         <div className="inline-flex rounded-xl bg-slate-100 dark:bg-slate-800 p-1 gap-1 shadow-xs">
           {SUB_TABS.map((sub) => {
@@ -82,7 +83,6 @@ export const CalendarHubView: React.FC<CalendarHubViewProps> = ({
         </div>
       </div>
 
-      {/* Content */}
       {activeSubTab === 'timeline' && (
         <DailyTimelineView tasks={tasks} onToggleStatus={onToggleStatus} />
       )}
@@ -90,7 +90,7 @@ export const CalendarHubView: React.FC<CalendarHubViewProps> = ({
         <MonthCalendarView
           tasks={tasks}
           onToggleStatus={onToggleStatus}
-          onEditTask={onEditTask}
+          onTaskSummary={onTaskSummary}
           onDateSelect={onDateSelect}
         />
       )}
@@ -98,7 +98,8 @@ export const CalendarHubView: React.FC<CalendarHubViewProps> = ({
         <FlowTimelineView
           tasks={tasks}
           onToggleStatus={onToggleStatus}
-          onEditTask={onEditTask}
+          onTaskSummary={onTaskSummary}
+          onUpdateTaskDueDate={onUpdateTaskDueDate}
         />
       )}
     </div>
