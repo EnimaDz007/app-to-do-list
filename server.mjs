@@ -27,6 +27,7 @@ const syncTasksCollection = db.collection('syncTasks');
 const syncHabitsCollection = db.collection('syncHabits');
 const syncHabitCheckinsCollection = db.collection('syncHabitCheckins');
 const syncMilestonesCollection = db.collection('syncMilestones');
+const syncProjectsCollection = db.collection('syncProjects');
 
 const app = express();
 app.use(cors({ origin: '*' }));
@@ -543,11 +544,12 @@ app.get('/api/sync/:userId/full', async (req, res) => {
     const serverTime = new Date().toISOString();
     const sinceTs = since ? new Date(since).getTime() : 0;
 
-    const [tasksSnap, habitsSnap, checkInsSnap, milestonesSnap] = await Promise.all([
+    const [tasksSnap, habitsSnap, checkInsSnap, milestonesSnap, projectsSnap] = await Promise.all([
       syncTasksCollection.where('externalId', '==', userId).get(),
       syncHabitsCollection.where('externalId', '==', userId).get(),
       syncHabitCheckinsCollection.where('externalId', '==', userId).get(),
       syncMilestonesCollection.where('externalId', '==', userId).get(),
+      syncProjectsCollection.where('externalId', '==', userId).get(),
     ]);
 
     const filterSince = (snap) => {
@@ -564,16 +566,18 @@ app.get('/api/sync/:userId/full', async (req, res) => {
     const habits = filterSince(habitsSnap);
     const checkIns = filterSince(checkInsSnap);
     const milestones = filterSince(milestonesSnap);
+    const projects = filterSince(projectsSnap);
 
-    console.log(`📤 syncPullAll: user=${userId} since=${since || 'first'} → tasks:${tasks.length} habits:${habits.length} checkins:${checkIns.length} milestones:${milestones.length}`);
+    console.log(`📤 syncPullAll: user=${userId} since=${since || 'first'} → tasks:${tasks.length} habits:${habits.length} checkins:${checkIns.length} milestones:${milestones.length} projects:${projects.length}`);
     res.json({
       success: true,
       tasks,
       habits,
       checkIns,
       milestones,
+      projects,
       serverTime,
-      count: tasks.length + habits.length + checkIns.length + milestones.length,
+      count: tasks.length + habits.length + checkIns.length + milestones.length + projects.length,
     });
   } catch (err) {
     console.error('❌ syncPullAll failed:', err);
@@ -583,7 +587,7 @@ app.get('/api/sync/:userId/full', async (req, res) => {
 
 app.post('/api/sync/:userId/full', async (req, res) => {
   const { userId } = req.params;
-  const { tasks = [], habits = [], checkIns = [], milestones = [] } = req.body || {};
+  const { tasks = [], habits = [], checkIns = [], milestones = [], projects = [] } = req.body || {};
   if (!userId) return res.status(400).json({ error: 'userId required' });
 
   try {
@@ -593,6 +597,7 @@ app.post('/api/sync/:userId/full', async (req, res) => {
       { items: habits, collection: syncHabitsCollection },
       { items: checkIns, collection: syncHabitCheckinsCollection },
       { items: milestones, collection: syncMilestonesCollection },
+      { items: projects, collection: syncProjectsCollection },
     ];
 
     const ops = [];
@@ -791,6 +796,7 @@ async function garbageCollectTombstones() {
       { name: 'habits', coll: syncHabitsCollection },
       { name: 'checkins', coll: syncHabitCheckinsCollection },
       { name: 'milestones', coll: syncMilestonesCollection },
+      { name: 'projects', coll: syncProjectsCollection },
     ];
 
     let totalDeleted = 0;

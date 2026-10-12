@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { X, Save, Clock, Mic, Repeat, Calendar, Tag, Check, Share2, LayoutTemplate, Wand2, Sparkles } from 'lucide-react';
-import { Task, TaskReminder, Subtask, Template, QuadrantId, TaskCategory, PriorityLevel, Recurrence, RecurrenceFrequency, CONTEXT_DEFINITIONS } from '../types';
+import { X, Save, Clock, Mic, Repeat, Calendar, Tag, Check, Share2, LayoutTemplate, Wand2, Sparkles, Folder } from 'lucide-react';
+import { Task, TaskReminder, Subtask, Template, QuadrantId, TaskCategory, PriorityLevel, Recurrence, RecurrenceFrequency, CONTEXT_DEFINITIONS, Project } from '../types';
 import { QUADRANT_CONFIGS } from '../data/initialTasks';
 import { triggerHaptic } from '../utils/haptics';
 import { useLanguage } from '../context/LanguageContext';
@@ -24,6 +24,8 @@ interface TaskModalProps {
   onShareTask?: (task: Task) => void;
   templates?: Template[];
   onDeleteTemplate?: (templateId: string) => void;
+  /** Optional — pass your user's projects so tasks can be assigned to one. */
+  projects?: Project[];
 }
 
 type LocalLang = 'en' | 'fr' | 'ar';
@@ -54,6 +56,8 @@ const COPY: Record<LocalLang, {
   monthS: string;
   yearS: string;
   categoryLabel: string;
+  projectLabel: string;
+  projectNone: string;
   estTime: string;
   saveTask: string;
   createTask: string;
@@ -106,6 +110,8 @@ const COPY: Record<LocalLang, {
     monthS: 'month(s)',
     yearS: 'year(s)',
     categoryLabel: 'Category',
+    projectLabel: 'Project',
+    projectNone: '— No project —',
     estTime: 'Est. Time (min)',
     saveTask: 'Save Task',
     createTask: 'Add Task',
@@ -158,6 +164,8 @@ const COPY: Record<LocalLang, {
     monthS: 'mois',
     yearS: 'an(s)',
     categoryLabel: 'Catégorie',
+    projectLabel: 'Projet',
+    projectNone: '— Aucun projet —',
     estTime: 'Temps estimé (min)',
     saveTask: 'Enregistrer',
     createTask: 'Ajouter',
@@ -210,6 +218,8 @@ const COPY: Record<LocalLang, {
     monthS: 'شهر',
     yearS: 'سنة',
     categoryLabel: 'التصنيف',
+    projectLabel: 'المشروع',
+    projectNone: '— بدون مشروع —',
     estTime: 'الوقت المقدر (بالدقائق)',
     saveTask: 'حفظ المهمة',
     createTask: 'إضافة المهمة',
@@ -291,7 +301,7 @@ function makeRecurrence(freq: RecurrenceFrequency | null, dueDateStr: string): R
 
 export const TaskModal: React.FC<TaskModalProps> = ({
   isOpen, onClose, onSaveTask, editingTask, defaultQuadrant = 'do_first', defaultDueDate, onShareTask,
-  templates = [], onDeleteTemplate,
+  templates = [], onDeleteTemplate, projects = [],
 }) => {
   const { language, t } = useLanguage();
   const lang = (language as LocalLang) || 'en';
@@ -308,6 +318,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
   const [contexts, setContexts] = useState<string[]>([]);
   const [subtasks, setSubtasks] = useState<Subtask[]>([]);
   const [reminders, setReminders] = useState<TaskReminder[]>([]);
+  const [projectId, setProjectId] = useState<string>('');
   const [appliedTemplateName, setAppliedTemplateName] = useState<string | null>(null);
   const [isTemplatePickerOpen, setIsTemplatePickerOpen] = useState(false);
   const [autoFilled, setAutoFilled] = useState(false);
@@ -322,6 +333,12 @@ export const TaskModal: React.FC<TaskModalProps> = ({
   } = useSpeechRecognition(true);
 
   const speechLangMap: Record<string, string> = { en: 'en-US', fr: 'fr-FR', ar: 'ar-SA' };
+
+  // Visible projects only (no tombstones, no archived)
+  const visibleProjects = useMemo(
+    () => projects.filter((p) => !p.deletedAt && !p.archivedAt),
+    [projects]
+  );
 
   const quickAddPreview = useMemo(() => {
     if (!title.trim() || title.trim().length < 4) return null;
@@ -358,6 +375,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
       setContexts(editingTask.contexts || []);
       setSubtasks(editingTask.subtasks || []);
       setReminders(editingTask.reminders || []);
+      setProjectId(editingTask.projectId || '');
       setDueDate(() => {
         const d = editingTask.dueDate ? new Date(editingTask.dueDate) : new Date(Date.now() + 15 * 60000);
         if (isNaN(d.getTime())) return dateToLocalInputString(new Date(Date.now() + 15 * 60000));
@@ -373,6 +391,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
       setContexts([]);
       setSubtasks([]);
       setReminders([]);
+      setProjectId('');
       setDueDate(() => {
         if (defaultDueDate) {
           const isToday = defaultDueDate === dateToLocalInputString(new Date()).slice(0, 10);
@@ -513,6 +532,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
       contexts: contexts.length > 0 ? contexts : undefined,
       subtasks: subtasks.length > 0 ? subtasks : undefined,
       reminders: reminders.length > 0 ? reminders : undefined,
+      projectId: projectId || undefined,
       delegateId: editingTask?.delegateId,
       delegateStatus: editingTask?.delegateStatus,
       delegateCompletedBy: editingTask?.delegateCompletedBy,
@@ -550,6 +570,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
   const subtaskCount = countTemplateSubtasks(subtasks);
   const showTemplateButton = !editingTask && templates.length > 0;
   const showSmartHint = !editingTask && !title.trim() && titleFocused;
+  const showProjectPicker = visibleProjects.length > 0;
 
   return (
     <>
@@ -884,6 +905,32 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                 </span>
               </p>
             </div>
+
+            {showProjectPicker && (
+              <div>
+                <label className="block font-medium text-slate-700 dark:text-slate-300 mb-1">
+                  <span className="flex items-center gap-1">
+                    <Folder className="w-3.5 h-3.5 text-amber-500" />
+                    <span>{copy.projectLabel}</span>
+                  </span>
+                </label>
+                <select
+                  value={projectId}
+                  onChange={(e) => {
+                    triggerHaptic('light');
+                    setProjectId(e.target.value);
+                  }}
+                  className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500 cursor-pointer"
+                >
+                  <option value="">{copy.projectNone}</option>
+                  {visibleProjects.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.emoji}  {p.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             <div className="grid grid-cols-2 gap-3">
               <div>

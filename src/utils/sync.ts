@@ -1,11 +1,11 @@
 // ─────────────────────────────────────────────────────────────
 //  FILE: src/utils/sync.ts
-//  Two-way sync for tasks, habits, check-ins, and milestones.
+//  Two-way sync for tasks, habits, check-ins, milestones, and projects.
 //  Pull changes since last sync, merge by updatedAt (LWW),
-//  push local changes back. All 4 types in one round trip.
+//  push local changes back. All 5 types in one round trip.
 // ─────────────────────────────────────────────────────────────
 
-import { Task, Habit, HabitCheckIn, Milestone } from '../types';
+import { Task, Habit, HabitCheckIn, Milestone, Project } from '../types';
 
 const SERVER_URL = 'https://task-priority-server-pir6.onrender.com';
 
@@ -68,7 +68,7 @@ function pickToPush<T extends Syncable>(local: T[], remote: T[]): T[] {
 }
 
 // ─────────────────────────────────────────────────────────────
-//  Full sync — tasks + habits + checkIns + milestones
+//  Full sync — tasks + habits + checkIns + milestones + projects
 // ─────────────────────────────────────────────────────────────
 
 export type SyncAllInput = {
@@ -76,6 +76,7 @@ export type SyncAllInput = {
   habits: Habit[];
   checkIns: HabitCheckIn[];
   milestones: Milestone[];
+  projects: Project[];
 };
 
 export type SyncAllResult = {
@@ -83,6 +84,7 @@ export type SyncAllResult = {
   habits: Habit[];
   checkIns: HabitCheckIn[];
   milestones: Milestone[];
+  projects: Project[];
   serverTime: string;
   pushed: number;
   pulled: number;
@@ -100,6 +102,7 @@ export async function syncAll(
   let remoteHabits: Habit[] = [];
   let remoteCheckIns: HabitCheckIn[] = [];
   let remoteMilestones: Milestone[] = [];
+  let remoteProjects: Project[] = [];
   let serverTime = new Date().toISOString();
 
   try {
@@ -114,6 +117,7 @@ export async function syncAll(
     remoteHabits = (data.habits || []) as Habit[];
     remoteCheckIns = (data.checkIns || []) as HabitCheckIn[];
     remoteMilestones = (data.milestones || []) as Milestone[];
+    remoteProjects = (data.projects || []) as Project[];
     serverTime = data.serverTime || serverTime;
   } catch {
     return null; // offline — leave local as-is
@@ -124,16 +128,18 @@ export async function syncAll(
   const mergedHabits = mergeById(local.habits, remoteHabits);
   const mergedCheckIns = mergeById(local.checkIns, remoteCheckIns);
   const mergedMilestones = mergeById(local.milestones, remoteMilestones);
+  const mergedProjects = mergeById(local.projects, remoteProjects);
 
   // ── 3. Determine what to push (per type) ──
   const tasksToPush = pickToPush(local.tasks, remoteTasks);
   const habitsToPush = pickToPush(local.habits, remoteHabits);
   const checkInsToPush = pickToPush(local.checkIns, remoteCheckIns);
   const milestonesToPush = pickToPush(local.milestones, remoteMilestones);
+  const projectsToPush = pickToPush(local.projects, remoteProjects);
 
   const totalPush =
     tasksToPush.length + habitsToPush.length +
-    checkInsToPush.length + milestonesToPush.length;
+    checkInsToPush.length + milestonesToPush.length + projectsToPush.length;
 
   // ── 4. PUSH (single batch call, or skip if nothing to push) ──
   let pushed = 0;
@@ -147,6 +153,7 @@ export async function syncAll(
           habits: habitsToPush,
           checkIns: checkInsToPush,
           milestones: milestonesToPush,
+          projects: projectsToPush,
         }),
       });
       if (res.ok) {
@@ -162,12 +169,15 @@ export async function syncAll(
   setLastSyncAt(userId, serverTime);
 
   // ── 6. Return merged (tombstones included; caller filters for UI) ──
-  const pulled = remoteTasks.length + remoteHabits.length + remoteCheckIns.length + remoteMilestones.length;
+  const pulled =
+    remoteTasks.length + remoteHabits.length + remoteCheckIns.length +
+    remoteMilestones.length + remoteProjects.length;
   return {
     tasks: mergedTasks,
     habits: mergedHabits,
     checkIns: mergedCheckIns,
     milestones: mergedMilestones,
+    projects: mergedProjects,
     serverTime,
     pushed,
     pulled,
@@ -192,6 +202,7 @@ export async function syncTasks(userId: string, localTasks: Task[]): Promise<Leg
     habits: [],
     checkIns: [],
     milestones: [],
+    projects: [],
   });
   if (!result) return null;
   return {

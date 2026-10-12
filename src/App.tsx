@@ -14,7 +14,7 @@ import { Capacitor, registerPlugin } from '@capacitor/core';
 import { PushNotifications } from '@capacitor/push-notifications';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { useDevicePerformance } from './hooks/useDevicePerformance';
-import { Task, TabView, DeviceFrameMode, QuadrantId, Habit, HabitCheckIn, Milestone, DelegateStatus, Subtask, Template } from './types';
+import { Task, TabView, DeviceFrameMode, QuadrantId, Habit, HabitCheckIn, Milestone, DelegateStatus, Subtask, Template, Project } from './types';
 import { INITIAL_TASKS } from './data/initialTasks';
 import { getDefaultTemplates, localizeClonedTasks } from './data/defaultTemplates';
 import { loadTemplates, saveTemplates, makeTemplateFromTask } from './utils/templateHelpers';
@@ -59,6 +59,8 @@ import { MilestoneBanner } from './components/MilestoneBanner';
 import { MilestoneModal } from './components/MilestoneModal';
 import { DelegateShareModal } from './components/DelegateShareModal';
 import { QuickAddBar } from './components/QuickAddBar';
+import { ProjectModal, ProjectFormData } from './components/ProjectModal';
+import { ProjectsView } from './components/ProjectsView';
 import { useTheme } from './context/ThemeContext';
 import { useLanguage } from './context/LanguageContext';
 import {
@@ -100,6 +102,7 @@ const STORAGE_KEY = 'taskflow_tasks_list';
 const HABITS_STORAGE_KEY = 'taskflow_habits_list';
 const CHECKINS_STORAGE_KEY = 'taskflow_habit_checkins';
 const MILESTONES_STORAGE_KEY = 'taskflow_milestones';
+const PROJECTS_STORAGE_KEY = 'taskflow_projects';
 const DAILY_DIGEST_STORAGE_KEY = 'taskflow_daily_digest';
 const ESCALATION_STORAGE_KEY = 'taskflow_escalation';
 const ONBOARDING_SEEN_KEY = 'taskflow_onboarding_seen';
@@ -192,6 +195,7 @@ export default function App() {
   const habitsRef = useRef<Habit[]>([]);
   const checkInsRef = useRef<HabitCheckIn[]>([]);
   const milestonesRef = useRef<Milestone[]>([]);
+  const projectsRef = useRef<Project[]>([]);
   const escalationRef = useRef<EscalationConfig>(DEFAULT_ESCALATION_CONFIG);
   const handleToggleStatusRef = useRef<((id: string) => Promise<void>) | null>(null);
 
@@ -250,6 +254,14 @@ export default function App() {
     return [];
   });
 
+  const [projects, setProjects] = useState<Project[]>(() => {
+    try {
+      const saved = localStorage.getItem(PROJECTS_STORAGE_KEY);
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return [];
+  });
+
   const [customTemplates, setCustomTemplates] = useState<Template[]>(() => loadTemplates());
 
   const [dailyDigest, setDailyDigest] = useState<DailyDigestConfig>(() => {
@@ -303,6 +315,7 @@ export default function App() {
   const visibleHabits = useMemo(() => habits.filter((h) => !h.deletedAt), [habits]);
   const visibleCheckIns = useMemo(() => checkIns.filter((ci) => !ci.deletedAt), [checkIns]);
   const visibleMilestones = useMemo(() => milestones.filter((m) => !m.deletedAt), [milestones]);
+  const visibleProjects = useMemo(() => projects.filter((p) => !p.deletedAt), [projects]);
 
   const streakData = useStreak(visibleTasks.filter((t) => t.status === 'completed').length);
   const karma = useKarma(visibleTasks, visibleHabits, visibleCheckIns, visibleMilestones, streakData.currentStreak);
@@ -331,6 +344,7 @@ export default function App() {
         habits: habitsRef.current,
         checkIns: checkInsRef.current,
         milestones: milestonesRef.current,
+        projects: projectsRef.current,
       });
       if (!result) return;
 
@@ -384,6 +398,18 @@ export default function App() {
         return Array.from(merged.values());
       });
 
+      setProjects((prev) => {
+        const merged = new Map<string, Project>();
+        for (const p of result.projects) merged.set(p.id, p);
+        for (const local of prev) {
+          const existing = merged.get(local.id);
+          if (!existing) { merged.set(local.id, local); continue; }
+          const localTs = new Date(local.updatedAt || 0).getTime();
+          if (localTs > serverTs) merged.set(local.id, local);
+        }
+        return Array.from(merged.values());
+      });
+
       storeLastSyncAt(userId, result.serverTime);
       setLastSyncedAt(result.serverTime);
       setSyncError(null);
@@ -426,16 +452,19 @@ export default function App() {
         localStorage.removeItem(HABITS_STORAGE_KEY);
         localStorage.removeItem(CHECKINS_STORAGE_KEY);
         localStorage.removeItem(MILESTONES_STORAGE_KEY);
+        localStorage.removeItem(PROJECTS_STORAGE_KEY);
         localStorage.removeItem(`taskflow_lastSync_${userId}`);
       } catch {}
       setTasks([]);
       setHabits([]);
       setCheckIns([]);
       setMilestones([]);
+      setProjects([]);
       tasksRef.current = [];
       habitsRef.current = [];
       checkInsRef.current = [];
       milestonesRef.current = [];
+      projectsRef.current = [];
     }
 
     setLastSyncedAt(getLastSyncAt(userId));
@@ -756,6 +785,7 @@ export default function App() {
   useEffect(() => { try { localStorage.setItem(HABITS_STORAGE_KEY, JSON.stringify(habits)); } catch {} }, [habits]);
   useEffect(() => { try { localStorage.setItem(CHECKINS_STORAGE_KEY, JSON.stringify(checkIns)); } catch {} }, [checkIns]);
   useEffect(() => { try { localStorage.setItem(MILESTONES_STORAGE_KEY, JSON.stringify(milestones)); } catch {} }, [milestones]);
+  useEffect(() => { try { localStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(projects)); } catch {} }, [projects]);
   useEffect(() => { try { localStorage.setItem(DAILY_DIGEST_STORAGE_KEY, JSON.stringify(dailyDigest)); } catch {} }, [dailyDigest]);
   useEffect(() => { try { localStorage.setItem(ESCALATION_STORAGE_KEY, JSON.stringify(escalation)); } catch {} }, [escalation]);
   useEffect(() => { saveTemplates(customTemplates); }, [customTemplates]);
@@ -807,6 +837,8 @@ export default function App() {
   const [delegatedTaskShare, setDelegatedTaskShare] = useState<Task | null>(null);
   const [isMoreSheetOpen, setIsMoreSheetOpen] = useState(false);
   const [isKarmaOpen, setIsKarmaOpen] = useState(false);
+  const [isProjectModalOpen, setIsProjectModalOpen] = useState(false);
+  const [editingProject, setEditingProject] = useState<Project | null>(null);
 
   const handleShareTask = (task: Task) => {
     setDelegatedTaskShare(task);
@@ -1067,6 +1099,10 @@ export default function App() {
   useEffect(() => {
     milestonesRef.current = milestones;
   }, [milestones]);
+
+  useEffect(() => {
+    projectsRef.current = projects;
+  }, [projects]);
 
   useEffect(() => {
     escalationRef.current = escalation;
@@ -1341,10 +1377,68 @@ export default function App() {
     scheduleSync();
   };
 
+  // ─── PROJECTS ───
+
+  const handleNewProject = () => {
+    setEditingProject(null);
+    setIsProjectModalOpen(true);
+  };
+
+  const handleEditProject = (project: Project) => {
+    setEditingProject(project);
+    setIsProjectModalOpen(true);
+  };
+
+  const handleSaveProject = (data: ProjectFormData) => {
+    const now = new Date().toISOString();
+    if (editingProject) {
+      setProjects((prev) =>
+        prev.map((p) =>
+          p.id === editingProject.id
+            ? { ...p, name: data.name, emoji: data.emoji, color: data.color, updatedAt: now }
+            : p
+        )
+      );
+    } else {
+      const newProject: Project = {
+        id: `proj-${Date.now()}`,
+        name: data.name,
+        emoji: data.emoji,
+        color: data.color,
+        createdAt: now,
+        updatedAt: now,
+      };
+      setProjects((prev) => [newProject, ...prev]);
+    }
+    triggerHaptic('success');
+    scheduleSync();
+  };
+
+  const handleDeleteProject = (id: string) => {
+    const now = new Date().toISOString();
+    // Soft-delete the project
+    setProjects((prev) =>
+      prev.map((p) => (p.id === id ? { ...p, deletedAt: now, updatedAt: now } : p))
+    );
+    // Un-assign tasks pointing to this project — prevents orphans once GC runs
+    setTasks((prev) =>
+      prev.map((t) =>
+        t.projectId === id ? { ...t, projectId: undefined, updatedAt: now } : t
+      )
+    );
+    triggerHaptic('success');
+    scheduleSync();
+  };
+
   const completedCount = visibleTasks.filter((t) => t.status === 'completed').length;
   const urgentCount = visibleTasks.filter((t) => t.quadrant === 'do_first' && t.status !== 'completed').length;
 
-  const showQuickAdd = activeTab === 'matrix' || activeTab === 'list';
+  // ─────────────────────────────────────────────────────────────
+  //  IMPORTANT: QuickAddBar only on 'matrix'.
+  //  PriorityListView has its OWN quick-add + voice + search bar.
+  //  Showing this one on 'list' creates 3 stacked bars.
+  // ─────────────────────────────────────────────────────────────
+  const showQuickAdd = activeTab === 'matrix';
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -1372,6 +1466,7 @@ export default function App() {
       { id: 'calendar',  label: 'Month Calendar',emoji: '🗓️' },
       { id: 'flow',      label: 'Flow Timeline', emoji: '📊' },
       { id: 'habits',    label: 'Habits',        emoji: '🎯' },
+      { id: 'projects',  label: 'Projects',      emoji: '📁' },
       { id: 'analytics', label: 'Analytics',     emoji: '📈' },
       { id: 'review',    label: 'Weekly Review', emoji: '⭐' },
       { id: 'archive',   label: 'Archive',       emoji: '📦' },
@@ -1440,6 +1535,14 @@ export default function App() {
       emoji: '✨',
       keywords: 'points level progress achievement',
       onSelect: () => { setIsKarmaOpen(true); setIsCmdkOpen(false); },
+    });
+    list.push({
+      id: 'action-new-project',
+      label: 'Create new project',
+      category: 'Action',
+      emoji: '📁',
+      keywords: 'bucket group folder projects',
+      onSelect: () => { handleNewProject(); setIsCmdkOpen(false); },
     });
 
     visibleTasks
@@ -1611,6 +1714,17 @@ export default function App() {
                 onOpenNewHabit={handleOpenNewHabit}
               />
             )}
+            {activeTab === 'projects' && (
+              <ProjectsView
+                projects={visibleProjects}
+                tasks={visibleTasks}
+                onNewProject={handleNewProject}
+                onQuickAddProject={handleSaveProject}
+                onEditProject={handleEditProject}
+                onDeleteProject={handleDeleteProject}
+                onTaskClick={handleEditTask}
+              />
+            )}
             {activeTab === 'archive' && <ArchiveView tasks={visibleTasks} onRestore={handleRestoreFromArchive} onDelete={handlePermanentDelete} />}
             {activeTab === 'export' && (
               <NativePackagingHub
@@ -1709,6 +1823,14 @@ export default function App() {
         onShareTask={handleShareTask}
         templates={allTemplates}
         onDeleteTemplate={handleDeleteTemplate}
+        projects={visibleProjects}
+      />
+
+      <ProjectModal
+        isOpen={isProjectModalOpen}
+        onClose={() => { setIsProjectModalOpen(false); setEditingProject(null); }}
+        onSave={handleSaveProject}
+        existing={editingProject}
       />
 
       <HabitModal

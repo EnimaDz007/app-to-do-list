@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, BarChart3, Star, Archive, Activity } from 'lucide-react';
+import { X, BarChart3, Star, Archive, Activity, Folder } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { TabView } from '../types';
 import { useLanguage } from '../context/LanguageContext';
@@ -17,6 +17,7 @@ type LocalLang = 'en' | 'fr' | 'ar';
 const COPY: Record<LocalLang, {
   title: string;
   items: {
+    projects: { title: string; desc: string };
     analytics: { title: string; desc: string };
     review: { title: string; desc: string };
     archive: { title: string; desc: string };
@@ -26,28 +27,31 @@ const COPY: Record<LocalLang, {
   en: {
     title: 'More',
     items: {
-      analytics: { title: 'Analytics', desc: 'Your productivity trends' },
-      review: { title: 'Weekly Review', desc: 'This week at a glance' },
-      archive: { title: 'Archive', desc: 'Completed & archived tasks' },
-      export: { title: 'Diagnostics', desc: 'App status, backups & tools' },
+      projects:  { title: 'Projects',      desc: 'Your task buckets' },
+      analytics: { title: 'Analytics',     desc: 'Your productivity trends' },
+      review:    { title: 'Weekly Review', desc: 'This week at a glance' },
+      archive:   { title: 'Archive',       desc: 'Completed & archived tasks' },
+      export:    { title: 'Diagnostics',   desc: 'App status, backups & tools' },
     },
   },
   fr: {
     title: 'Plus',
     items: {
-      analytics: { title: 'Analyses', desc: 'Vos tendances de productivité' },
-      review: { title: 'Revue hebdo', desc: 'Cette semaine en un coup d’œil' },
-      archive: { title: 'Archives', desc: 'Tâches terminées et archivées' },
-      export: { title: 'Diagnostics', desc: 'État, sauvegardes et outils' },
+      projects:  { title: 'Projets',       desc: 'Vos catégories de tâches' },
+      analytics: { title: 'Analyses',      desc: 'Vos tendances de productivité' },
+      review:    { title: 'Revue hebdo',   desc: 'Cette semaine en un coup d’œil' },
+      archive:   { title: 'Archives',      desc: 'Tâches terminées et archivées' },
+      export:    { title: 'Diagnostics',   desc: 'État, sauvegardes et outils' },
     },
   },
   ar: {
     title: 'المزيد',
     items: {
-      analytics: { title: 'التحليلات', desc: 'اتجاهات إنتاجيتك' },
-      review: { title: 'المراجعة الأسبوعية', desc: 'هذا الأسبوع في لمحة' },
-      archive: { title: 'الأرشيف', desc: 'المهام المكتملة والمؤرشفة' },
-      export: { title: 'التشخيص', desc: 'حالة التطبيق والنسخ والأدوات' },
+      projects:  { title: 'المشاريع',            desc: 'مجموعات مهامك' },
+      analytics: { title: 'التحليلات',           desc: 'اتجاهات إنتاجيتك' },
+      review:    { title: 'المراجعة الأسبوعية',  desc: 'هذا الأسبوع في لمحة' },
+      archive:   { title: 'الأرشيف',             desc: 'المهام المكتملة والمؤرشفة' },
+      export:    { title: 'التشخيص',             desc: 'حالة التطبيق والنسخ والأدوات' },
     },
   },
 };
@@ -58,9 +62,10 @@ export const MoreSheet: React.FC<MoreSheetProps> = ({ isOpen, onClose, activeTab
   const copy = COPY[lang] ?? COPY.en;
 
   const items: { id: TabView; title: string; desc: string; Icon: React.ComponentType<{ className?: string }>; bg: string; color: string }[] = [
-    { id: 'analytics', title: copy.items.analytics.title, desc: copy.items.analytics.desc, Icon: BarChart3, bg: 'bg-indigo-100 dark:bg-indigo-950/60', color: 'text-indigo-600 dark:text-indigo-400' },
-    { id: 'review',    title: copy.items.review.title,    desc: copy.items.review.desc,    Icon: Star,      bg: 'bg-violet-100 dark:bg-violet-950/60', color: 'text-violet-600 dark:text-violet-400' },
-    { id: 'archive',   title: copy.items.archive.title,   desc: copy.items.archive.desc,   Icon: Archive,   bg: 'bg-slate-100 dark:bg-slate-800',       color: 'text-slate-600 dark:text-slate-300' },
+    { id: 'projects',  title: copy.items.projects.title,  desc: copy.items.projects.desc,  Icon: Folder,    bg: 'bg-amber-100 dark:bg-amber-950/60',     color: 'text-amber-600 dark:text-amber-400' },
+    { id: 'analytics', title: copy.items.analytics.title, desc: copy.items.analytics.desc, Icon: BarChart3, bg: 'bg-indigo-100 dark:bg-indigo-950/60',   color: 'text-indigo-600 dark:text-indigo-400' },
+    { id: 'review',    title: copy.items.review.title,    desc: copy.items.review.desc,    Icon: Star,      bg: 'bg-violet-100 dark:bg-violet-950/60',   color: 'text-violet-600 dark:text-violet-400' },
+    { id: 'archive',   title: copy.items.archive.title,   desc: copy.items.archive.desc,   Icon: Archive,   bg: 'bg-slate-100 dark:bg-slate-800',        color: 'text-slate-600 dark:text-slate-300' },
     { id: 'export',    title: copy.items.export.title,    desc: copy.items.export.desc,    Icon: Activity,  bg: 'bg-emerald-100 dark:bg-emerald-950/60', color: 'text-emerald-600 dark:text-emerald-400' },
   ];
 

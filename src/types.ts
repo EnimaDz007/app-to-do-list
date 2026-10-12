@@ -93,6 +93,23 @@ export interface Milestone {
   deletedAt?: string;
 }
 
+/**
+ * User-defined project — a bucket for grouping tasks (like Todoist's Projects).
+ * Completely independent from the Eisenhower quadrant system.
+ * One task can belong to exactly one project (or none).
+ */
+export interface Project {
+  id: string;
+  name: string;
+  emoji: string;
+  /** Hex color like "#6366f1". Used for the accent bar and text. */
+  color: string;
+  createdAt: string;
+  archivedAt?: string;
+  updatedAt?: string;
+  deletedAt?: string;
+}
+
 export type DelegateStatus = 'pending' | 'completed' | 'rejected';
 
 export interface Task {
@@ -115,6 +132,10 @@ export interface Task {
   recurrence?: Recurrence;
   contexts?: string[];
   milestoneId?: string;
+
+  /** Optional user-defined project this task belongs to. */
+  projectId?: string;
+
   delegateId?: string;
   delegateStatus?: DelegateStatus;
   delegateCompletedBy?: string;
@@ -156,7 +177,8 @@ export type TabView =
   | 'habits'
   | 'review'
   | 'export'
-  | 'archive';
+  | 'archive'
+  | 'projects';
 
 export type DeviceFrameMode = 'iphone' | 'android' | 'responsive';
 
