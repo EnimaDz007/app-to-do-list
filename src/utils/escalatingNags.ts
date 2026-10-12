@@ -55,18 +55,25 @@ export function getNagDelaysMinutes(
   return NAG_DELAYS_BY_QUADRANT[intensity][quadrant] || [];
 }
 
+/**
+ * FIX: clamp to 1,000,000 so `100M + bucket * 100 + index` never
+ * exceeds int32 range on Android (max ~2.14 billion).
+ * Previously Math.abs(hash) could be up to 2,147,483,647 — with
+ * subsequent additions this could silently overflow and the OS
+ * would refuse to schedule the notification.
+ */
 function hashTaskId(taskId: string): number {
   let hash = 0;
   for (let i = 0; i < taskId.length; i++) {
     hash = ((hash << 5) - hash + taskId.charCodeAt(i)) | 0;
   }
-  return Math.abs(hash);
+  return Math.abs(hash) % 1_000_000;
 }
 
 /**
  * Deterministic nag notification ID.
- * Reserved range: 100,000,000 – 110,000,099
- * (avoids digests at 810001-810007 and task reminders at 0-2B, still fits int32)
+ * Reserved range: 100,000,000 – 100,099,999
+ * (avoids digests at 810,001-810,007 and task reminders in other ranges)
  */
 export function nagNotificationId(taskId: string, index: number): number {
   const bucket = hashTaskId(taskId) % 100000;

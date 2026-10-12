@@ -1,6 +1,7 @@
 import { Task } from '../types';
 
 const SERVER_URL = 'https://task-priority-server-pir6.onrender.com';
+const CURRENT_USER_KEY = 'taskflow_current_user';
 
 export interface DelegateStatusResult {
   status: 'pending' | 'completed' | 'rejected';
@@ -15,14 +16,32 @@ export interface CreateDelegateResult {
 }
 
 /**
+ * Resolve the caller's external ID.
+ *
+ * Order of precedence:
+ *  1. Explicit argument (from App.tsx, which holds the Clerk user id).
+ *  2. localStorage `taskflow_current_user` (written by App.tsx on sign-in).
+ *  3. `'anonymous'` — never the old 'test-user-123' placeholder.
+ */
+function resolveExternalId(explicit?: string): string {
+  if (explicit && explicit.trim()) return explicit.trim();
+  try {
+    const fromLS = localStorage.getItem(CURRENT_USER_KEY);
+    if (fromLS && fromLS.trim()) return fromLS.trim();
+  } catch { /* noop */ }
+  return 'anonymous';
+}
+
+/**
  * Creates a delegate record on the server and returns the share URL.
  */
 export async function createDelegateShare(
   task: Task,
-  senderName?: string
+  senderName?: string,
+  externalId?: string
 ): Promise<CreateDelegateResult | null> {
   try {
-    const externalId = localStorage.getItem('taskflow_user_id') || 'test-user-123';
+    const id = resolveExternalId(externalId);
     const response = await fetch(`${SERVER_URL}/api/delegate/create`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -31,7 +50,7 @@ export async function createDelegateShare(
         title: task.title,
         description: task.description,
         dueDate: task.dueDate,
-        externalId,
+        externalId: id,
         senderName: senderName || 'A teammate',
       }),
     });

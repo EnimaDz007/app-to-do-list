@@ -2,6 +2,7 @@
 //  FILE: src/App.tsx
 //  Full file — Clerk auth + two-way sync + QuickAddBar + reminders
 //  + Bulk actions + Full backup/restore + Reset (tombstone-safe)
+//  + Fixed: streak sync, nag ID overflow, delegate user id
 // ─────────────────────────────────────────────────────────────
 
 /**
@@ -111,6 +112,7 @@ const ESCALATION_STORAGE_KEY = 'taskflow_escalation';
 const ONBOARDING_SEEN_KEY = 'taskflow_onboarding_seen';
 const RESTORE_PENDING_KEY = 'taskflow_restore_pending';
 const LEGACY_USER_ID_KEY = 'taskflow_user_id';
+const CURRENT_USER_KEY = 'taskflow_current_user';
 const SERVER_URL = 'https://task-priority-server-pir6.onrender.com';
 
 const OVERDUE_NOTIFICATION_ID = 999_998;
@@ -127,13 +129,18 @@ const AlarmNative = registerPlugin<{
   stopAlarm: (options?: { taskId?: string }) => Promise<{ success: boolean }>;
 }>('AlarmNative');
 
+/**
+ * FIX (bug #3): clamp hash to 1,000,000 so notification IDs derived from
+ * it never exceed int32 range on Android (max ~2.14 billion).
+ * Used for task reminders (id = hash + 1) and custom reminders (hash + 100).
+ */
 const hashTaskId = (taskId: string): number => {
   let hash = 0;
   for (let i = 0; i < taskId.length; i++) {
     hash = ((hash << 5) - hash) + taskId.charCodeAt(i);
     hash |= 0;
   }
-  return Math.abs(hash);
+  return Math.abs(hash) % 1_000_000;
 };
 
 const computeNextDueDate = (dueDate: string | undefined, recurrence: string): string => {
@@ -299,6 +306,17 @@ export default function App() {
     [customTemplates, language]
   );
 
+  // ─────────────────────────────────────────────────────────────
+  //  FIX (bug #4): persist the current Clerk user id so delegateShare.ts
+  //  can pick it up without needing to be threaded through every caller.
+  // ─────────────────────────────────────────────────────────────
+  useEffect(() => {
+    try {
+      if (userId) localStorage.setItem(CURRENT_USER_KEY, userId);
+      else localStorage.removeItem(CURRENT_USER_KEY);
+    } catch { /* noop */ }
+  }, [userId]);
+
   useEffect(() => {
     const next = localizeClonedTasks(tasksRef.current, language as 'en' | 'fr' | 'ar');
     if (next !== tasksRef.current) {
@@ -317,7 +335,11 @@ export default function App() {
   const visibleMilestones = useMemo(() => milestones.filter((m) => !m.deletedAt), [milestones]);
   const visibleProjects = useMemo(() => projects.filter((p) => !p.deletedAt), [projects]);
 
-  const streakData = useStreak(visibleTasks.filter((t) => t.status === 'completed').length);
+  // ─────────────────────────────────────────────────────────────
+  //  FIX (bug #1 + #2): streak now derived from tasks array.
+  //  Uses local dates and syncs across devices automatically.
+  // ─────────────────────────────────────────────────────────────
+  const streakData = useStreak(visibleTasks);
   const karma = useKarma(visibleTasks, visibleHabits, visibleCheckIns, visibleMilestones, streakData.currentStreak);
 
   const [karmaPopup, setKarmaPopup] = useState<{ id: number; amount: number } | null>(null);
@@ -1485,7 +1507,6 @@ export default function App() {
     const stampedMilestones = backup.data.milestones.map((m) => ({ ...m, updatedAt: now }));
     const stampedProjects = backup.data.projects.map((p) => ({ ...p, updatedAt: now }));
 
-    // Update refs immediately so the following runSync sees fresh state
     tasksRef.current = stampedTasks;
     habitsRef.current = stampedHabits;
     checkInsRef.current = stampedCheckIns;
@@ -1511,65 +1532,36 @@ export default function App() {
   const handleResetEverything = () => {
     const now = new Date().toISOString();
 
-    // ── Soft-delete every item so tombstones propagate to server ──
-    // Using refs directly so the following runSync sees the new state
-    // without waiting for React's async re-render.
-    const tombstonedTasks = tasksRef.current.map((t) => ({
-      ...t,
-      deletedAt: now,
-      updatedAt: now,
-    }));
-    const tombstonedHabits = habitsRef.current.map((h) => ({
-      ...h,
-      deletedAt: now,
-      updatedAt: now,
-    }));
-    const tombstonedCheckIns = checkInsRef.current.map((ci) => ({
-      ...ci,
-      deletedAt: now,
-      updatedAt: now,
-    }));
-    const tombstonedMilestones = milestonesRef.current.map((m) => ({
-      ...m,
-      deletedAt: now,
-      updatedAt: now,
-    }));
-    const tombstonedProjects = projectsRef.current.map((p) => ({
-      ...p,
-      deletedAt: now,
-      updatedAt: now,
-    }));
+    const tombstonedTasks = tasksRef.current.map((t) => ({ ...t, deletedAt: now, updatedAt: now }));
+    const tombstonedHabits = habitsRef.current.map((h) => ({ ...h, deletedAt: now, updatedAt: now }));
+    const tombstonedCheckIns = checkInsRef.current.map((ci) => ({ ...ci, deletedAt: now, updatedAt: now }));
+    const tombstonedMilestones = milestonesRef.current.map((m) => ({ ...m, deletedAt: now, updatedAt: now }));
+    const tombstonedProjects = projectsRef.current.map((p) => ({ ...p, deletedAt: now, updatedAt: now }));
 
-    // Update refs immediately (before state flushes)
     tasksRef.current = tombstonedTasks;
     habitsRef.current = tombstonedHabits;
     checkInsRef.current = tombstonedCheckIns;
     milestonesRef.current = tombstonedMilestones;
     projectsRef.current = tombstonedProjects;
 
-    // Update state
     setTasks(tombstonedTasks);
     setHabits(tombstonedHabits);
     setCheckIns(tombstonedCheckIns);
     setMilestones(tombstonedMilestones);
     setProjects(tombstonedProjects);
 
-    // Non-synced prefs — safe to wipe directly
     setCustomTemplates([]);
 
-    // Cancel any pending reminders
     for (const t of tasksRef.current) {
       cancelTaskReminder(t.id);
       void cancelTaskReminders(t.id);
     }
 
-    // Clear the last-sync marker so the next sync is a full round trip
     try { localStorage.removeItem(`taskflow_lastSync_${userId}`); } catch {}
 
     triggerHaptic('heavy');
     playAudioChime('beep');
 
-    // Give React + refs time to settle, then push tombstones to server
     setTimeout(() => { void runSync({ silent: true }); }, 500);
   };
 

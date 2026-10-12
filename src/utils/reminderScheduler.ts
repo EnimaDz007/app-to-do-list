@@ -25,13 +25,19 @@ export const REMINDER_PRESETS: { label: string; minutes: number }[] = [
   { label: '1 week before', minutes: 10080 },
 ];
 
+/**
+ * FIX: clamp to 1,000,000 so `hashTaskId(taskId) + 100 + index`
+ * never exceeds int32 range on Android (max 2,147,483,647).
+ * Previously Math.abs(hash) could be up to 2,147,483,647 — combined
+ * with offsets this could silently overflow.
+ */
 function hashTaskId(taskId: string): number {
   let hash = 0;
   for (let i = 0; i < taskId.length; i++) {
     hash = ((hash << 5) - hash) + taskId.charCodeAt(i);
     hash |= 0;
   }
-  return Math.abs(hash);
+  return Math.abs(hash) % 1_000_000;
 }
 
 /** Human-friendly label for a minutes-before offset. */
