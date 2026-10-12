@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { X, Save, Clock, Target, Dumbbell, Mic, Repeat, Calendar, Tag, Check, Share2, LayoutTemplate, Wand2, Sparkles } from 'lucide-react';
+import { X, Save, Clock, Mic, Repeat, Calendar, Tag, Check, Share2, LayoutTemplate, Wand2, Sparkles } from 'lucide-react';
 import { Task, TaskReminder, Subtask, Template, QuadrantId, TaskCategory, PriorityLevel, Recurrence, RecurrenceFrequency, CONTEXT_DEFINITIONS } from '../types';
 import { QUADRANT_CONFIGS } from '../data/initialTasks';
 import { triggerHaptic } from '../utils/haptics';
@@ -59,8 +59,6 @@ const COPY: Record<LocalLang, {
   createTask: string;
   editTask: string;
   newTask: string;
-  impactOf: string;
-  effortOf: string;
   shareTitle: string;
   shareAlready: string;
   shareCompleted: string;
@@ -113,8 +111,6 @@ const COPY: Record<LocalLang, {
     createTask: 'Add Task',
     editTask: 'Edit Task',
     newTask: 'New Task',
-    impactOf: 'Impact: {score}/5',
-    effortOf: 'Effort: {score}/5',
     shareTitle: 'Share with someone',
     shareAlready: 'Already shared',
     shareCompleted: 'Completed by {name}',
@@ -167,8 +163,6 @@ const COPY: Record<LocalLang, {
     createTask: 'Ajouter',
     editTask: 'Modifier',
     newTask: 'Nouvelle tâche',
-    impactOf: 'Impact : {score}/5',
-    effortOf: 'Effort : {score}/5',
     shareTitle: 'Partager avec quelqu’un',
     shareAlready: 'Déjà partagé',
     shareCompleted: 'Terminé par {name}',
@@ -221,8 +215,6 @@ const COPY: Record<LocalLang, {
     createTask: 'إضافة المهمة',
     editTask: 'تعديل المهمة',
     newTask: 'مهمة جديدة',
-    impactOf: 'الأثر: {score}/5',
-    effortOf: 'الجهد: {score}/5',
     shareTitle: 'شارك مع شخص',
     shareAlready: 'تمت المشاركة',
     shareCompleted: 'أكمله {name}',
@@ -312,8 +304,6 @@ export const TaskModal: React.FC<TaskModalProps> = ({
   const [category, setCategory] = useState<TaskCategory>('Engineering');
   const [estimatedMinutes, setEstimatedMinutes] = useState<number>(30);
   const [dueDate, setDueDate] = useState<string>('');
-  const [impactScore, setImpactScore] = useState<number>(4);
-  const [effortScore, setEffortScore] = useState<number>(2);
   const [recurrence, setRecurrence] = useState<Recurrence | undefined>(undefined);
   const [contexts, setContexts] = useState<string[]>([]);
   const [subtasks, setSubtasks] = useState<Subtask[]>([]);
@@ -373,8 +363,6 @@ export const TaskModal: React.FC<TaskModalProps> = ({
         if (isNaN(d.getTime())) return dateToLocalInputString(new Date(Date.now() + 15 * 60000));
         return dateToLocalInputString(d);
       });
-      setImpactScore(editingTask.impactScore || 3);
-      setEffortScore(editingTask.effortScore || 2);
     } else {
       setTitle('');
       setDescription('');
@@ -397,8 +385,6 @@ export const TaskModal: React.FC<TaskModalProps> = ({
         d.setMinutes(d.getMinutes() + 15);
         return dateToLocalInputString(d);
       });
-      setImpactScore(4);
-      setEffortScore(2);
     }
 
     resetTranscript();
@@ -495,8 +481,6 @@ export const TaskModal: React.FC<TaskModalProps> = ({
     if (tpl.preset.category) setCategory(tpl.preset.category);
     if (tpl.preset.quadrant) setQuadrant(tpl.preset.quadrant);
     if (tpl.preset.estimatedMinutes) setEstimatedMinutes(tpl.preset.estimatedMinutes);
-    if (tpl.preset.impactScore) setImpactScore(tpl.preset.impactScore);
-    if (tpl.preset.effortScore) setEffortScore(tpl.preset.effortScore);
     if (tpl.preset.contexts) setContexts(tpl.preset.contexts);
     if (tpl.description && !description) setDescription(tpl.description);
     if (!title.trim()) setTitle(tpl.name);
@@ -522,8 +506,9 @@ export const TaskModal: React.FC<TaskModalProps> = ({
       status: editingTask ? editingTask.status : 'todo',
       estimatedMinutes,
       dueDate: localInputStringToISO(dueDate),
-      impactScore,
-      effortScore,
+      // Silently preserved for backward compatibility (not user-editable)
+      impactScore: editingTask?.impactScore ?? 3,
+      effortScore: editingTask?.effortScore ?? 3,
       recurrence,
       contexts: contexts.length > 0 ? contexts : undefined,
       subtasks: subtasks.length > 0 ? subtasks : undefined,
@@ -926,45 +911,6 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                   onChange={(e) => setEstimatedMinutes(e.target.value === '' ? 0 : parseInt(e.target.value))}
                   className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500"
                 />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3 pt-1">
-              <div className="bg-slate-50 dark:bg-slate-800/40 p-2.5 rounded-xl border border-slate-200 dark:border-slate-700/60">
-                <label className="flex items-center justify-between text-[11px] text-slate-700 dark:text-slate-300 mb-1.5 font-medium">
-                  <span className="flex items-center gap-1">
-                    <Target className="w-3.5 h-3.5 text-indigo-500 dark:text-indigo-400" />
-                    <span>{copy.impactOf.replace('{score}', String(impactScore))}</span>
-                  </span>
-                </label>
-                <div className="flex gap-1.5">
-                  {[1, 2, 3, 4, 5].map((val) => (
-                    <button key={val} type="button" onClick={() => setImpactScore(val)}
-                      className={`flex-1 py-1 rounded-md text-xs font-mono transition cursor-pointer ${
-                        impactScore === val ? 'bg-indigo-600 text-white font-bold'
-                                            : 'bg-slate-200 dark:bg-slate-700/60 text-slate-700 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-700'
-                      }`}
-                    >{val}</button>
-                  ))}
-                </div>
-              </div>
-              <div className="bg-slate-50 dark:bg-slate-800/40 p-2.5 rounded-xl border border-slate-200 dark:border-slate-700/60">
-                <label className="flex items-center justify-between text-[11px] text-slate-700 dark:text-slate-300 mb-1.5 font-medium">
-                  <span className="flex items-center gap-1">
-                    <Dumbbell className="w-3.5 h-3.5 text-amber-500 dark:text-amber-400" />
-                    <span>{copy.effortOf.replace('{score}', String(effortScore))}</span>
-                  </span>
-                </label>
-                <div className="flex gap-1.5">
-                  {[1, 2, 3, 4, 5].map((val) => (
-                    <button key={val} type="button" onClick={() => setEffortScore(val)}
-                      className={`flex-1 py-1 rounded-md text-xs font-mono transition cursor-pointer ${
-                        effortScore === val ? 'bg-amber-600 text-white font-bold'
-                                            : 'bg-slate-200 dark:bg-slate-700/60 text-slate-700 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-700'
-                      }`}
-                    >{val}</button>
-                  ))}
-                </div>
               </div>
             </div>
 
