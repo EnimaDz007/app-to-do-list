@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────────────────────
 //  FILE: src/components/SettingsModal.tsx
-//  Full — Clerk signed-in card + Cloud Sync status with counts
+//  Full — Clerk signed-in card + Cloud Sync + Full Backup + Reset
 // ─────────────────────────────────────────────────────────────
 
 import React, { useState, useRef, useEffect } from 'react';
@@ -10,14 +10,18 @@ import {
   FileSpreadsheet, FileCode, Bell, Check, AlertCircle, ShieldCheck,
   Smartphone, Info, Volume2, Play, Clock, Sunrise, AlarmClock,
   CalendarPlus, CalendarCheck, RefreshCw, Link2, LogOut, User as UserIcon,
+  HardDriveDownload, HardDriveUpload, AlertTriangle, Trash2,
 } from 'lucide-react';
-import { Task } from '../types';
+import { Task, Habit, HabitCheckIn, Milestone, Project, Template } from '../types';
 import { triggerHaptic } from '../utils/haptics';
 import { useLanguage } from '../context/LanguageContext';
 import { useTheme } from '../context/ThemeContext';
 import {
   exportTasksToJSON, exportTasksToCSV, importTasksFromJSON, importTasksFromCSV,
 } from '../utils/dataTransfer';
+import {
+  buildFullBackup, downloadFullBackup, readFullBackupFile, summarizeBackup, FullBackup, FullBackupData,
+} from '../utils/fullBackup';
 import {
   isNotificationSupported, requestNotificationPermission, sendBrowserNotification,
   playAudioChime, playAudioAlert, getSelectedAlertSound, setSelectedAlertSound,
@@ -45,6 +49,11 @@ interface SettingsModalProps {
   lastSyncedAt?: string | null;
   syncError?: string | null;
   syncCounts?: { tasks: number; habits: number; checkIns: number; milestones: number };
+
+  /* ─── Full-backup feature (all optional — feature hidden if not passed) ─── */
+  fullBackupData?: FullBackupData;
+  onRestoreFullBackup?: (backup: FullBackup) => void;
+  onResetEverything?: () => void;
 }
 
 type SettingsTab = 'general' | 'backup' | 'sync' | 'notifications' | 'about';
@@ -84,6 +93,108 @@ const SYNC_COPY: Record<LocalLang, {
     signedInAs: '\u0645\u0633\u062c\u0651\u0644 \u0627\u0644\u062f\u062e\u0648\u0644 \u0628\u0627\u0633\u0645',
     signOut: '\u062a\u0633\u062c\u064a\u0644 \u0627\u0644\u062e\u0631\u0648\u062c',
     accountHint: '\u0645\u0647\u0627\u0645\u0643 \u062a\u062a\u0632\u0627\u0645\u0646 \u062a\u0644\u0642\u0627\u0626\u064a\u0627\u064b \u0645\u0639 \u0647\u0630\u0627 \u0627\u0644\u062d\u0633\u0627\u0628.',
+  },
+};
+
+// ─── Full-backup copy (new) ───
+const FULL_BACKUP_COPY: Record<LocalLang, {
+  cardTitle: string;
+  cardDesc: string;
+  download: string;
+  downloadHint: string;
+  restore: string;
+  restoreHint: string;
+  restoreConfirmTitle: string;
+  restoreConfirmBody: (counts: { tasks: number; habits: number; projects: number }) => string;
+  restoreConfirmBtn: string;
+  restoreSuccess: string;
+  restoreFailed: (msg: string) => string;
+  invalidFile: string;
+  dangerTitle: string;
+  dangerDesc: string;
+  resetBtn: string;
+  resetConfirmTitle: string;
+  resetConfirmBody: string;
+  resetTypeHint: string;
+  resetTypePlaceholder: string;
+  resetConfirmKeyword: string;
+  resetConfirmBtn: string;
+  cancel: string;
+}> = {
+  en: {
+    cardTitle: 'Full account backup',
+    cardDesc: 'Save everything — tasks, habits, milestones, projects, and settings — in one file.',
+    download: 'Download backup',
+    downloadHint: 'Includes all data across every tab.',
+    restore: 'Restore from file',
+    restoreHint: 'Replaces everything with the contents of the file.',
+    restoreConfirmTitle: 'Restore from this backup?',
+    restoreConfirmBody: (c) =>
+      `This will replace ALL current data. Backup contains ${c.tasks} task${c.tasks === 1 ? '' : 's'}, ${c.habits} habit${c.habits === 1 ? '' : 's'}, and ${c.projects} project${c.projects === 1 ? '' : 's'}.`,
+    restoreConfirmBtn: 'Restore',
+    restoreSuccess: 'Backup restored — syncing to server…',
+    restoreFailed: (msg) => `Restore failed: ${msg}`,
+    invalidFile: 'This file is not a valid Task Priority backup.',
+    dangerTitle: 'Danger zone',
+    dangerDesc: 'Permanently delete all your data from this device. Your server data will be resynced.',
+    resetBtn: 'Reset all data',
+    resetConfirmTitle: 'Reset everything?',
+    resetConfirmBody: 'This deletes all tasks, habits, milestones, and projects from this device. It cannot be undone.',
+    resetTypeHint: 'Type DELETE below to confirm.',
+    resetTypePlaceholder: 'DELETE',
+    resetConfirmKeyword: 'DELETE',
+    resetConfirmBtn: 'Reset all data',
+    cancel: 'Cancel',
+  },
+  fr: {
+    cardTitle: 'Sauvegarde complète',
+    cardDesc: 'Enregistrez tout — tâches, habitudes, étapes, projets et réglages — dans un seul fichier.',
+    download: 'Télécharger',
+    downloadHint: 'Inclut toutes les données de chaque onglet.',
+    restore: 'Restaurer',
+    restoreHint: 'Remplace tout par le contenu du fichier.',
+    restoreConfirmTitle: 'Restaurer depuis cette sauvegarde ?',
+    restoreConfirmBody: (c) =>
+      `Cela remplacera TOUTES les données actuelles. La sauvegarde contient ${c.tasks} tâche${c.tasks === 1 ? '' : 's'}, ${c.habits} habitude${c.habits === 1 ? '' : 's'} et ${c.projects} projet${c.projects === 1 ? '' : 's'}.`,
+    restoreConfirmBtn: 'Restaurer',
+    restoreSuccess: 'Sauvegarde restaurée — synchronisation…',
+    restoreFailed: (msg) => `Échec de la restauration : ${msg}`,
+    invalidFile: 'Ce fichier n\u2019est pas une sauvegarde Task Priority valide.',
+    dangerTitle: 'Zone de danger',
+    dangerDesc: 'Supprime définitivement toutes vos données de cet appareil. Les données serveur seront resynchronisées.',
+    resetBtn: 'Tout réinitialiser',
+    resetConfirmTitle: 'Tout réinitialiser ?',
+    resetConfirmBody: 'Cela supprime toutes les tâches, habitudes, étapes et projets de cet appareil. Action irréversible.',
+    resetTypeHint: 'Tapez DELETE ci-dessous pour confirmer.',
+    resetTypePlaceholder: 'DELETE',
+    resetConfirmKeyword: 'DELETE',
+    resetConfirmBtn: 'Tout réinitialiser',
+    cancel: 'Annuler',
+  },
+  ar: {
+    cardTitle: 'نسخة احتياطية كاملة',
+    cardDesc: 'احفظ كل شيء — المهام والعادات والمراحل والمشاريع والإعدادات — في ملف واحد.',
+    download: 'تنزيل النسخة',
+    downloadHint: 'يشمل جميع البيانات في كل تبويب.',
+    restore: 'استعادة من ملف',
+    restoreHint: 'يستبدل كل شيء بمحتوى الملف.',
+    restoreConfirmTitle: 'استعادة من هذه النسخة؟',
+    restoreConfirmBody: (c) =>
+      `سيؤدي هذا إلى استبدال كل البيانات الحالية. النسخة تحتوي على ${c.tasks} مهمة و${c.habits} عادة و${c.projects} مشروع.`,
+    restoreConfirmBtn: 'استعادة',
+    restoreSuccess: 'تمت الاستعادة — جارٍ المزامنة…',
+    restoreFailed: (msg) => `فشلت الاستعادة: ${msg}`,
+    invalidFile: 'هذا الملف ليس نسخة احتياطية صالحة.',
+    dangerTitle: 'منطقة الخطر',
+    dangerDesc: 'حذف جميع بياناتك نهائياً من هذا الجهاز. ستُعاد مزامنة بيانات الخادم.',
+    resetBtn: 'إعادة تعيين كل شيء',
+    resetConfirmTitle: 'إعادة تعيين كل شيء؟',
+    resetConfirmBody: 'سيحذف هذا جميع المهام والعادات والمراحل والمشاريع من هذا الجهاز. لا يمكن التراجع.',
+    resetTypeHint: 'اكتب DELETE أدناه للتأكيد.',
+    resetTypePlaceholder: 'DELETE',
+    resetConfirmKeyword: 'DELETE',
+    resetConfirmBtn: 'إعادة التعيين',
+    cancel: 'إلغاء',
   },
 };
 
@@ -179,6 +290,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   escalation, onChangeEscalation,
   onSyncNow, isSyncing = false, lastSyncedAt = null, syncError = null,
   syncCounts,
+  fullBackupData,
+  onRestoreFullBackup,
+  onResetEverything,
 }) => {
   const { t, language, setLanguage, supportedLanguages } = useLanguage();
   const { theme, setTheme } = useTheme();
@@ -188,6 +302,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const lang = (language as LocalLang) || 'en';
   const timeCopy = TIME_COPY[lang] ?? TIME_COPY.en;
   const syncCopy = SYNC_COPY[lang] ?? SYNC_COPY.en;
+  const fbCopy = FULL_BACKUP_COPY[lang] ?? FULL_BACKUP_COPY.en;
 
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
   const [importMode, setImportMode] = useState<'append' | 'replace'>('append');
@@ -202,8 +317,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [icsMessage, setIcsMessage] = useState<string | null>(null);
   const [hourFormat, setHourFormat] = useState<HourFormat>(() => readHourFormat());
 
+  // Full backup state
+  const [pendingRestore, setPendingRestore] = useState<FullBackup | null>(null);
+  const [fullRestoreMsg, setFullRestoreMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [resetTyped, setResetTyped] = useState('');
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const icsInputRef = useRef<HTMLInputElement>(null);
+  const fullBackupInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (isOpen) unlockAudio();
@@ -248,6 +370,45 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const handleExportJSON = () => { triggerHaptic('success'); exportTasksToJSON(tasks); playAudioChime('beep'); };
   const handleExportCSV = () => { triggerHaptic('success'); exportTasksToCSV(tasks); playAudioChime('beep'); };
   const handleExportICS = () => { triggerHaptic('success'); const content = generateICS(tasks); downloadICS(content, 'task-priority.ics'); playAudioChime('beep'); };
+
+  // ─── Full backup handlers ───
+  const handleDownloadFullBackup = () => {
+    if (!fullBackupData) return;
+    triggerHaptic('success');
+    const backup = buildFullBackup(fullBackupData);
+    downloadFullBackup(backup);
+    playAudioChime('success');
+  };
+
+  const handleFullRestoreFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setFullRestoreMsg(null);
+    try {
+      const backup = await readFullBackupFile(file);
+      setPendingRestore(backup);
+    } catch (err) {
+      triggerHaptic('heavy');
+      const msg = err instanceof Error ? err.message : 'unknown';
+      setFullRestoreMsg({
+        kind: 'err',
+        text: msg === 'INVALID_JSON' || msg === 'INVALID_SHAPE' || msg === 'MISSING_VERSION' || msg === 'MISSING_DATA'
+          ? fbCopy.invalidFile
+          : fbCopy.restoreFailed(msg),
+      });
+      setTimeout(() => setFullRestoreMsg(null), 6000);
+    }
+  };
+
+  const confirmFullRestore = () => {
+    if (!pendingRestore) return;
+    triggerHaptic('success');
+    onRestoreFullBackup?.(pendingRestore);
+    setFullRestoreMsg({ kind: 'ok', text: fbCopy.restoreSuccess });
+    setPendingRestore(null);
+    setTimeout(() => setFullRestoreMsg(null), 4000);
+  };
 
   const handleICSFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -349,10 +510,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     .join('')
     .toUpperCase();
 
-  // Fallback counts if caller didn't pass them
   const counts = syncCounts ?? { tasks: tasks.length, habits: 0, checkIns: 0, milestones: 0 };
 
-  return (    <div id="settings-modal-backdrop" className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-150" onClick={onClose}>
+  const hasFullBackup = !!fullBackupData && !!onRestoreFullBackup;
+  const canReset = !!onResetEverything;
+  const resetReady = resetTyped.trim().toUpperCase() === fbCopy.resetConfirmKeyword;
+
+  return (
+    <div id="settings-modal-backdrop" className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-150" onClick={onClose}>
       <div id="settings-modal-dialog" className="w-full max-w-md rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-150" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
           <div className="flex items-center gap-2.5">
@@ -439,6 +604,62 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           {activeTab === 'backup' && (
             <div className="space-y-3.5 animate-in fade-in">
+              {/* ─── FULL ACCOUNT BACKUP (new) ─── */}
+              {hasFullBackup && (
+                <div className="p-3.5 rounded-2xl border-2 border-indigo-300 dark:border-indigo-800 bg-gradient-to-br from-indigo-50/80 to-white dark:from-indigo-950/40 dark:to-slate-900 space-y-3">
+                  <div className="flex items-start gap-2.5">
+                    <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 text-white flex items-center justify-center shrink-0 shadow-md shadow-indigo-500/30">
+                      <HardDriveDownload className="w-4 h-4" />
+                    </div>
+                    <div className="text-start min-w-0">
+                      <h4 className="text-xs font-black text-slate-900 dark:text-white">{fbCopy.cardTitle}</h4>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-snug">{fbCopy.cardDesc}</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={handleDownloadFullBackup}
+                      className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-md shadow-indigo-600/20 transition cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span className="truncate">{fbCopy.download}</span>
+                    </button>
+                    <button
+                      onClick={() => fullBackupInputRef.current?.click()}
+                      className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-700 transition cursor-pointer"
+                    >
+                      <HardDriveUpload className="w-3.5 h-3.5" />
+                      <span className="truncate">{fbCopy.restore}</span>
+                    </button>
+                  </div>
+
+                  <input
+                    ref={fullBackupInputRef}
+                    type="file"
+                    accept=".json,application/json"
+                    className="hidden"
+                    onChange={handleFullRestoreFile}
+                  />
+
+                  <div className="flex items-center gap-2 text-[10px] text-slate-500 dark:text-slate-400">
+                    <ShieldCheck className="w-3 h-3 text-indigo-500" />
+                    <span>{fbCopy.downloadHint}</span>
+                  </div>
+
+                  {fullRestoreMsg && (
+                    <div className={`p-2.5 rounded-xl text-[11px] flex items-center gap-2 ${
+                      fullRestoreMsg.kind === 'ok'
+                        ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300'
+                        : 'bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300'
+                    }`}>
+                      {fullRestoreMsg.kind === 'ok' ? <Check className="w-3.5 h-3.5 shrink-0" /> : <AlertCircle className="w-3.5 h-3.5 shrink-0" />}
+                      <span>{fullRestoreMsg.text}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="p-3 rounded-2xl bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-100 dark:border-indigo-900/50 text-xs text-slate-700 dark:text-slate-300">
                 <div className="font-semibold text-indigo-950 dark:text-indigo-200">{t('backup_total_records', { count: tasks.length })}</div>
                 <div className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5">{t('backup_total_desc')}</div>
@@ -516,6 +737,29 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 {importSuccess && (<div className="p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 text-xs flex items-center gap-2"><Check className="w-4 h-4 shrink-0" /><span>{importSuccess}</span></div>)}
                 {importError && (<div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 text-xs flex items-center gap-2"><AlertCircle className="w-4 h-4 shrink-0" /><span>{importError}</span></div>)}
               </div>
+
+              {/* ─── DANGER ZONE (new) ─── */}
+              {canReset && (
+                <div className="pt-3 mt-1 border-t-2 border-dashed border-rose-200 dark:border-rose-900/60 space-y-2.5">
+                  <div className="flex items-start gap-2.5">
+                    <div className="w-9 h-9 rounded-xl bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0">
+                      <AlertTriangle className="w-4 h-4" />
+                    </div>
+                    <div className="text-start min-w-0">
+                      <h4 className="text-xs font-black text-rose-700 dark:text-rose-400 uppercase tracking-wide">{fbCopy.dangerTitle}</h4>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-snug">{fbCopy.dangerDesc}</p>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => { triggerHaptic('medium'); setResetTyped(''); setShowResetConfirm(true); }}
+                    className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-md shadow-rose-600/20 transition cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>{fbCopy.resetBtn}</span>
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -529,7 +773,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-snug">{syncCopy.desc}</p>
               </div>
 
-              {/* Cloud sync status card */}
               <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-2.5">
                 <div className="flex items-center justify-between gap-3">
                   <div className="min-w-0 text-start">
@@ -550,7 +793,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </button>
                 </div>
 
-                {/* Counts breakdown */}
                 <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center gap-3 text-[10px] text-slate-500 dark:text-slate-400">
                   <span className="font-semibold">{counts.tasks} task{counts.tasks === 1 ? '' : 's'}</span>
                   <span className="text-slate-300 dark:text-slate-700">·</span>
@@ -560,7 +802,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
               </div>
 
-              {/* Signed-in account card */}
               <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-3">
                 <div className="flex items-center gap-2">
                   <div className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 flex items-center justify-center shrink-0">
@@ -776,6 +1017,113 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           <button onClick={() => { triggerHaptic('light'); onClose(); }} className="px-4 py-1.5 rounded-xl bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-semibold transition cursor-pointer">{t('settings_done')}</button>
         </div>
       </div>
+
+      {/* ═══════════════════════════════════════════════════════
+          RESTORE CONFIRM MODAL
+      ═══════════════════════════════════════════════════════ */}
+      {pendingRestore && (
+        <div
+          className="fixed inset-0 z-[60] bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-5"
+          onClick={() => setPendingRestore(null)}
+        >
+          <div
+            className="w-full max-w-sm rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="w-12 h-12 rounded-2xl bg-indigo-100 dark:bg-indigo-950/60 flex items-center justify-center mx-auto mb-4">
+              <HardDriveUpload className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+            </div>
+            <h3 className="text-base font-black text-slate-900 dark:text-white tracking-tight text-center mb-2">
+              {fbCopy.restoreConfirmTitle}
+            </h3>
+            <p className="text-[12px] text-slate-500 dark:text-slate-400 text-center leading-relaxed mb-5">
+              {fbCopy.restoreConfirmBody(summarizeBackup(pendingRestore))}
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => { triggerHaptic('light'); setPendingRestore(null); }}
+                className="flex-1 py-3 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-sm font-black hover:bg-slate-200 dark:hover:bg-slate-700 transition cursor-pointer"
+              >
+                {fbCopy.cancel}
+              </button>
+              <button
+                onClick={confirmFullRestore}
+                className="flex-1 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-black shadow-lg shadow-indigo-600/20 transition cursor-pointer"
+              >
+                {fbCopy.restoreConfirmBtn}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════
+          RESET CONFIRM MODAL (type DELETE)
+      ═══════════════════════════════════════════════════════ */}
+      {showResetConfirm && (
+        <div
+          className="fixed inset-0 z-[60] bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-5"
+          onClick={() => setShowResetConfirm(false)}
+        >
+          <div
+            className="w-full max-w-sm rounded-3xl bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-900 shadow-2xl p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="w-12 h-12 rounded-2xl bg-rose-100 dark:bg-rose-950/60 flex items-center justify-center mx-auto mb-4">
+              <AlertTriangle className="w-5 h-5 text-rose-600 dark:text-rose-400" />
+            </div>
+            <h3 className="text-base font-black text-rose-700 dark:text-rose-400 tracking-tight text-center mb-2">
+              {fbCopy.resetConfirmTitle}
+            </h3>
+            <p className="text-[12px] text-slate-500 dark:text-slate-400 text-center leading-relaxed mb-4">
+              {fbCopy.resetConfirmBody}
+            </p>
+
+            <label className="block text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">
+              {fbCopy.resetTypeHint}
+            </label>
+            <input
+              type="text"
+              value={resetTyped}
+              onChange={(e) => setResetTyped(e.target.value)}
+              placeholder={fbCopy.resetTypePlaceholder}
+              autoFocus
+              className="w-full px-3 py-2.5 rounded-xl border-2 border-rose-200 dark:border-rose-900 bg-rose-50/50 dark:bg-rose-950/20 text-slate-900 dark:text-white text-sm font-black tracking-widest text-center mb-5 focus:outline-none focus:border-rose-500 transition"
+            />
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => { triggerHaptic('light'); setShowResetConfirm(false); setResetTyped(''); }}
+                className="flex-1 py-3 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-sm font-black hover:bg-slate-200 dark:hover:bg-slate-700 transition cursor-pointer"
+              >
+                {fbCopy.cancel}
+              </button>
+              <button
+                onClick={() => {
+                  if (!resetReady) return;
+                  triggerHaptic('heavy');
+                  onResetEverything?.();
+                  setShowResetConfirm(false);
+                  setResetTyped('');
+                }}
+                disabled={!resetReady}
+                className={`flex-1 py-3 rounded-xl text-sm font-black transition cursor-pointer ${
+                  resetReady
+                    ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-lg shadow-rose-600/20'
+                    : 'bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed'
+                }`}
+              >
+                {fbResetLabel(fbCopy)}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+
+// helper to avoid inline ternary in JSX above
+function fbResetLabel(copy: { resetConfirmBtn: string }): string {
+  return copy.resetConfirmBtn;
+}

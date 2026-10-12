@@ -3,6 +3,7 @@ import { Search, Filter, ArrowUpDown, Mic, Bookmark, Plus, X, Folder } from 'luc
 import { Task, TaskCategory, PriorityLevel, QuadrantId, Subtask, CONTEXT_DEFINITIONS, Project } from '../types';
 import { TaskCard } from './TaskCard';
 import { NLPQuickAdd } from './NLPQuickAdd';
+import { BulkActionBar } from './BulkActionBar';
 import { triggerHaptic } from '../utils/haptics';
 import { useLanguage } from '../context/LanguageContext';
 import { TranslationKey } from '../i18n/translations';
@@ -21,6 +22,11 @@ interface PriorityListViewProps {
   onUpdateSubtasks?: (taskId: string, nextSubtasks: Subtask[]) => void;
   onSaveAsTemplate?: (task: Task) => void;
   onQuickAdd?: (taskData: Omit<Task, 'id' | 'createdAt'>) => void;
+  /* ─── Bulk actions ─── */
+  onBulkComplete?: (taskIds: string[]) => void;
+  onBulkDelete?: (taskIds: string[]) => void;
+  onBulkMoveToProject?: (taskIds: string[], projectId: string | null) => void;
+  onBulkMoveQuadrant?: (taskIds: string[], quadrant: QuadrantId) => void;
 }
 
 const CUSTOM_VIEWS_STORAGE_KEY = 'taskflow_custom_views';
@@ -43,95 +49,56 @@ const LOCAL_COPY: Record<LocalLang, {
   viewDescs: Record<string, string>;
 }> = {
   en: {
-    allTasks: 'All tasks',
-    saveView: 'Save view',
-    allContexts: 'All contexts',
-    allProjects: 'All projects',
-    promptViewName: 'Name this view:',
-    confirmDeleteView: 'Delete this view?',
-    deleteView: 'Delete view',
-    viewNamePlaceholder: 'Custom view',
-    customView: 'Custom view',
+    allTasks: 'All tasks', saveView: 'Save view', allContexts: 'All contexts', allProjects: 'All projects',
+    promptViewName: 'Name this view:', confirmDeleteView: 'Delete this view?', deleteView: 'Delete view',
+    viewNamePlaceholder: 'Custom view', customView: 'Custom view',
     noTasksInView: 'No tasks in "{name}"',
     contexts: { home: 'Home', work: 'Work', call: 'Call', computer: 'Deep Work', errand: 'Errand', health: 'Health' },
     viewNames: {
-      'All Attack': 'All Attack',
-      "Today's Battlefield": "Today's Battlefield",
-      'Slow Burn': 'Slow Burn',
-      'Delegation Pending': 'Delegation Pending',
-      'Dead Weight': 'Dead Weight',
-      'Quick Wins': 'Quick Wins',
-      'Deep Focus': 'Deep Focus',
+      'All Attack': 'All Attack', "Today's Battlefield": "Today's Battlefield",
+      'Slow Burn': 'Slow Burn', 'Delegation Pending': 'Delegation Pending',
+      'Dead Weight': 'Dead Weight', 'Quick Wins': 'Quick Wins', 'Deep Focus': 'Deep Focus',
     },
     viewDescs: {
-      'All Attack': 'Every active task',
-      "Today's Battlefield": 'Do these now',
-      'Slow Burn': 'Important, not urgent yet',
-      'Delegation Pending': 'Waiting on someone else',
-      'Dead Weight': 'Low impact — cut these',
-      'Quick Wins': 'Fast, high impact',
+      'All Attack': 'Every active task', "Today's Battlefield": 'Do these now',
+      'Slow Burn': 'Important, not urgent yet', 'Delegation Pending': 'Waiting on someone else',
+      'Dead Weight': 'Low impact — cut these', 'Quick Wins': 'Fast, high impact',
       'Deep Focus': 'Long, high impact',
     },
   },
   fr: {
-    allTasks: 'Toutes les tâches',
-    saveView: 'Enregistrer',
-    allContexts: 'Tous les contextes',
-    allProjects: 'Tous les projets',
-    promptViewName: 'Nommer cette vue :',
-    confirmDeleteView: 'Supprimer cette vue ?',
-    deleteView: 'Supprimer la vue',
-    viewNamePlaceholder: 'Vue personnalisée',
-    customView: 'Vue personnalisée',
+    allTasks: 'Toutes les tâches', saveView: 'Enregistrer', allContexts: 'Tous les contextes', allProjects: 'Tous les projets',
+    promptViewName: 'Nommer cette vue :', confirmDeleteView: 'Supprimer cette vue ?', deleteView: 'Supprimer la vue',
+    viewNamePlaceholder: 'Vue personnalisée', customView: 'Vue personnalisée',
     noTasksInView: 'Aucune tâche dans « {name} »',
     contexts: { home: 'Maison', work: 'Travail', call: 'Appel', computer: 'Travail profond', errand: 'Courses', health: 'Santé' },
     viewNames: {
-      'All Attack': 'Tout attaquer',
-      "Today's Battlefield": "Champ de bataille du jour",
-      'Slow Burn': 'Feu doux',
-      'Delegation Pending': 'Délégation en attente',
-      'Dead Weight': 'Poids mort',
-      'Quick Wins': 'Gains rapides',
-      'Deep Focus': 'Concentration profonde',
+      'All Attack': 'Tout attaquer', "Today's Battlefield": "Champ de bataille du jour",
+      'Slow Burn': 'Feu doux', 'Delegation Pending': 'Délégation en attente',
+      'Dead Weight': 'Poids mort', 'Quick Wins': 'Gains rapides', 'Deep Focus': 'Concentration profonde',
     },
     viewDescs: {
-      'All Attack': 'Toutes les tâches actives',
-      "Today's Battlefield": 'À faire maintenant',
-      'Slow Burn': 'Important mais pas urgent',
-      'Delegation Pending': 'En attente de quelqu’un',
-      'Dead Weight': 'Faible impact — à supprimer',
-      'Quick Wins': 'Rapide et fort impact',
+      'All Attack': 'Toutes les tâches actives', "Today's Battlefield": 'À faire maintenant',
+      'Slow Burn': 'Important mais pas urgent', 'Delegation Pending': 'En attente de quelqu’un',
+      'Dead Weight': 'Faible impact — à supprimer', 'Quick Wins': 'Rapide et fort impact',
       'Deep Focus': 'Long et fort impact',
     },
   },
   ar: {
-    allTasks: 'كل المهام',
-    saveView: 'حفظ العرض',
-    allContexts: 'جميع السياقات',
-    allProjects: 'جميع المشاريع',
-    promptViewName: 'اسم هذا العرض:',
-    confirmDeleteView: 'حذف هذا العرض؟',
-    deleteView: 'حذف العرض',
-    viewNamePlaceholder: 'عرض مخصص',
-    customView: 'عرض مخصص',
+    allTasks: 'كل المهام', saveView: 'حفظ العرض', allContexts: 'جميع السياقات', allProjects: 'جميع المشاريع',
+    promptViewName: 'اسم هذا العرض:', confirmDeleteView: 'حذف هذا العرض؟', deleteView: 'حذف العرض',
+    viewNamePlaceholder: 'عرض مخصص', customView: 'عرض مخصص',
     noTasksInView: 'لا توجد مهام في "{name}"',
     contexts: { home: 'المنزل', work: 'العمل', call: 'مكالمة', computer: 'عمل عميق', errand: 'مشاوير', health: 'الصحة' },
     viewNames: {
-      'All Attack': 'الهجوم الشامل',
-      "Today's Battlefield": 'ميدان اليوم',
-      'Slow Burn': 'الحرق البطيء',
-      'Delegation Pending': 'التفويض المعلّق',
-      'Dead Weight': 'الوزن الميت',
-      'Quick Wins': 'انتصارات سريعة',
-      'Deep Focus': 'تركيز عميق',
+      'All Attack': 'الهجوم الشامل', "Today's Battlefield": 'ميدان اليوم',
+      'Slow Burn': 'الحرق البطيء', 'Delegation Pending': 'التفويض المعلّق',
+      'Dead Weight': 'الوزن الميت', 'Quick Wins': 'انتصارات سريعة', 'Deep Focus': 'تركيز عميق',
     },
     viewDescs: {
-      'All Attack': 'كل المهام النشطة',
-      "Today's Battlefield": 'أنجزها الآن',
-      'Slow Burn': 'مهم لكن ليس عاجلاً',
-      'Delegation Pending': 'بانتظار شخص آخر',
-      'Dead Weight': 'أثر منخفض — احذفها',
-      'Quick Wins': 'سريعة وعالية الأثر',
+      'All Attack': 'كل المهام النشطة', "Today's Battlefield": 'أنجزها الآن',
+      'Slow Burn': 'مهم لكن ليس عاجلاً', 'Delegation Pending': 'بانتظار شخص آخر',
+      'Dead Weight': 'أثر منخفض — احذفها', 'Quick Wins': 'سريعة وعالية الأثر',
       'Deep Focus': 'طويلة وعالية الأثر',
     },
   },
@@ -159,6 +126,10 @@ export const PriorityListView: React.FC<PriorityListViewProps> = ({
   onUpdateSubtasks,
   onSaveAsTemplate,
   onQuickAdd,
+  onBulkComplete,
+  onBulkDelete,
+  onBulkMoveToProject,
+  onBulkMoveQuadrant,
 }) => {
   const { t, isRTL, language } = useLanguage();
   const lang = (language as LocalLang) || 'en';
@@ -178,6 +149,10 @@ export const PriorityListView: React.FC<PriorityListViewProps> = ({
     } catch {}
     return [];
   });
+
+  // ─── Bulk selection state ───
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const visibleProjects = useMemo(
     () => projects.filter((p) => !p.deletedAt && !p.archivedAt),
@@ -276,6 +251,33 @@ export const PriorityListView: React.FC<PriorityListViewProps> = ({
     completed: 'list_status_completed',
   };
 
+  // ─── Selection helpers ───
+  const enterSelection = (taskId: string) => {
+    setSelectionMode(true);
+    setSelectedIds(new Set([taskId]));
+  };
+
+  const toggleSelect = (taskId: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(taskId)) next.delete(taskId);
+      else next.add(taskId);
+      return next;
+    });
+  };
+
+  const exitSelection = () => {
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+  };
+
+  // Auto-exit if all selections are cleared
+  useEffect(() => {
+    if (selectionMode && selectedIds.size === 0) {
+      setSelectionMode(false);
+    }
+  }, [selectionMode, selectedIds]);
+
   const handleSelectView = (viewId: string | null) => {
     triggerHaptic('medium');
     setSelectedViewId(viewId);
@@ -322,6 +324,8 @@ export const PriorityListView: React.FC<PriorityListViewProps> = ({
     if (selectedViewId === viewId) setSelectedViewId(null);
     triggerHaptic('medium');
   };
+
+  const selectedIdsArray = Array.from(selectedIds);
 
   return (
     <div id="priority-list-view" className="space-y-3.5 pb-4">
@@ -424,7 +428,6 @@ export const PriorityListView: React.FC<PriorityListViewProps> = ({
         </button>
       </div>
 
-      {/* ─── PROJECT FILTER CHIPS ─── */}
       {visibleProjects.length > 0 && (
         <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
           <button
@@ -466,9 +469,7 @@ export const PriorityListView: React.FC<PriorityListViewProps> = ({
                 <span>{project.name}</span>
                 <span
                   className="text-[9px] px-1 rounded font-black"
-                  style={{
-                    backgroundColor: isSelected ? 'rgba(255,255,255,0.25)' : `${project.color}25`,
-                  }}
+                  style={{ backgroundColor: isSelected ? 'rgba(255,255,255,0.25)' : `${project.color}25` }}
                 >
                   {count}
                 </span>
@@ -637,10 +638,38 @@ export const PriorityListView: React.FC<PriorityListViewProps> = ({
               onMoveQuadrant={onMoveTaskQuadrant}
               onUpdateSubtasks={onUpdateSubtasks}
               onSaveAsTemplate={onSaveAsTemplate}
+              isSelectionMode={selectionMode}
+              isSelected={selectedIds.has(task.id)}
+              onToggleSelect={toggleSelect}
+              onLongPress={enterSelection}
             />
           ))
         )}
       </div>
+
+      {/* ─── Bulk action bar ─── */}
+      <BulkActionBar
+        isOpen={selectionMode && selectedIds.size > 0}
+        selectedCount={selectedIds.size}
+        projects={visibleProjects}
+        onClose={exitSelection}
+        onComplete={() => {
+          onBulkComplete?.(selectedIdsArray);
+          exitSelection();
+        }}
+        onDelete={() => {
+          onBulkDelete?.(selectedIdsArray);
+          exitSelection();
+        }}
+        onMoveToProject={(projectId) => {
+          onBulkMoveToProject?.(selectedIdsArray, projectId);
+          exitSelection();
+        }}
+        onMoveQuadrant={(quadrant) => {
+          onBulkMoveQuadrant?.(selectedIdsArray, quadrant);
+          exitSelection();
+        }}
+      />
     </div>
   );
 };

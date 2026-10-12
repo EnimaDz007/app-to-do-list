@@ -1,6 +1,7 @@
 // ─────────────────────────────────────────────────────────────
 //  FILE: src/App.tsx
-//  Full file — Clerk auth + two-way sync + QuickAddBar + custom reminders
+//  Full file — Clerk auth + two-way sync + QuickAddBar + reminders
+//  + Bulk actions + Full backup/restore + Reset (tombstone-safe)
 // ─────────────────────────────────────────────────────────────
 
 /**
@@ -96,6 +97,7 @@ import {
   setLastSyncAt as storeLastSyncAt,
 } from './utils/sync';
 import { scheduleTaskReminders, cancelTaskReminders, recomputeReminder } from './utils/reminderScheduler';
+import { FullBackup } from './utils/fullBackup';
 import { Mic } from 'lucide-react';
 import { triggerHaptic } from './utils/haptics';
 
@@ -1470,6 +1472,181 @@ export default function App() {
     scheduleSync();
   };
 
+  // ─── FULL BACKUP: RESTORE + RESET ───
+
+  const handleRestoreFullBackup = (backup: FullBackup) => {
+    const now = new Date().toISOString();
+
+    // Always stamp with a fresh `now` so restored items beat any tombstones
+    // that may still be on the server from a previous reset.
+    const stampedTasks = backup.data.tasks.map((t) => ({ ...t, updatedAt: now }));
+    const stampedHabits = backup.data.habits.map((h) => ({ ...h, updatedAt: now }));
+    const stampedCheckIns = backup.data.checkIns.map((ci) => ({ ...ci, updatedAt: now }));
+    const stampedMilestones = backup.data.milestones.map((m) => ({ ...m, updatedAt: now }));
+    const stampedProjects = backup.data.projects.map((p) => ({ ...p, updatedAt: now }));
+
+    // Update refs immediately so the following runSync sees fresh state
+    tasksRef.current = stampedTasks;
+    habitsRef.current = stampedHabits;
+    checkInsRef.current = stampedCheckIns;
+    milestonesRef.current = stampedMilestones;
+    projectsRef.current = stampedProjects;
+
+    setTasks(stampedTasks);
+    setHabits(stampedHabits);
+    setCheckIns(stampedCheckIns);
+    setMilestones(stampedMilestones);
+    setProjects(stampedProjects);
+    setCustomTemplates(backup.data.customTemplates || []);
+    setDailyDigest(backup.data.dailyDigest || DEFAULT_DIGEST_CONFIG);
+    setEscalation(backup.data.escalation || DEFAULT_ESCALATION_CONFIG);
+
+    try { localStorage.removeItem(`taskflow_lastSync_${userId}`); } catch {}
+    setTimeout(() => { void runSync({ silent: true }); }, 500);
+
+    triggerHaptic('success');
+    playAudioChime('success');
+  };
+
+  const handleResetEverything = () => {
+    const now = new Date().toISOString();
+
+    // ── Soft-delete every item so tombstones propagate to server ──
+    // Using refs directly so the following runSync sees the new state
+    // without waiting for React's async re-render.
+    const tombstonedTasks = tasksRef.current.map((t) => ({
+      ...t,
+      deletedAt: now,
+      updatedAt: now,
+    }));
+    const tombstonedHabits = habitsRef.current.map((h) => ({
+      ...h,
+      deletedAt: now,
+      updatedAt: now,
+    }));
+    const tombstonedCheckIns = checkInsRef.current.map((ci) => ({
+      ...ci,
+      deletedAt: now,
+      updatedAt: now,
+    }));
+    const tombstonedMilestones = milestonesRef.current.map((m) => ({
+      ...m,
+      deletedAt: now,
+      updatedAt: now,
+    }));
+    const tombstonedProjects = projectsRef.current.map((p) => ({
+      ...p,
+      deletedAt: now,
+      updatedAt: now,
+    }));
+
+    // Update refs immediately (before state flushes)
+    tasksRef.current = tombstonedTasks;
+    habitsRef.current = tombstonedHabits;
+    checkInsRef.current = tombstonedCheckIns;
+    milestonesRef.current = tombstonedMilestones;
+    projectsRef.current = tombstonedProjects;
+
+    // Update state
+    setTasks(tombstonedTasks);
+    setHabits(tombstonedHabits);
+    setCheckIns(tombstonedCheckIns);
+    setMilestones(tombstonedMilestones);
+    setProjects(tombstonedProjects);
+
+    // Non-synced prefs — safe to wipe directly
+    setCustomTemplates([]);
+
+    // Cancel any pending reminders
+    for (const t of tasksRef.current) {
+      cancelTaskReminder(t.id);
+      void cancelTaskReminders(t.id);
+    }
+
+    // Clear the last-sync marker so the next sync is a full round trip
+    try { localStorage.removeItem(`taskflow_lastSync_${userId}`); } catch {}
+
+    triggerHaptic('heavy');
+    playAudioChime('beep');
+
+    // Give React + refs time to settle, then push tombstones to server
+    setTimeout(() => { void runSync({ silent: true }); }, 500);
+  };
+
+  // ─── BULK ACTIONS ───
+
+  const handleBulkComplete = (taskIds: string[]) => {
+    const now = new Date().toISOString();
+    const idSet = new Set(taskIds);
+    let karmaTotal = 0;
+
+    setTasks((prev) =>
+      prev.map((t) => {
+        if (!idSet.has(t.id)) return t;
+        if (t.status === 'completed') return t;
+        karmaTotal += KARMA_PER_QUADRANT[t.quadrant] ?? 1;
+        cancelTaskReminder(t.id);
+        void cancelTaskReminders(t.id);
+        return { ...t, status: 'completed', completedAt: now, updatedAt: now };
+      })
+    );
+
+    if (karmaTotal > 0) showKarmaPopup(karmaTotal);
+    triggerHaptic('success');
+    playAudioChime('success');
+    scheduleSync();
+  };
+
+  const handleBulkDelete = (taskIds: string[]) => {
+    const now = new Date().toISOString();
+    const idSet = new Set(taskIds);
+
+    setTasks((prev) =>
+      prev.map((t) => {
+        if (!idSet.has(t.id)) return t;
+        cancelTaskReminder(t.id);
+        void cancelTaskReminders(t.id);
+        return { ...t, deletedAt: now, updatedAt: now };
+      })
+    );
+
+    triggerHaptic('heavy');
+    playAudioChime('beep');
+    scheduleSync();
+  };
+
+  const handleBulkMoveToProject = (taskIds: string[], projectId: string | null) => {
+    const now = new Date().toISOString();
+    const idSet = new Set(taskIds);
+
+    setTasks((prev) =>
+      prev.map((t) =>
+        idSet.has(t.id)
+          ? { ...t, projectId: projectId || undefined, updatedAt: now }
+          : t
+      )
+    );
+
+    triggerHaptic('success');
+    scheduleSync();
+  };
+
+  const handleBulkMoveQuadrant = (taskIds: string[], quadrant: QuadrantId) => {
+    const now = new Date().toISOString();
+    const idSet = new Set(taskIds);
+
+    setTasks((prev) =>
+      prev.map((t) =>
+        idSet.has(t.id)
+          ? { ...t, quadrant, updatedAt: now }
+          : t
+      )
+    );
+
+    triggerHaptic('success');
+    scheduleSync();
+  };
+
   const completedCount = visibleTasks.filter((t) => t.status === 'completed').length;
   const urgentCount = visibleTasks.filter((t) => t.quadrant === 'do_first' && t.status !== 'completed').length;
 
@@ -1718,6 +1895,10 @@ export default function App() {
                 onUpdateSubtasks={handleUpdateSubtasks}
                 onSaveAsTemplate={handleSaveAsTemplate}
                 onQuickAdd={handleSaveTask}
+                onBulkComplete={handleBulkComplete}
+                onBulkDelete={handleBulkDelete}
+                onBulkMoveToProject={handleBulkMoveToProject}
+                onBulkMoveQuadrant={handleBulkMoveQuadrant}
               />
             )}
             {(activeTab === 'timeline' || activeTab === 'calendar' || activeTab === 'flow') && (
@@ -1904,6 +2085,18 @@ export default function App() {
         isSyncing={isSyncing}
         lastSyncedAt={lastSyncedAt}
         syncError={syncError}
+        fullBackupData={{
+          tasks,
+          habits,
+          checkIns,
+          milestones,
+          projects,
+          customTemplates,
+          dailyDigest,
+          escalation,
+        }}
+        onRestoreFullBackup={handleRestoreFullBackup}
+        onResetEverything={handleResetEverything}
       />
 
       <CommandPalette

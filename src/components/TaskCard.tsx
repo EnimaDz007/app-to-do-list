@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Check, Clock, Edit2, Trash2, Play, MoveRight, GripVertical, BookmarkPlus } from 'lucide-react';
 import { Task, QuadrantId, Subtask, Project } from '../types';
 import { triggerHaptic } from '../utils/haptics';
@@ -18,7 +18,15 @@ interface TaskCardProps {
   onMoveQuadrant?: (taskId: string, targetQuadrant: QuadrantId) => void;
   onUpdateSubtasks?: (taskId: string, nextSubtasks: Subtask[]) => void;
   onSaveAsTemplate?: (task: Task) => void;
+  /* ─── Bulk-select props (all optional, disabled by default) ─── */
+  isSelectionMode?: boolean;
+  isSelected?: boolean;
+  onToggleSelect?: (taskId: string) => void;
+  onLongPress?: (taskId: string) => void;
 }
+
+const LONG_PRESS_MS = 500;
+const MOVE_CANCEL_PX = 8;
 
 export const TaskCard: React.FC<TaskCardProps> = ({
   task,
@@ -30,11 +38,69 @@ export const TaskCard: React.FC<TaskCardProps> = ({
   onMoveQuadrant,
   onUpdateSubtasks,
   onSaveAsTemplate,
+  isSelectionMode = false,
+  isSelected = false,
+  onToggleSelect,
+  onLongPress,
 }) => {
   const { t, language } = useLanguage();
   const lang = (language as 'en' | 'fr' | 'ar') || 'en';
   const [isMoveMenuOpen, setIsMoveMenuOpen] = useState(false);
   const isDone = task.status === 'completed';
+
+  // ─── Long-press detection ───
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pressStartRef = useRef<{ x: number; y: number } | null>(null);
+  const longPressFiredRef = useRef(false);
+
+  const clearLongPress = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    pressStartRef.current = null;
+  };
+
+  useEffect(() => () => clearLongPress(), []);
+
+  const handlePointerDown = (e: React.PointerEvent) => {
+    if (!onLongPress) return;
+    if (isSelectionMode) return;
+    if (isDone) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    pressStartRef.current = { x: e.clientX, y: e.clientY };
+    longPressFiredRef.current = false;
+    longPressTimerRef.current = setTimeout(() => {
+      longPressFiredRef.current = true;
+      triggerHaptic('medium');
+      onLongPress(task.id);
+    }, LONG_PRESS_MS);
+  };
+
+  const handlePointerMove = (e: React.PointerEvent) => {
+    const start = pressStartRef.current;
+    if (!start) return;
+    const dx = Math.abs(e.clientX - start.x);
+    const dy = Math.abs(e.clientY - start.y);
+    if (dx > MOVE_CANCEL_PX || dy > MOVE_CANCEL_PX) clearLongPress();
+  };
+
+  const handlePointerUp = () => clearLongPress();
+  const handlePointerCancel = () => clearLongPress();
+
+  // ─── Card click (respects selection mode + long-press suppression) ───
+  const handleCardClick = (e: React.MouseEvent) => {
+    if (longPressFiredRef.current) {
+      e.preventDefault();
+      e.stopPropagation();
+      longPressFiredRef.current = false;
+      return;
+    }
+    if (isSelectionMode && onToggleSelect) {
+      triggerHaptic('light');
+      onToggleSelect(task.id);
+    }
+  };
 
   const categoryColors: Record<string, { bg: string; text: string }> = {
     Engineering: { bg: 'bg-indigo-50 dark:bg-indigo-500/15', text: 'text-indigo-600 dark:text-indigo-400' },
@@ -68,7 +134,6 @@ export const TaskCard: React.FC<TaskCardProps> = ({
     return translateTaskDescription(task.description, lang) ?? task.description;
   }, [task.description, lang]);
 
-  // ─── Project dot (features #1) ───
   const assignedProject = useMemo(
     () => (task.projectId ? projects.find((p) => p.id === task.projectId) || null : null),
     [task.projectId, projects]
@@ -77,43 +142,68 @@ export const TaskCard: React.FC<TaskCardProps> = ({
   return (
     <div
       id={`task-card-${task.id}`}
-      draggable={!isDone}
+      draggable={!isDone && !isSelectionMode}
       onDragStart={(e) => {
-        if (!isDone) {
+        if (!isDone && !isSelectionMode) {
           e.dataTransfer.setData('text/plain', task.id);
           e.dataTransfer.effectAllowed = 'move';
           triggerHaptic('light');
+        } else {
+          e.preventDefault();
         }
       }}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerCancel}
+      onClick={handleCardClick}
       className={`group relative rounded-xl border p-3.5 transition-all ${
-        isDone
+        isSelected
+          ? 'bg-indigo-50 dark:bg-indigo-950/40 border-indigo-500 dark:border-indigo-500 ring-2 ring-indigo-500/30'
+          : isSelectionMode
+          ? 'bg-white dark:bg-slate-800/80 border-slate-300 dark:border-slate-600 shadow-xs cursor-pointer'
+          : isDone
           ? 'bg-slate-50/60 dark:bg-slate-900/40 border-slate-200 dark:border-slate-800/80 opacity-60'
           : 'bg-white hover:bg-slate-50/80 dark:bg-slate-800/80 dark:hover:bg-slate-800 border-slate-200 dark:border-slate-700/60 shadow-xs cursor-grab active:cursor-grabbing'
       }`}
+      style={{ touchAction: 'pan-y' }}
     >
       <div className="flex items-start gap-2.5">
-        {!isDone && (
+        {!isDone && !isSelectionMode && (
           <div className="mt-1 text-slate-300 dark:text-slate-600 hidden sm:block group-hover:text-slate-400 dark:group-hover:text-slate-400 transition cursor-grab">
             <GripVertical className="w-3.5 h-3.5" />
           </div>
         )}
 
-        <button
-          id={`btn-toggle-task-${task.id}`}
-          onClick={(e) => {
-            e.stopPropagation();
-            triggerHaptic(isDone ? 'light' : 'success');
-            onToggleStatus(task.id);
-          }}
-          className={`mt-0.5 w-5 h-5 rounded-md border flex items-center justify-center shrink-0 transition-all cursor-pointer ${
-            isDone
-              ? 'bg-emerald-500 border-emerald-500 text-white'
-              : 'border-slate-400 dark:border-slate-500 hover:border-indigo-500 dark:hover:border-indigo-400 bg-white dark:bg-slate-900/50'
-          }`}
-          aria-label={isDone ? t('card_mark_incomplete') : t('card_mark_complete')}
-        >
-          {isDone && <Check className="w-3.5 h-3.5 stroke-[3]" />}
-        </button>
+        {/* ─── Selection circle OR complete circle ─── */}
+        {isSelectionMode ? (
+          <div
+            className={`mt-0.5 w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-all ${
+              isSelected
+                ? 'bg-indigo-600 border-indigo-600 text-white'
+                : 'border-slate-400 dark:border-slate-500 bg-white dark:bg-slate-900/50'
+            }`}
+          >
+            {isSelected && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+          </div>
+        ) : (
+          <button
+            id={`btn-toggle-task-${task.id}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              triggerHaptic(isDone ? 'light' : 'success');
+              onToggleStatus(task.id);
+            }}
+            className={`mt-0.5 w-5 h-5 rounded-md border flex items-center justify-center shrink-0 transition-all cursor-pointer ${
+              isDone
+                ? 'bg-emerald-500 border-emerald-500 text-white'
+                : 'border-slate-400 dark:border-slate-500 hover:border-indigo-500 dark:hover:border-indigo-400 bg-white dark:bg-slate-900/50'
+            }`}
+            aria-label={isDone ? t('card_mark_incomplete') : t('card_mark_complete')}
+          >
+            {isDone && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+          </button>
+        )}
 
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-2">
@@ -135,94 +225,109 @@ export const TaskCard: React.FC<TaskCardProps> = ({
               </h4>
             </div>
 
-            <div className="flex items-center gap-1 opacity-80 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity shrink-0">
-              {onStartFocus && !isDone && (
-                <button
-                  id={`btn-focus-task-${task.id}`}
-                  onClick={() => { triggerHaptic('medium'); onStartFocus(task); }}
-                  className="p-1 text-slate-400 hover:text-amber-500 dark:hover:text-amber-400 rounded hover:bg-slate-100 dark:hover:bg-slate-700/60 transition cursor-pointer"
-                  title={t('card_start_focus')}
-                >
-                  <Play className="w-3.5 h-3.5 fill-current" />
-                </button>
-              )}
-
-              {onMoveQuadrant && !isDone && (
-                <div className="relative">
+            {/* Actions hidden while in selection mode */}
+            {!isSelectionMode && (
+              <div className="flex items-center gap-1 opacity-80 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity shrink-0">
+                {onStartFocus && !isDone && (
                   <button
-                    id={`btn-move-task-${task.id}`}
+                    id={`btn-focus-task-${task.id}`}
                     onClick={(e) => {
                       e.stopPropagation();
-                      triggerHaptic('light');
-                      setIsMoveMenuOpen((prev) => !prev);
+                      triggerHaptic('medium');
+                      onStartFocus(task);
                     }}
-                    className="p-1 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 rounded hover:bg-slate-100 dark:hover:bg-slate-700/60 transition cursor-pointer"
-                    title={t('card_move_quadrant')}
+                    className="p-1 text-slate-400 hover:text-amber-500 dark:hover:text-amber-400 rounded hover:bg-slate-100 dark:hover:bg-slate-700/60 transition cursor-pointer"
+                    title={t('card_start_focus')}
                   >
-                    <MoveRight className="w-3.5 h-3.5" />
+                    <Play className="w-3.5 h-3.5 fill-current" />
                   </button>
+                )}
 
-                  {isMoveMenuOpen && (
-                    <div
-                      className="absolute right-0 top-full mt-1 w-32 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl py-1 z-30 text-[11px]"
-                      onClick={(e) => e.stopPropagation()}
+                {onMoveQuadrant && !isDone && (
+                  <div className="relative">
+                    <button
+                      id={`btn-move-task-${task.id}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        triggerHaptic('light');
+                        setIsMoveMenuOpen((prev) => !prev);
+                      }}
+                      className="p-1 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 rounded hover:bg-slate-100 dark:hover:bg-slate-700/60 transition cursor-pointer"
+                      title={t('card_move_quadrant')}
                     >
-                      <div className="px-2.5 py-1 text-[9px] uppercase font-bold text-slate-400 border-b border-slate-100 dark:border-slate-700/60">
-                        {t('card_move_to')}
-                      </div>
-                      {(['do_first', 'schedule', 'delegate', 'eliminate'] as QuadrantId[]).map((qId) => {
-                        if (qId === task.quadrant) return null;
-                        return (
-                          <button
-                            key={qId}
-                            onClick={() => {
-                              triggerHaptic('medium');
-                              onMoveQuadrant(task.id, qId);
-                              setIsMoveMenuOpen(false);
-                            }}
-                            className="w-full text-left rtl:text-right px-2.5 py-1.5 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 hover:text-indigo-600 dark:hover:text-indigo-400 transition cursor-pointer"
-                          >
-                            {t(`quad_${qId}` as TranslationKey)}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              )}
+                      <MoveRight className="w-3.5 h-3.5" />
+                    </button>
 
-              {onSaveAsTemplate && !isDone && (
+                    {isMoveMenuOpen && (
+                      <div
+                        className="absolute right-0 top-full mt-1 w-32 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl py-1 z-30 text-[11px]"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div className="px-2.5 py-1 text-[9px] uppercase font-bold text-slate-400 border-b border-slate-100 dark:border-slate-700/60">
+                          {t('card_move_to')}
+                        </div>
+                        {(['do_first', 'schedule', 'delegate', 'eliminate'] as QuadrantId[]).map((qId) => {
+                          if (qId === task.quadrant) return null;
+                          return (
+                            <button
+                              key={qId}
+                              onClick={() => {
+                                triggerHaptic('medium');
+                                onMoveQuadrant(task.id, qId);
+                                setIsMoveMenuOpen(false);
+                              }}
+                              className="w-full text-left rtl:text-right px-2.5 py-1.5 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 hover:text-indigo-600 dark:hover:text-indigo-400 transition cursor-pointer"
+                            >
+                              {t(`quad_${qId}` as TranslationKey)}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {onSaveAsTemplate && !isDone && (
+                  <button
+                    id={`btn-save-template-${task.id}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      triggerHaptic('medium');
+                      onSaveAsTemplate(task);
+                    }}
+                    className="p-1 text-slate-400 hover:text-violet-600 dark:hover:text-violet-400 rounded hover:bg-slate-100 dark:hover:bg-slate-700/60 transition cursor-pointer"
+                    title={t('tpl_save_as')}
+                  >
+                    <BookmarkPlus className="w-3.5 h-3.5" />
+                  </button>
+                )}
+
                 <button
-                  id={`btn-save-template-${task.id}`}
+                  id={`btn-edit-task-${task.id}`}
                   onClick={(e) => {
                     e.stopPropagation();
-                    triggerHaptic('medium');
-                    onSaveAsTemplate(task);
+                    triggerHaptic('light');
+                    onEditTask(task);
                   }}
-                  className="p-1 text-slate-400 hover:text-violet-600 dark:hover:text-violet-400 rounded hover:bg-slate-100 dark:hover:bg-slate-700/60 transition cursor-pointer"
-                  title={t('tpl_save_as')}
+                  className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded hover:bg-slate-100 dark:hover:bg-slate-700/60 transition cursor-pointer"
+                  title={t('card_edit')}
                 >
-                  <BookmarkPlus className="w-3.5 h-3.5" />
+                  <Edit2 className="w-3.5 h-3.5" />
                 </button>
-              )}
-
-              <button
-                id={`btn-edit-task-${task.id}`}
-                onClick={() => { triggerHaptic('light'); onEditTask(task); }}
-                className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded hover:bg-slate-100 dark:hover:bg-slate-700/60 transition cursor-pointer"
-                title={t('card_edit')}
-              >
-                <Edit2 className="w-3.5 h-3.5" />
-              </button>
-              <button
-                id={`btn-delete-task-${task.id}`}
-                onClick={() => { triggerHaptic('heavy'); onDeleteTask(task.id); }}
-                className="p-1 text-slate-400 hover:text-rose-500 dark:hover:text-rose-400 rounded hover:bg-slate-100 dark:hover:bg-slate-700/60 transition cursor-pointer"
-                title={t('card_delete')}
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-            </div>
+                <button
+                  id={`btn-delete-task-${task.id}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    triggerHaptic('heavy');
+                    onDeleteTask(task.id);
+                  }}
+                  className="p-1 text-slate-400 hover:text-rose-500 dark:hover:text-rose-400 rounded hover:bg-slate-100 dark:hover:bg-slate-700/60 transition cursor-pointer"
+                  title={t('card_delete')}
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
           </div>
 
           {translatedDescription && (
@@ -254,7 +359,7 @@ export const TaskCard: React.FC<TaskCardProps> = ({
             )}
           </div>
 
-          {onUpdateSubtasks && (
+          {onUpdateSubtasks && !isSelectionMode && (
             <SubtaskList
               subtasks={translatedSubtasks}
               onChange={(next) => onUpdateSubtasks(task.id, next)}
