@@ -16,7 +16,7 @@ import { LocalNotifications } from '@capacitor/local-notifications';
 import { useDevicePerformance } from './hooks/useDevicePerformance';
 import { Task, TabView, DeviceFrameMode, QuadrantId, Habit, HabitCheckIn, Milestone, DelegateStatus, Subtask, Template } from './types';
 import { INITIAL_TASKS } from './data/initialTasks';
-import { getDefaultTemplates } from './data/defaultTemplates';
+import { getDefaultTemplates, localizeClonedTasks } from './data/defaultTemplates';
 import { loadTemplates, saveTemplates, makeTemplateFromTask } from './utils/templateHelpers';
 import { Header } from './components/Header';
 import { BottomTabBar } from './components/BottomTabBar';
@@ -283,6 +283,18 @@ export default function App() {
     () => [...getDefaultTemplates(language as 'en' | 'fr' | 'ar'), ...customTemplates],
     [customTemplates, language]
   );
+
+  // Auto-localize built-in template tasks whenever language changes.
+  // Only touches tasks that came from a built-in template (ID match or
+  // title match). Custom tasks pass through untouched.
+  useEffect(() => {
+    const next = localizeClonedTasks(tasksRef.current, language as 'en' | 'fr' | 'ar');
+    if (next !== tasksRef.current) {
+      setTasks(next);
+      scheduleSync();
+    }
+    // eslint-disable-next-line
+  }, [language]);
 
   const visibleTasks = useMemo(() => tasks.filter((t) => !t.deletedAt), [tasks]);
   const activeTasks = visibleTasks.filter((t) => !t.archivedAt);
