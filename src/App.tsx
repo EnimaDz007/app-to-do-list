@@ -1269,10 +1269,8 @@ export default function App() {
 
   const handleEditTask = (task: Task) => { setEditingTask(task); setIsTaskModalOpen(true); };
 
-  // Called from TaskSummarySheet's "Edit" button — closes summary, opens edit modal
   const handleSummaryEdit = (task: Task) => {
     setSummaryTask(null);
-    // Small delay so the sheet animates out before the modal slides up
     setTimeout(() => {
       handleEditTask(task);
     }, 180);
@@ -1453,6 +1451,19 @@ export default function App() {
     setTasks((prev) =>
       prev.map((t) =>
         t.projectId === id ? { ...t, projectId: undefined, updatedAt: now } : t
+      )
+    );
+    triggerHaptic('success');
+    scheduleSync();
+  };
+
+  const handleArchiveProject = (id: string, archive: boolean) => {
+    const now = new Date().toISOString();
+    setProjects((prev) =>
+      prev.map((p) =>
+        p.id === id
+          ? { ...p, archivedAt: archive ? now : undefined, updatedAt: now }
+          : p
       )
     );
     triggerHaptic('success');
@@ -1696,6 +1707,7 @@ export default function App() {
             {activeTab === 'list' && (
               <PriorityListView
                 tasks={visibleTasks}
+                projects={visibleProjects}
                 onToggleStatus={handleToggleStatus}
                 onEditTask={handleEditTask}
                 onDeleteTask={handleDeleteTask}
@@ -1747,6 +1759,7 @@ export default function App() {
                 onQuickAddProject={handleSaveProject}
                 onEditProject={handleEditProject}
                 onDeleteProject={handleDeleteProject}
+                onArchiveProject={handleArchiveProject}
                 onTaskClick={handleEditTask}
               />
             )}

@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Check, Clock, Edit2, Trash2, Play, MoveRight, GripVertical, BookmarkPlus } from 'lucide-react';
-import { Task, QuadrantId, Subtask } from '../types';
+import { Task, QuadrantId, Subtask, Project } from '../types';
 import { triggerHaptic } from '../utils/haptics';
 import { useLanguage } from '../context/LanguageContext';
 import { TranslationKey } from '../i18n/translations';
@@ -9,6 +9,8 @@ import { translateSubtaskTree, translateTaskDescription, translateTaskTitle } fr
 
 interface TaskCardProps {
   task: Task;
+  /** Optional — pass projects so the card can render a project color dot. */
+  projects?: Project[];
   onToggleStatus: (taskId: string) => void;
   onEditTask: (task: Task) => void;
   onDeleteTask: (taskId: string) => void;
@@ -20,6 +22,7 @@ interface TaskCardProps {
 
 export const TaskCard: React.FC<TaskCardProps> = ({
   task,
+  projects = [],
   onToggleStatus,
   onEditTask,
   onDeleteTask,
@@ -65,6 +68,12 @@ export const TaskCard: React.FC<TaskCardProps> = ({
     return translateTaskDescription(task.description, lang) ?? task.description;
   }, [task.description, lang]);
 
+  // ─── Project dot (features #1) ───
+  const assignedProject = useMemo(
+    () => (task.projectId ? projects.find((p) => p.id === task.projectId) || null : null),
+    [task.projectId, projects]
+  );
+
   return (
     <div
       id={`task-card-${task.id}`}
@@ -108,15 +117,25 @@ export const TaskCard: React.FC<TaskCardProps> = ({
 
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-2">
-            <h4
-              className={`text-xs sm:text-sm font-medium leading-snug break-words ${
-                isDone ? 'line-through text-slate-400 dark:text-slate-500' : 'text-slate-900 dark:text-slate-100'
-              }`}
-            >
-              {translatedTitle}
-            </h4>
+            <div className="flex items-center gap-1.5 min-w-0">
+              {assignedProject && (
+                <span
+                  className="w-2 h-2 rounded-full shrink-0"
+                  style={{ backgroundColor: assignedProject.color }}
+                  title={`${assignedProject.emoji} ${assignedProject.name}`}
+                  aria-label={assignedProject.name}
+                />
+              )}
+              <h4
+                className={`text-xs sm:text-sm font-medium leading-snug break-words ${
+                  isDone ? 'line-through text-slate-400 dark:text-slate-500' : 'text-slate-900 dark:text-slate-100'
+                }`}
+              >
+                {translatedTitle}
+              </h4>
+            </div>
 
-            <div className="flex items-center gap-1 opacity-80 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+            <div className="flex items-center gap-1 opacity-80 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity shrink-0">
               {onStartFocus && !isDone && (
                 <button
                   id={`btn-focus-task-${task.id}`}

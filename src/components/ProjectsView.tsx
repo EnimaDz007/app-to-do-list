@@ -1,14 +1,10 @@
 import React, { useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, ChevronLeft, MoreVertical, Pencil, Trash2 } from 'lucide-react';
+import { Plus, ChevronLeft, ChevronDown, ChevronRight, MoreVertical, Pencil, Trash2, Archive, ArchiveRestore } from 'lucide-react';
 import { Project, Task, PriorityLevel } from '../types';
 import { useLanguage } from '../context/LanguageContext';
 import { triggerHaptic } from '../utils/haptics';
 import { ProjectFormData } from './ProjectModal';
-
-// ─────────────────────────────────────────────────────────────
-//   TYPES
-// ─────────────────────────────────────────────────────────────
 
 interface ProjectsViewProps {
   projects: Project[];
@@ -17,14 +13,11 @@ interface ProjectsViewProps {
   onQuickAddProject: (data: ProjectFormData) => void;
   onEditProject: (project: Project) => void;
   onDeleteProject: (id: string) => void;
+  onArchiveProject: (id: string, archive: boolean) => void;
   onTaskClick: (task: Task) => void;
 }
 
 type LocalLang = 'en' | 'fr' | 'ar';
-
-// ─────────────────────────────────────────────────────────────
-//   QUICK-START PRESETS (per-language seed suggestions)
-// ─────────────────────────────────────────────────────────────
 
 type Preset = { name: string; emoji: string; color: string };
 
@@ -46,16 +39,13 @@ const PRESETS: Record<LocalLang, Preset[]> = {
   ],
 };
 
-// ─────────────────────────────────────────────────────────────
-//   COPY (i18n)
-// ─────────────────────────────────────────────────────────────
-
 const COPY: Record<LocalLang, {
   title: string;
   emptyTitle: string;
   emptyBody: string;
   emptyFilterHint: string;
   quickStart: string;
+  archivedSection: string;
   noTasks: string;
   active: string;
   done: string;
@@ -66,6 +56,8 @@ const COPY: Record<LocalLang, {
   back: string;
   edit: string;
   delete: string;
+  archive: string;
+  unarchive: string;
   deleteConfirmTitle: string;
   deleteConfirmBody: string;
   cancel: string;
@@ -81,6 +73,7 @@ const COPY: Record<LocalLang, {
     emptyBody: 'Group related tasks into projects — like "Work", "Health", or "Reading". Tap + to create your first one, or pick a preset below.',
     emptyFilterHint: 'Add a task from the main tab and assign it to this project.',
     quickStart: 'Quick start',
+    archivedSection: 'Archived',
     noTasks: 'No tasks',
     active: 'active',
     done: 'done',
@@ -91,6 +84,8 @@ const COPY: Record<LocalLang, {
     back: 'Back',
     edit: 'Edit',
     delete: 'Delete',
+    archive: 'Archive',
+    unarchive: 'Unarchive',
     deleteConfirmTitle: 'Delete this project?',
     deleteConfirmBody: 'Tasks assigned to it will be unassigned, but not deleted.',
     cancel: 'Cancel',
@@ -106,6 +101,7 @@ const COPY: Record<LocalLang, {
     emptyBody: 'Regroupez vos tâches par projet — comme « Travail », « Santé » ou « Lecture ». Appuyez sur + ou choisissez un modèle ci-dessous.',
     emptyFilterHint: 'Ajoutez une tâche depuis l’onglet principal et assignez-la à ce projet.',
     quickStart: 'Démarrage rapide',
+    archivedSection: 'Archivés',
     noTasks: 'Aucune tâche',
     active: 'en cours',
     done: 'terminées',
@@ -116,6 +112,8 @@ const COPY: Record<LocalLang, {
     back: 'Retour',
     edit: 'Modifier',
     delete: 'Supprimer',
+    archive: 'Archiver',
+    unarchive: 'Désarchiver',
     deleteConfirmTitle: 'Supprimer ce projet ?',
     deleteConfirmBody: 'Les tâches associées seront désassignées mais pas supprimées.',
     cancel: 'Annuler',
@@ -131,6 +129,7 @@ const COPY: Record<LocalLang, {
     emptyBody: 'جمّع مهامك في مشاريع — مثل "العمل" أو "الصحة" أو "القراءة". اضغط + أو اختر نموذجاً جاهزاً أدناه.',
     emptyFilterHint: 'أضف مهمة من علامة التبويب الرئيسية واختر هذا المشروع.',
     quickStart: 'بداية سريعة',
+    archivedSection: 'المؤرشفة',
     noTasks: 'لا توجد مهام',
     active: 'نشطة',
     done: 'مكتملة',
@@ -141,6 +140,8 @@ const COPY: Record<LocalLang, {
     back: 'رجوع',
     edit: 'تعديل',
     delete: 'حذف',
+    archive: 'أرشفة',
+    unarchive: 'إلغاء الأرشفة',
     deleteConfirmTitle: 'حذف هذا المشروع؟',
     deleteConfirmBody: 'ستُلغى المهام المرتبطة به دون حذفها.',
     cancel: 'إلغاء',
@@ -152,20 +153,12 @@ const COPY: Record<LocalLang, {
   },
 };
 
-// ─────────────────────────────────────────────────────────────
-//   PRIORITY STYLES (colors only — labels come from COPY)
-// ─────────────────────────────────────────────────────────────
-
 const PRIORITY_STYLES: Record<PriorityLevel, { bg: string; text: string }> = {
   urgent: { bg: 'bg-red-100 dark:bg-red-950/40',       text: 'text-red-600 dark:text-red-400' },
   high:   { bg: 'bg-indigo-100 dark:bg-indigo-950/40', text: 'text-indigo-600 dark:text-indigo-400' },
   medium: { bg: 'bg-amber-100 dark:bg-amber-950/40',   text: 'text-amber-600 dark:text-amber-400' },
   low:    { bg: 'bg-slate-100 dark:bg-slate-800',      text: 'text-slate-600 dark:text-slate-300' },
 };
-
-// ─────────────────────────────────────────────────────────────
-//   COMPONENT
-// ─────────────────────────────────────────────────────────────
 
 export const ProjectsView: React.FC<ProjectsViewProps> = ({
   projects,
@@ -174,6 +167,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
   onQuickAddProject,
   onEditProject,
   onDeleteProject,
+  onArchiveProject,
   onTaskClick,
 }) => {
   const { language } = useLanguage();
@@ -184,10 +178,19 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [menuProjectId, setMenuProjectId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
 
-  const visibleProjects = useMemo(
-    () => projects.filter((p) => !p.deletedAt && !p.archivedAt),
+  const allVisibleProjects = useMemo(
+    () => projects.filter((p) => !p.deletedAt),
     [projects]
+  );
+  const activeProjects = useMemo(
+    () => allVisibleProjects.filter((p) => !p.archivedAt),
+    [allVisibleProjects]
+  );
+  const archivedProjects = useMemo(
+    () => allVisibleProjects.filter((p) => !!p.archivedAt),
+    [allVisibleProjects]
   );
 
   const visibleTasks = useMemo(
@@ -205,16 +208,16 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
     return map;
   }, [visibleTasks]);
 
-  const totalProjects = visibleProjects.length;
+  const totalProjects = activeProjects.length;
   const totalTasks = useMemo(() => {
     let n = 0;
-    for (const p of visibleProjects) n += (tasksByProject.get(p.id) || []).length;
+    for (const p of activeProjects) n += (tasksByProject.get(p.id) || []).length;
     return n;
-  }, [visibleProjects, tasksByProject]);
+  }, [activeProjects, tasksByProject]);
 
   const selectedProject = useMemo(
-    () => (selectedProjectId ? visibleProjects.find((p) => p.id === selectedProjectId) || null : null),
-    [selectedProjectId, visibleProjects]
+    () => (selectedProjectId ? allVisibleProjects.find((p) => p.id === selectedProjectId) || null : null),
+    [selectedProjectId, allVisibleProjects]
   );
 
   const filteredActiveTasks = useMemo(() => {
@@ -261,6 +264,13 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
     triggerHaptic('medium');
     setMenuProjectId(null);
     onEditProject(project);
+  };
+
+  const handleArchiveToggle = (project: Project) => {
+    triggerHaptic('medium');
+    setMenuProjectId(null);
+    onArchiveProject(project.id, !project.archivedAt);
+    if (selectedProjectId === project.id) setSelectedProjectId(null);
   };
 
   const requestDelete = (id: string) => {
@@ -319,10 +329,64 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
     });
   };
 
+  // ── Reusable card renderer (active + archived use same look, archived just dims) ──
+  const renderProjectCard = (project: Project, isArchived: boolean) => {
+    const { activeCount, doneCount } = getCounts(project.id);
+    return (
+      <motion.div
+        key={project.id}
+        layout
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: isArchived ? 0.55 : 1, scale: 1 }}
+        transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+        className="relative"
+      >
+        <button
+          onClick={() => openProject(project.id)}
+          className="w-full text-start rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 pb-5 hover:border-slate-300 dark:hover:border-slate-700 transition-all cursor-pointer relative overflow-hidden"
+        >
+          <div
+            className="w-11 h-11 rounded-xl flex items-center justify-center text-xl mb-3 shadow-sm"
+            style={{ backgroundColor: project.color, filter: isArchived ? 'grayscale(0.5)' : undefined }}
+          >
+            <span className="drop-shadow-sm">{project.emoji}</span>
+          </div>
+
+          <div className="text-[14px] font-black text-slate-900 dark:text-white tracking-tight mb-0.5 truncate pe-7">
+            {project.name}
+          </div>
+
+          <div className="text-[10px] text-slate-500 dark:text-slate-400 font-medium truncate">
+            {subtitleFor(activeCount, doneCount)}
+          </div>
+
+          <div
+            className="absolute start-0 end-0 bottom-0 h-[3px] opacity-90"
+            style={{ backgroundColor: project.color, opacity: isArchived ? 0.4 : 0.9 }}
+          />
+        </button>
+
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            openMenu(project.id);
+          }}
+          className="absolute top-3 end-3 w-7 h-7 rounded-lg bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm flex items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-white dark:hover:bg-slate-800 transition cursor-pointer"
+          aria-label={copy.projectMenuAria}
+        >
+          <MoreVertical className="w-4 h-4" />
+        </button>
+      </motion.div>
+    );
+  };
+
   return (
     <div dir={isRtl ? 'rtl' : 'ltr'} className="relative">
       <AnimatePresence mode="wait" initial={false}>
         {selectedProject ? (
+          // ══════════════════════════════════════════════════
+          //   FILTERED VIEW
+          // ══════════════════════════════════════════════════
           <motion.div
             key={`filter-${selectedProject.id}`}
             initial={{ opacity: 0, x: 24 }}
@@ -405,6 +469,9 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
             )}
           </motion.div>
         ) : (
+          // ══════════════════════════════════════════════════
+          //   GRID VIEW
+          // ══════════════════════════════════════════════════
           <motion.div
             key="grid"
             initial={{ opacity: 0, x: -24 }}
@@ -432,8 +499,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
               </button>
             </div>
 
-            {visibleProjects.length === 0 ? (
-              // ── EMPTY STATE + QUICK-START PRESETS ──
+            {allVisibleProjects.length === 0 ? (
               <div className="py-6">
                 <div className="text-center px-6 mb-8">
                   <div className="text-5xl mb-3 opacity-40">📁</div>
@@ -470,63 +536,61 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                 </div>
               </div>
             ) : (
-              <div className="grid grid-cols-2 gap-3">
-                {visibleProjects.map((project) => {
-                  const { activeCount, doneCount } = getCounts(project.id);
-                  return (
-                    <motion.div
-                      key={project.id}
-                      layout
-                      initial={{ opacity: 0, scale: 0.95 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-                      className="relative"
+              <>
+                {activeProjects.length > 0 && (
+                  <div className="grid grid-cols-2 gap-3">
+                    {activeProjects.map((p) => renderProjectCard(p, false))}
+                  </div>
+                )}
+
+                {archivedProjects.length > 0 && (
+                  <div className="mt-6">
+                    <button
+                      onClick={() => {
+                        triggerHaptic('light');
+                        setShowArchived((v) => !v);
+                      }}
+                      className="w-full flex items-center justify-between px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-900/60 hover:bg-slate-100 dark:hover:bg-slate-800/60 transition cursor-pointer"
                     >
-                      <button
-                        onClick={() => openProject(project.id)}
-                        className="w-full text-start rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 pb-5 hover:border-slate-300 dark:hover:border-slate-700 transition-all cursor-pointer relative overflow-hidden"
-                      >
-                        <div
-                          className="w-11 h-11 rounded-xl flex items-center justify-center text-xl mb-3 shadow-sm"
-                          style={{ backgroundColor: project.color }}
+                      <div className="flex items-center gap-2">
+                        {isRtl ? (
+                          showArchived ? <ChevronDown className="w-4 h-4 text-slate-500" /> : <ChevronLeft className="w-4 h-4 text-slate-500" />
+                        ) : (
+                          showArchived ? <ChevronDown className="w-4 h-4 text-slate-500" /> : <ChevronRight className="w-4 h-4 text-slate-500" />
+                        )}
+                        <span className="text-[11px] font-black uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400">
+                          {copy.archivedSection}
+                        </span>
+                      </div>
+                      <span className="text-[11px] font-black text-slate-400 dark:text-slate-500 tabular-nums">
+                        {archivedProjects.length}
+                      </span>
+                    </button>
+
+                    <AnimatePresence initial={false}>
+                      {showArchived && (
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: 'auto', opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          transition={{ duration: 0.2 }}
+                          className="overflow-hidden"
                         >
-                          <span className="drop-shadow-sm">{project.emoji}</span>
-                        </div>
-
-                        <div className="text-[14px] font-black text-slate-900 dark:text-white tracking-tight mb-0.5 truncate pe-7">
-                          {project.name}
-                        </div>
-
-                        <div className="text-[10px] text-slate-500 dark:text-slate-400 font-medium truncate">
-                          {subtitleFor(activeCount, doneCount)}
-                        </div>
-
-                        <div
-                          className="absolute start-0 end-0 bottom-0 h-[3px] opacity-90"
-                          style={{ backgroundColor: project.color }}
-                        />
-                      </button>
-
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openMenu(project.id);
-                        }}
-                        className="absolute top-3 end-3 w-7 h-7 rounded-lg bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm flex items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-white dark:hover:bg-slate-800 transition cursor-pointer"
-                        aria-label={copy.projectMenuAria}
-                      >
-                        <MoreVertical className="w-4 h-4" />
-                      </button>
-                    </motion.div>
-                  );
-                })}
-              </div>
+                          <div className="grid grid-cols-2 gap-3 pt-3">
+                            {archivedProjects.map((p) => renderProjectCard(p, true))}
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                )}
+              </>
             )}
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Action sheet */}
+      {/* ── Action sheet ── */}
       <AnimatePresence>
         {menuProjectId && (
           <>
@@ -551,8 +615,9 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
               </div>
 
               {(() => {
-                const project = visibleProjects.find((p) => p.id === menuProjectId);
+                const project = allVisibleProjects.find((p) => p.id === menuProjectId);
                 if (!project) return null;
+                const isArchived = !!project.archivedAt;
                 return (
                   <div className="p-4 space-y-2">
                     <div className="flex items-center gap-3 px-3 py-3 mb-1">
@@ -580,6 +645,22 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                     </button>
 
                     <button
+                      onClick={() => handleArchiveToggle(project)}
+                      className="w-full flex items-center gap-3 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition cursor-pointer text-start"
+                    >
+                      <div className="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-950/60 flex items-center justify-center shrink-0">
+                        {isArchived ? (
+                          <ArchiveRestore className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                        ) : (
+                          <Archive className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                        )}
+                      </div>
+                      <div className="text-sm font-black text-slate-900 dark:text-white">
+                        {isArchived ? copy.unarchive : copy.archive}
+                      </div>
+                    </button>
+
+                    <button
                       onClick={() => requestDelete(project.id)}
                       className="w-full flex items-center gap-3 p-4 rounded-2xl border border-red-200 dark:border-red-900/40 bg-white dark:bg-slate-900 hover:bg-red-50 dark:hover:bg-red-950/20 transition cursor-pointer text-start"
                     >
@@ -600,7 +681,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
         )}
       </AnimatePresence>
 
-      {/* Confirm delete */}
+      {/* ── Confirm delete ── */}
       <AnimatePresence>
         {confirmDeleteId && (
           <motion.div

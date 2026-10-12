@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Search, Filter, ArrowUpDown, Mic, Bookmark, Plus, X } from 'lucide-react';
-import { Task, TaskCategory, PriorityLevel, QuadrantId, Subtask, CONTEXT_DEFINITIONS } from '../types';
+import { Search, Filter, ArrowUpDown, Mic, Bookmark, Plus, X, Folder } from 'lucide-react';
+import { Task, TaskCategory, PriorityLevel, QuadrantId, Subtask, CONTEXT_DEFINITIONS, Project } from '../types';
 import { TaskCard } from './TaskCard';
 import { NLPQuickAdd } from './NLPQuickAdd';
 import { triggerHaptic } from '../utils/haptics';
@@ -10,6 +10,7 @@ import { BUILT_IN_VIEWS, SavedView, applyViewFilter } from '../data/builtInViews
 
 interface PriorityListViewProps {
   tasks: Task[];
+  projects?: Project[];
   onToggleStatus: (taskId: string) => void;
   onEditTask: (task: Task) => void;
   onDeleteTask: (taskId: string) => void;
@@ -30,6 +31,7 @@ const LOCAL_COPY: Record<LocalLang, {
   allTasks: string;
   saveView: string;
   allContexts: string;
+  allProjects: string;
   promptViewName: string;
   confirmDeleteView: string;
   deleteView: string;
@@ -44,6 +46,7 @@ const LOCAL_COPY: Record<LocalLang, {
     allTasks: 'All tasks',
     saveView: 'Save view',
     allContexts: 'All contexts',
+    allProjects: 'All projects',
     promptViewName: 'Name this view:',
     confirmDeleteView: 'Delete this view?',
     deleteView: 'Delete view',
@@ -74,6 +77,7 @@ const LOCAL_COPY: Record<LocalLang, {
     allTasks: 'Toutes les tâches',
     saveView: 'Enregistrer',
     allContexts: 'Tous les contextes',
+    allProjects: 'Tous les projets',
     promptViewName: 'Nommer cette vue :',
     confirmDeleteView: 'Supprimer cette vue ?',
     deleteView: 'Supprimer la vue',
@@ -104,6 +108,7 @@ const LOCAL_COPY: Record<LocalLang, {
     allTasks: 'كل المهام',
     saveView: 'حفظ العرض',
     allContexts: 'جميع السياقات',
+    allProjects: 'جميع المشاريع',
     promptViewName: 'اسم هذا العرض:',
     confirmDeleteView: 'حذف هذا العرض؟',
     deleteView: 'حذف العرض',
@@ -143,6 +148,7 @@ function translateViewDesc(view: SavedView, copy: typeof LOCAL_COPY.en): string 
 
 export const PriorityListView: React.FC<PriorityListViewProps> = ({
   tasks,
+  projects = [],
   onToggleStatus,
   onEditTask,
   onDeleteTask,
@@ -161,6 +167,7 @@ export const PriorityListView: React.FC<PriorityListViewProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [selectedContext, setSelectedContext] = useState<string | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'completed' | 'urgent'>('all');
   const [sortBy, setSortBy] = useState<'priority' | 'impact' | 'time'>('priority');
   const [selectedViewId, setSelectedViewId] = useState<string | null>(null);
@@ -171,6 +178,11 @@ export const PriorityListView: React.FC<PriorityListViewProps> = ({
     } catch {}
     return [];
   });
+
+  const visibleProjects = useMemo(
+    () => projects.filter((p) => !p.deletedAt && !p.archivedAt),
+    [projects]
+  );
 
   const categories: Array<{ id: TaskCategory | 'All'; label: string }> = [
     { id: 'All', label: t('list_category_all') },
@@ -213,6 +225,16 @@ export const PriorityListView: React.FC<PriorityListViewProps> = ({
       }));
   }, [contextCounts, copy]);
 
+  const projectCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    tasks.forEach((task) => {
+      if (task.projectId) {
+        counts[task.projectId] = (counts[task.projectId] || 0) + 1;
+      }
+    });
+    return counts;
+  }, [tasks]);
+
   const filteredTasks = useMemo(() => {
     let pool = tasks;
     if (activeView) pool = applyViewFilter(tasks, activeView.filter);
@@ -226,6 +248,8 @@ export const PriorityListView: React.FC<PriorityListViewProps> = ({
         const matchesContext =
           selectedContext === null ||
           (task.contexts || []).includes(selectedContext);
+        const matchesProject =
+          selectedProjectId === null || task.projectId === selectedProjectId;
         const matchesStatus =
           statusFilter === 'all'
             ? true
@@ -235,7 +259,7 @@ export const PriorityListView: React.FC<PriorityListViewProps> = ({
             ? task.status === 'completed'
             : task.priority === 'urgent' && task.status !== 'completed';
 
-        return matchesSearch && matchesCategory && matchesContext && matchesStatus;
+        return matchesSearch && matchesCategory && matchesContext && matchesProject && matchesStatus;
       })
       .sort((a, b) => {
         if (sortBy === 'impact') return b.impactScore - a.impactScore;
@@ -243,7 +267,7 @@ export const PriorityListView: React.FC<PriorityListViewProps> = ({
         const priorityOrder: Record<PriorityLevel, number> = { urgent: 4, high: 3, medium: 2, low: 1 };
         return priorityOrder[b.priority] - priorityOrder[a.priority];
       });
-  }, [tasks, searchQuery, selectedCategory, selectedContext, statusFilter, sortBy, activeView]);
+  }, [tasks, searchQuery, selectedCategory, selectedContext, selectedProjectId, statusFilter, sortBy, activeView]);
 
   const statusLabelMap: Record<'all' | 'active' | 'urgent' | 'completed', TranslationKey> = {
     all: 'list_status_all',
@@ -259,6 +283,7 @@ export const PriorityListView: React.FC<PriorityListViewProps> = ({
       setSearchQuery('');
       setSelectedCategory('All');
       setSelectedContext(null);
+      setSelectedProjectId(null);
       setStatusFilter('all');
     }
   };
@@ -398,6 +423,60 @@ export const PriorityListView: React.FC<PriorityListViewProps> = ({
           <span>{copy.saveView}</span>
         </button>
       </div>
+
+      {/* ─── PROJECT FILTER CHIPS ─── */}
+      {visibleProjects.length > 0 && (
+        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+          <button
+            id="filter-project-all"
+            onClick={() => {
+              triggerHaptic('light');
+              deselectViewOnManualChange();
+              setSelectedProjectId(null);
+            }}
+            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold whitespace-nowrap transition cursor-pointer ${
+              selectedProjectId === null
+                ? 'bg-amber-500 text-white shadow-xs'
+                : 'bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+            }`}
+          >
+            <Folder className="w-3 h-3" />
+            <span>{copy.allProjects}</span>
+          </button>
+          {visibleProjects.map((project) => {
+            const isSelected = selectedProjectId === project.id;
+            const count = projectCounts[project.id] || 0;
+            return (
+              <button
+                key={project.id}
+                id={`filter-project-${project.id}`}
+                onClick={() => {
+                  triggerHaptic('light');
+                  deselectViewOnManualChange();
+                  setSelectedProjectId(isSelected ? null : project.id);
+                }}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold whitespace-nowrap transition cursor-pointer border`}
+                style={{
+                  backgroundColor: isSelected ? project.color : `${project.color}15`,
+                  color: isSelected ? '#fff' : project.color,
+                  borderColor: isSelected ? project.color : `${project.color}55`,
+                }}
+              >
+                <span>{project.emoji}</span>
+                <span>{project.name}</span>
+                <span
+                  className="text-[9px] px-1 rounded font-black"
+                  style={{
+                    backgroundColor: isSelected ? 'rgba(255,255,255,0.25)' : `${project.color}25`,
+                  }}
+                >
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
         {categories.map((cat) => {
@@ -550,6 +629,7 @@ export const PriorityListView: React.FC<PriorityListViewProps> = ({
             <TaskCard
               key={task.id}
               task={task}
+              projects={projects}
               onToggleStatus={onToggleStatus}
               onEditTask={onEditTask}
               onDeleteTask={onDeleteTask}
