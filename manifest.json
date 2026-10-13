@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "Task Priority Mobile App",
-  "short_name": "TaskPriority",
-  "description": "Task Priority & Daily Progress Mobile App for iOS and Android",
+  "name": "MerakiList",
+  "short_name": "MerakiList",
+  "description": "Mobile-first task manager with Eisenhower matrix, projects, habits, milestones, and karma.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
@@ -14,8 +14,14 @@
   ],
   "orientation": "portrait-primary",
   "background_color": "#0f172a",
-  "theme_color": "#0f172a",
+  "theme_color": "#18181b",
   "icons": [
+    {
+      "src": "/merakilist.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
     {
       "src": "/pwa-192x192.png",
       "sizes": "192x192",

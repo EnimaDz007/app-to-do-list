@@ -1,10 +1,11 @@
 // ─────────────────────────────────────────────────────────────
 //  FILE: src/components/AuthGate.tsx
-//  Aurora Mesh sign-in — v2 (fixed overflow + Clerk transparency)
+//  Aurora Mesh sign-in — with MerakiList logo
 // ─────────────────────────────────────────────────────────────
 
 import React, { useEffect, useRef } from 'react';
 import { SignIn, useUser } from '@clerk/clerk-react';
+import { AppLogo } from './AppLogo';
 
 const AURORA_CSS = `
   html, body { margin: 0; padding: 0; }
@@ -18,7 +19,6 @@ const AURORA_CSS = `
     z-index: 1;
   }
 
-  /* Inner wrapper holds min-height for centering */
   .am-inner {
     position: relative;
     min-height: 100%;
@@ -139,18 +139,13 @@ const AURORA_CSS = `
     height: 64px;
     margin: 0 auto 16px;
   }
-  .am-logo {
+  .am-logo-slot {
     position: absolute;
     inset: 0;
-    border-radius: 20px;
-    background: linear-gradient(135deg, #0f172a, #1e1b4b 60%, #4c1d95);
-    color: #fbbf24;
-    font-weight: 900;
-    font-size: 22px;
     display: flex;
     align-items: center;
     justify-content: center;
-    box-shadow: 0 16px 32px -10px rgba(76,29,149,0.55);
+    filter: drop-shadow(0 16px 32px rgba(76,29,149,0.55));
     z-index: 2;
   }
   .am-halo {
@@ -223,7 +218,7 @@ const AURORA_CSS = `
   }
 
   /* ═══════════════════════════════════════════════════════════
-     CLERK OVERRIDES — aggressive
+     CLERK OVERRIDES
      ═══════════════════════════════════════════════════════════ */
   .am-clerk-slot .cl-rootBox,
   .am-clerk-slot .cl-cardBox {
@@ -327,7 +322,6 @@ const AURORA_CSS = `
     color: #0f172a !important;
     font-size: 13px !important;
   }
-  /* Apple button dark style — Clerk uses data-provider attribute */
   .am-clerk-slot .cl-socialButtonsBlockButton[data-provider="apple"],
   .am-clerk-slot .cl-socialButtonsBlockButton[data-provider="apple"]:hover {
     background: #0f172a !important;
@@ -354,11 +348,9 @@ const AURORA_CSS = `
     background: transparent !important;
     padding: 0 4px !important;
   }
-  /* Hide "Secured by Clerk" + "Development mode" footer */
   .am-clerk-slot .cl-footer {
     display: none !important;
   }
-  /* But keep sign-up link visible — it lives in footerAction in some versions */
   .am-clerk-slot .cl-footerAction {
     display: block !important;
     background: transparent !important;
@@ -445,7 +437,9 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
                   <div className="am-halo am-d1" />
                   <div className="am-halo am-d2" />
                   <div className="am-orbit" />
-                  <div className="am-logo">TP</div>
+                  <div className="am-logo-slot">
+                    <AppLogo size={64} />
+                  </div>
                 </div>
 
                 <h2 className="am-title">Welcome back.</h2>
