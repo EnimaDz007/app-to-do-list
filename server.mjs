@@ -1,11 +1,24 @@
+// ─────────────────────────────────────────────────────────────
+//  FILE: server.mjs
+//  MerakiList backend — secured with Clerk JWT verification,
+//  CORS allowlist, rate limiting, ownership checks.
+// ─────────────────────────────────────────────────────────────
+
 import express from 'express';
 import cors from 'cors';
+import rateLimit from 'express-rate-limit';
+import { randomUUID } from 'crypto';
 import { initializeApp, cert } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
 import { getFirestore } from 'firebase-admin/firestore';
+import {
+  clerkMiddleware,
+  requireAuth,
+  getAuth,
+} from '@clerk/express';
 import fs from 'fs';
 
-// 1. Initialize Firebase Admin
+// ─── 1. Firebase Admin ─────────────────────────────────────
 let serviceAccount;
 if (process.env.FIREBASE_SERVICE_ACCOUNT) {
   serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
@@ -14,7 +27,6 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT) {
   serviceAccount = JSON.parse(fs.readFileSync('./firebase-service-account.json', 'utf8'));
   console.log('📄 Loaded Firebase credentials from local file.');
 }
-
 initializeApp({ credential: cert(serviceAccount) });
 
 const db = getFirestore();
@@ -29,10 +41,67 @@ const syncHabitCheckinsCollection = db.collection('syncHabitCheckins');
 const syncMilestonesCollection = db.collection('syncMilestones');
 const syncProjectsCollection = db.collection('syncProjects');
 
+// ─── 2. App + CORS + body limits ───────────────────────────
 const app = express();
-app.use(cors({ origin: '*' }));
+
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+// Capacitor native apps send no Origin header or use these schemes.
+const NATIVE_ORIGINS = ['capacitor://localhost', 'ionic://localhost', 'http://localhost', 'https://localhost'];
+
+app.use(
+  cors({
+    origin: (origin, cb) => {
+      // Native mobile apps and server-to-server calls: no origin
+      if (!origin) return cb(null, true);
+      // Capacitor WebView
+      if (NATIVE_ORIGINS.includes(origin)) return cb(null, true);
+      // Explicit allowlist
+      if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+      // Localhost dev (any port)
+      if (/^http:\/\/localhost(:\d+)?$/.test(origin)) return cb(null, true);
+      console.warn(`🚫 CORS blocked origin: ${origin}`);
+      return cb(null, false);
+    },
+    credentials: true,
+  })
+);
+
 app.use(express.json({ limit: '2mb' }));
 
+// ─── 3. Rate limiting ──────────────────────────────────────
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120, // 120 requests per minute per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests. Please slow down.' },
+});
+app.use('/api/', apiLimiter);
+
+// Stricter limit for write-heavy / push endpoints
+const writeLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use('/api/register-device', writeLimiter);
+app.use('/api/schedule-reminder', writeLimiter);
+app.use('/api/schedule-habit-reminder', writeLimiter);
+
+// ─── 4. Clerk auth middleware ──────────────────────────────
+// Attaches req.auth to every request. requireAuth() then
+// rejects any request without a valid session JWT.
+app.use(clerkMiddleware());
+
+// Helper: safe string length cap
+const cap = (s, n) => (typeof s === 'string' ? s.slice(0, n) : '');
+
+// ─── FCM stale-token helpers (unchanged) ───────────────────
 const STALE_TOKEN_CODES = [
   'messaging/registration-token-not-registered',
   'messaging/invalid-registration-token',
@@ -51,11 +120,9 @@ async function handleStaleToken(externalId, err) {
   return true;
 }
 
-// ============================================================
-//                    TASK TIMERS (reminders only)
-// ============================================================
+// ─── Task timers (unchanged) ───────────────────────────────
 const scheduledTimers = {};
-const scheduledReminderTimers = {}; // key: `${taskId}::${reminderId}`
+const scheduledReminderTimers = {};
 
 function computeNextDueDate(fromISO, rec) {
   if (!rec || !rec.frequency) return null;
@@ -67,9 +134,7 @@ function computeNextDueDate(fromISO, rec) {
     const next = new Date(d.getTime());
     const interval = Math.max(1, rec.interval || 1);
     switch (rec.frequency) {
-      case 'daily':
-        next.setDate(next.getDate() + interval);
-        break;
+      case 'daily': next.setDate(next.getDate() + interval); break;
       case 'weekdays':
         do { next.setDate(next.getDate() + 1); }
         while (next.getDay() === 0 || next.getDay() === 6);
@@ -92,11 +157,8 @@ function computeNextDueDate(fromISO, rec) {
         next.setDate(Math.min(target, daysInMonth));
         break;
       }
-      case 'yearly':
-        next.setFullYear(next.getFullYear() + interval);
-        break;
-      default:
-        return null;
+      case 'yearly': next.setFullYear(next.getFullYear() + interval); break;
+      default: return null;
     }
     return next;
   };
@@ -184,85 +246,49 @@ function scheduleTask(task) {
   const dueTimestamp = new Date(task.dueTime).getTime();
   const delay = dueTimestamp - Date.now();
   if (delay <= 0) return false;
-  console.log(`⏰ Scheduling push for "${task.title}" in ${Math.round(delay/1000)}s`);
   scheduledTimers[task.taskId] = setTimeout(() => sendPushForTask(task.taskId), delay);
   return true;
 }
 
-// ─────────────────────────────────────────────
-//   CUSTOM REMINDERS
-// ─────────────────────────────────────────────
-
-function reminderBody(reminder, taskTitle) {
-  if (!reminder || typeof reminder.minutesBefore !== 'number') {
-    return 'Your task is coming up.';
-  }
+// ─── Custom reminders (unchanged) ──────────────────────────
+function reminderBody(reminder) {
+  if (!reminder || typeof reminder.minutesBefore !== 'number') return 'Your task is coming up.';
   const mins = reminder.minutesBefore;
   if (mins === 0) return 'Your task is due now.';
   if (mins < 60) return `Due in ${mins} min.`;
-  if (mins < 1440) {
-    const h = mins / 60;
-    return `Due in ${h % 1 === 0 ? h : h.toFixed(1)}h.`;
-  }
+  if (mins < 1440) { const h = mins / 60; return `Due in ${h % 1 === 0 ? h : h.toFixed(1)}h.`; }
   const d = mins / 1440;
   return `Due in ${d % 1 === 0 ? d : d.toFixed(1)}d.`;
 }
 
 async function sendReminderPush(taskId, reminderId) {
   const key = `${taskId}::${reminderId}`;
-  console.log(`🔔 Custom reminder fired: ${key}`);
   try {
     const taskDoc = await tasksCollection.doc(taskId).get();
-    if (!taskDoc.exists) {
-      delete scheduledReminderTimers[key];
-      return;
-    }
+    if (!taskDoc.exists) { delete scheduledReminderTimers[key]; return; }
     const task = taskDoc.data();
     const reminder = (task.reminders || []).find((r) => r.id === reminderId);
-    if (!reminder) {
-      delete scheduledReminderTimers[key];
-      return;
-    }
-
+    if (!reminder) { delete scheduledReminderTimers[key]; return; }
     const tokenDoc = await tokensCollection.doc(task.externalId).get();
     if (tokenDoc.exists) {
-      const fcmToken = tokenDoc.data().fcmToken;
       try {
         await getMessaging().send({
-          token: fcmToken,
-          notification: {
-            title: `⏰ ${task.title}`,
-            body: reminderBody(reminder, task.title),
-          },
-          android: {
-            priority: 'high',
-            notification: { channelId: 'task-reminders-critical' },
-          },
-          data: {
-            taskId,
-            quadrant: task.quadrant || 'do_first',
-            reminderId,
-          },
+          token: tokenDoc.data().fcmToken,
+          notification: { title: `⏰ ${task.title}`, body: reminderBody(reminder) },
+          android: { priority: 'high', notification: { channelId: 'task-reminders-critical' } },
+          data: { taskId, quadrant: task.quadrant || 'do_first', reminderId },
         });
-        console.log(`🚀 Custom reminder push sent for "${task.title}" (${reminderId})`);
       } catch (err) {
         const cleaned = await handleStaleToken(task.externalId, err);
         if (!cleaned) console.error('❌ Custom reminder push error:', err);
       }
     }
-  } catch (err) {
-    console.error('❌ sendReminderPush error:', err);
-  }
+  } catch (err) { console.error('❌ sendReminderPush error:', err); }
   delete scheduledReminderTimers[key];
 }
 
-/**
- * Schedule all upcoming reminders from a task record.
- * Clears previous timers for this task first (safe re-schedule).
- */
 function scheduleTaskReminders(task) {
   const taskId = task.taskId;
-  // Clear existing
   for (const key of Object.keys(scheduledReminderTimers)) {
     if (key.startsWith(`${taskId}::`)) {
       clearTimeout(scheduledReminderTimers[key]);
@@ -276,13 +302,9 @@ function scheduleTaskReminders(task) {
     const fireAt = new Date(r.fireAt).getTime();
     if (isNaN(fireAt) || fireAt <= now) continue;
     const delay = fireAt - now;
-    if (delay > 24 * 60 * 60 * 1000 * 30) continue; // safety: skip >30d
+    if (delay > 30 * 24 * 60 * 60 * 1000) continue;
     const key = `${taskId}::${r.id}`;
-    scheduledReminderTimers[key] = setTimeout(
-      () => sendReminderPush(taskId, r.id),
-      delay
-    );
-    console.log(`⏰ Scheduled custom reminder ${r.id} for "${task.title}" in ${Math.round(delay/1000)}s`);
+    scheduledReminderTimers[key] = setTimeout(() => sendReminderPush(taskId, r.id), delay);
   }
 }
 
@@ -302,9 +324,7 @@ async function rescheduleAllTasks() {
   } catch (err) { console.error('Failed to reschedule tasks:', err); }
 }
 
-// ============================================================
-//                    HABIT TIMERS
-// ============================================================
+// ─── Habit timers (unchanged) ──────────────────────────────
 const scheduledHabitTimers = {};
 
 function computeNextHabitFire(habit, fromTimeMs = Date.now()) {
@@ -378,59 +398,83 @@ async function rescheduleAllHabitReminders() {
   await rescheduleAllHabitReminders();
 })();
 
-// ============================================================
-//                    TASK ROUTES (reminders)
-// ============================================================
-app.post('/api/register-device', async (req, res) => {
-  const { userId, fcmToken } = req.body;
-  if (!userId || !fcmToken) return res.status(400).json({ error: 'Missing fields' });
+// ═══════════════════════════════════════════════════════════
+//  AUTHENTICATED TASK ROUTES
+//  Every route below requires a valid Clerk session JWT.
+//  The userId is ALWAYS taken from the JWT — never from the body.
+// ═══════════════════════════════════════════════════════════
+
+app.post('/api/register-device', requireAuth(), async (req, res) => {
+  const userId = getAuth(req).userId;
+  const { fcmToken } = req.body || {};
+  if (!fcmToken || typeof fcmToken !== 'string') {
+    return res.status(400).json({ error: 'fcmToken required' });
+  }
   try {
-    await tokensCollection.doc(userId).set({ fcmToken, updatedAt: new Date().toISOString() });
+    await tokensCollection.doc(userId).set({
+      fcmToken: cap(fcmToken, 4096),
+      updatedAt: new Date().toISOString(),
+    });
     res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: 'Failed to register device' }); }
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to register device' });
+  }
 });
 
-app.post('/api/schedule-reminder', async (req, res) => {
-  const { externalId, title, dueTime, taskId, recurrence, reminders, fullTask } = req.body;
-  if (!externalId || !dueTime || !taskId) return res.status(400).json({ error: 'Missing required fields' });
+app.post('/api/schedule-reminder', requireAuth(), async (req, res) => {
+  const userId = getAuth(req).userId;
+  const { title, dueTime, taskId, recurrence, reminders, fullTask } = req.body || {};
+
+  if (!dueTime || !taskId || !title) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
   const dueTimestamp = new Date(dueTime).getTime();
   if (isNaN(dueTimestamp)) {
     return res.status(400).json({ error: 'Invalid dueTime' });
   }
+
   try {
-    const taskRecord = { externalId, title, dueTime, taskId };
+    // ── Ownership check: if this taskId already exists, it must belong to us
+    const existing = await tasksCollection.doc(String(taskId)).get();
+    if (existing.exists && existing.data().externalId !== userId) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    const taskRecord = {
+      externalId: userId,               // ← always from JWT
+      title: cap(title, 500),
+      dueTime,
+      taskId: String(taskId),
+    };
     if (recurrence && recurrence.frequency) taskRecord.recurrence = recurrence;
     if (fullTask) taskRecord.fullTask = fullTask;
-    // Save custom reminders so they survive server restarts
-    if (Array.isArray(reminders)) {
-      taskRecord.reminders = reminders;
-    }
-    await tasksCollection.doc(taskId).set(taskRecord);
+    if (Array.isArray(reminders)) taskRecord.reminders = reminders;
 
-    // Schedule the legacy "task due now" timer only if not overdue
-    if (dueTimestamp > Date.now()) {
-      scheduleTask(taskRecord);
-    }
-    // Schedule the custom reminders
+    await tasksCollection.doc(String(taskId)).set(taskRecord);
+
+    if (dueTimestamp > Date.now()) scheduleTask(taskRecord);
     scheduleTaskReminders(taskRecord);
 
     res.json({ success: true, fireInMs: dueTimestamp - Date.now() });
-  } catch (err) { res.status(500).json({ error: 'Failed to schedule reminder' }); }
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to schedule reminder' });
+  }
 });
 
-app.post('/api/complete-reminder', async (req, res) => {
-  const { taskId } = req.body;
+app.post('/api/complete-reminder', requireAuth(), async (req, res) => {
+  const userId = getAuth(req).userId;
+  const { taskId } = req.body || {};
   if (!taskId) return res.status(400).json({ error: 'taskId required' });
   try {
-    const doc = await tasksCollection.doc(taskId).get();
+    const doc = await tasksCollection.doc(String(taskId)).get();
     if (!doc.exists) return res.json({ success: true, nextTask: null });
     const task = doc.data();
-    task.taskId = taskId;
+    if (task.externalId !== userId) return res.status(403).json({ error: 'Forbidden' });
+    task.taskId = String(taskId);
     if (scheduledTimers[taskId]) {
       clearTimeout(scheduledTimers[taskId]);
       delete scheduledTimers[taskId];
     }
-    // Cancel any custom reminder timers for this task
     for (const key of Object.keys(scheduledReminderTimers)) {
       if (key.startsWith(`${taskId}::`)) {
         clearTimeout(scheduledReminderTimers[key]);
@@ -438,35 +482,47 @@ app.post('/api/complete-reminder', async (req, res) => {
       }
     }
     const nextTask = await createNextOccurrence(task);
-    await tasksCollection.doc(taskId).delete();
+    await tasksCollection.doc(String(taskId)).delete();
     res.json({ success: true, nextTask });
-  } catch (err) { res.status(500).json({ error: 'Failed' }); }
+  } catch (err) {
+    res.status(500).json({ error: 'Failed' });
+  }
 });
 
-app.post('/api/cancel-reminder', async (req, res) => {
-  const { taskId } = req.body;
+app.post('/api/cancel-reminder', requireAuth(), async (req, res) => {
+  const userId = getAuth(req).userId;
+  const { taskId } = req.body || {};
   if (!taskId) return res.status(400).json({ error: 'taskId required' });
-  if (scheduledTimers[taskId]) {
-    clearTimeout(scheduledTimers[taskId]);
-    delete scheduledTimers[taskId];
-  }
-  for (const key of Object.keys(scheduledReminderTimers)) {
-    if (key.startsWith(`${taskId}::`)) {
-      clearTimeout(scheduledReminderTimers[key]);
-      delete scheduledReminderTimers[key];
+  try {
+    const doc = await tasksCollection.doc(String(taskId)).get();
+    if (doc.exists && doc.data().externalId !== userId) {
+      return res.status(403).json({ error: 'Forbidden' });
     }
+    if (scheduledTimers[taskId]) {
+      clearTimeout(scheduledTimers[taskId]);
+      delete scheduledTimers[taskId];
+    }
+    for (const key of Object.keys(scheduledReminderTimers)) {
+      if (key.startsWith(`${taskId}::`)) {
+        clearTimeout(scheduledReminderTimers[key]);
+        delete scheduledReminderTimers[key];
+      }
+    }
+    try { await tasksCollection.doc(String(taskId)).delete(); } catch {}
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed' });
   }
-  try { await tasksCollection.doc(taskId).delete(); } catch {}
-  res.json({ success: true });
 });
 
-// ============================================================
-//                    TWO-WAY SYNC — TASKS
-// ============================================================
-app.get('/api/sync/:userId', async (req, res) => {
-  const { userId } = req.params;
+// ═══════════════════════════════════════════════════════════
+//  TWO-WAY SYNC — scoped strictly to the authenticated user
+// ═══════════════════════════════════════════════════════════
+
+app.get('/api/sync/:userId', requireAuth(), async (req, res) => {
+  const userId = getAuth(req).userId;
+  if (req.params.userId !== userId) return res.status(403).json({ error: 'Forbidden' });
   const since = req.query.since ? String(req.query.since) : null;
-  if (!userId) return res.status(400).json({ error: 'userId required' });
 
   try {
     const serverTime = new Date().toISOString();
@@ -482,7 +538,6 @@ app.get('/api/sync/:userId', async (req, res) => {
       if (serverTs > new Date(maxServerUpdatedAt).getTime()) maxServerUpdatedAt = data.serverUpdatedAt;
     });
 
-    console.log(`📤 sync pull: user=${userId} since=${since || 'first'} → ${tasks.length} task(s)`);
     res.json({ success: true, tasks, serverTime: maxServerUpdatedAt, count: tasks.length });
   } catch (err) {
     console.error('❌ sync GET failed:', err);
@@ -490,28 +545,32 @@ app.get('/api/sync/:userId', async (req, res) => {
   }
 });
 
-app.post('/api/sync/:userId', async (req, res) => {
-  const { userId } = req.params;
+app.post('/api/sync/:userId', requireAuth(), async (req, res) => {
+  const userId = getAuth(req).userId;
+  if (req.params.userId !== userId) return res.status(403).json({ error: 'Forbidden' });
   const { tasks } = req.body || {};
-  if (!userId || !Array.isArray(tasks)) {
-    return res.status(400).json({ error: 'userId and tasks[] required' });
-  }
+  if (!Array.isArray(tasks)) return res.status(400).json({ error: 'tasks[] required' });
 
   try {
     const now = new Date().toISOString();
-    const batch = db.batch();
     let applied = 0;
     const CAP = 400;
 
     for (const task of tasks.slice(0, CAP)) {
       if (!task || !task.id) continue;
-      const ref = syncTasksCollection.doc(String(task.id));
-      batch.set(ref, { ...task, externalId: userId, serverUpdatedAt: now }, { merge: false });
+      // Ownership check per task
+      const existing = await syncTasksCollection.doc(String(task.id)).get();
+      if (existing.exists && existing.data().externalId !== userId) {
+        console.warn(`🚫 Skipped foreign task id=${task.id}`);
+        continue;
+      }
+      await syncTasksCollection.doc(String(task.id)).set(
+        { ...task, externalId: userId, serverUpdatedAt: now },
+        { merge: false }
+      );
       applied++;
     }
 
-    await batch.commit();
-    console.log(`📥 sync push: user=${userId} → ${applied} applied`);
     res.json({ success: true, applied, serverTime: now });
   } catch (err) {
     console.error('❌ sync POST failed:', err);
@@ -519,26 +578,31 @@ app.post('/api/sync/:userId', async (req, res) => {
   }
 });
 
-app.post('/api/sync/:userId/delete', async (req, res) => {
-  const { userId } = req.params;
+app.post('/api/sync/:userId/delete', requireAuth(), async (req, res) => {
+  const userId = getAuth(req).userId;
+  if (req.params.userId !== userId) return res.status(403).json({ error: 'Forbidden' });
   const { taskId } = req.body || {};
-  if (!userId || !taskId) return res.status(400).json({ error: 'userId and taskId required' });
+  if (!taskId) return res.status(400).json({ error: 'taskId required' });
   try {
+    const doc = await syncTasksCollection.doc(String(taskId)).get();
+    if (doc.exists && doc.data().externalId !== userId) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
     await syncTasksCollection.doc(String(taskId)).delete();
     res.json({ success: true });
   } catch (err) {
-    console.error('sync delete failed:', err);
     res.status(500).json({ error: 'Failed' });
   }
 });
 
-// ============================================================
-//                    TWO-WAY SYNC — ALL TYPES
-// ============================================================
-app.get('/api/sync/:userId/full', async (req, res) => {
-  const { userId } = req.params;
+// ═══════════════════════════════════════════════════════════
+//  FULL SYNC — all entity types
+// ═══════════════════════════════════════════════════════════
+
+app.get('/api/sync/:userId/full', requireAuth(), async (req, res) => {
+  const userId = getAuth(req).userId;
+  if (req.params.userId !== userId) return res.status(403).json({ error: 'Forbidden' });
   const since = req.query.since ? String(req.query.since) : null;
-  if (!userId) return res.status(400).json({ error: 'userId required' });
 
   try {
     const serverTime = new Date().toISOString();
@@ -562,22 +626,14 @@ app.get('/api/sync/:userId/full', async (req, res) => {
       return out;
     };
 
-    const tasks = filterSince(tasksSnap);
-    const habits = filterSince(habitsSnap);
-    const checkIns = filterSince(checkInsSnap);
-    const milestones = filterSince(milestonesSnap);
-    const projects = filterSince(projectsSnap);
-
-    console.log(`📤 syncPullAll: user=${userId} since=${since || 'first'} → tasks:${tasks.length} habits:${habits.length} checkins:${checkIns.length} milestones:${milestones.length} projects:${projects.length}`);
     res.json({
       success: true,
-      tasks,
-      habits,
-      checkIns,
-      milestones,
-      projects,
+      tasks: filterSince(tasksSnap),
+      habits: filterSince(habitsSnap),
+      checkIns: filterSince(checkInsSnap),
+      milestones: filterSince(milestonesSnap),
+      projects: filterSince(projectsSnap),
       serverTime,
-      count: tasks.length + habits.length + checkIns.length + milestones.length + projects.length,
     });
   } catch (err) {
     console.error('❌ syncPullAll failed:', err);
@@ -585,10 +641,10 @@ app.get('/api/sync/:userId/full', async (req, res) => {
   }
 });
 
-app.post('/api/sync/:userId/full', async (req, res) => {
-  const { userId } = req.params;
+app.post('/api/sync/:userId/full', requireAuth(), async (req, res) => {
+  const userId = getAuth(req).userId;
+  if (req.params.userId !== userId) return res.status(403).json({ error: 'Forbidden' });
   const { tasks = [], habits = [], checkIns = [], milestones = [], projects = [] } = req.body || {};
-  if (!userId) return res.status(400).json({ error: 'userId required' });
 
   try {
     const now = new Date().toISOString();
@@ -600,16 +656,25 @@ app.post('/api/sync/:userId/full', async (req, res) => {
       { items: projects, collection: syncProjectsCollection },
     ];
 
-    const ops = [];
+    // Pre-fetch existing docs for ownership checks
+    const candidates = [];
     for (const { items, collection } of sources) {
       for (const item of items) {
         if (!item || !item.id) continue;
-        ops.push({
-          ref: collection.doc(String(item.id)),
-          payload: { ...item, externalId: userId, serverUpdatedAt: now },
-        });
+        candidates.push({ item, collection, ref: collection.doc(String(item.id)) });
       }
     }
+    const existingDocs = await Promise.all(candidates.map((c) => c.ref.get()));
+
+    const ops = [];
+    candidates.forEach((c, i) => {
+      const existing = existingDocs[i];
+      if (existing.exists && existing.data().externalId !== userId) return;
+      ops.push({
+        ref: c.ref,
+        payload: { ...c.item, externalId: userId, serverUpdatedAt: now },
+      });
+    });
 
     const CHUNK = 450;
     let applied = 0;
@@ -621,7 +686,6 @@ app.post('/api/sync/:userId/full', async (req, res) => {
       applied += slice.length;
     }
 
-    console.log(`📥 syncPushAll: user=${userId} → ${applied} applied`);
     res.json({ success: true, applied, serverTime: now });
   } catch (err) {
     console.error('❌ syncPushAll failed:', err);
@@ -629,12 +693,13 @@ app.post('/api/sync/:userId/full', async (req, res) => {
   }
 });
 
-// ============================================================
-//                  USER PREFERENCES
-// ============================================================
-app.get('/api/preferences/:userId', async (req, res) => {
-  const { userId } = req.params;
-  if (!userId) return res.status(400).json({ error: 'userId required' });
+// ═══════════════════════════════════════════════════════════
+//  USER PREFERENCES
+// ═══════════════════════════════════════════════════════════
+
+app.get('/api/preferences/:userId', requireAuth(), async (req, res) => {
+  const userId = getAuth(req).userId;
+  if (req.params.userId !== userId) return res.status(403).json({ error: 'Forbidden' });
   try {
     const doc = await prefsCollection.doc(userId).get();
     if (!doc.exists) return res.json({ success: true, preferences: null });
@@ -642,70 +707,91 @@ app.get('/api/preferences/:userId', async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'Failed' }); }
 });
 
-app.post('/api/preferences/:userId', async (req, res) => {
-  const { userId } = req.params;
-  if (!userId) return res.status(400).json({ error: 'userId required' });
+app.post('/api/preferences/:userId', requireAuth(), async (req, res) => {
+  const userId = getAuth(req).userId;
+  if (req.params.userId !== userId) return res.status(403).json({ error: 'Forbidden' });
   const { uiDesign } = req.body ?? {};
   if (typeof uiDesign !== 'string' || !uiDesign) {
     return res.status(400).json({ error: 'uiDesign required' });
   }
   try {
     await prefsCollection.doc(userId).set(
-      { uiDesign, updatedAt: new Date().toISOString() },
+      { uiDesign: cap(uiDesign, 100), updatedAt: new Date().toISOString() },
       { merge: true }
     );
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: 'Failed' }); }
 });
 
-// ============================================================
-//                    HABIT ROUTES
-// ============================================================
-app.post('/api/schedule-habit-reminder', async (req, res) => {
-  const { habitId, externalId, name, emoji, reminderTime, daysOfWeek, timezoneOffsetMinutes } = req.body;
-  if (!habitId || !externalId || !reminderTime) return res.status(400).json({ error: 'Missing fields' });
+// ═══════════════════════════════════════════════════════════
+//  HABIT REMINDERS
+// ═══════════════════════════════════════════════════════════
+
+app.post('/api/schedule-habit-reminder', requireAuth(), async (req, res) => {
+  const userId = getAuth(req).userId;
+  const { habitId, name, emoji, reminderTime, daysOfWeek, timezoneOffsetMinutes } = req.body || {};
+  if (!habitId || !reminderTime) return res.status(400).json({ error: 'Missing fields' });
+
   const habit = {
-    externalId,
-    name: name || 'Habit',
-    emoji: emoji || '🎯',
-    reminderTime,
-    daysOfWeek: (daysOfWeek && daysOfWeek.length > 0) ? daysOfWeek : null,
+    externalId: userId,                    // ← from JWT
+    name: cap(name || 'Habit', 200),
+    emoji: cap(emoji || '🎯', 8),
+    reminderTime: cap(reminderTime, 10),
+    daysOfWeek: (Array.isArray(daysOfWeek) && daysOfWeek.length > 0) ? daysOfWeek.slice(0, 7) : null,
     timezoneOffsetMinutes: typeof timezoneOffsetMinutes === 'number' ? timezoneOffsetMinutes : 0,
     updatedAt: new Date().toISOString(),
   };
   try {
-    await habitRemindersCollection.doc(habitId).set(habit);
-    habit.habitId = habitId;
+    const existing = await habitRemindersCollection.doc(String(habitId)).get();
+    if (existing.exists && existing.data().externalId !== userId) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    await habitRemindersCollection.doc(String(habitId)).set(habit);
+    habit.habitId = String(habitId);
     scheduleHabitReminder(habit);
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: 'Failed' }); }
 });
 
-app.post('/api/cancel-habit-reminder', async (req, res) => {
-  const { habitId } = req.body;
+app.post('/api/cancel-habit-reminder', requireAuth(), async (req, res) => {
+  const userId = getAuth(req).userId;
+  const { habitId } = req.body || {};
   if (!habitId) return res.status(400).json({ error: 'habitId required' });
-  if (scheduledHabitTimers[habitId]) {
-    clearTimeout(scheduledHabitTimers[habitId]);
-    delete scheduledHabitTimers[habitId];
-  }
-  try { await habitRemindersCollection.doc(habitId).delete(); } catch {}
-  res.json({ success: true });
+  try {
+    const existing = await habitRemindersCollection.doc(String(habitId)).get();
+    if (existing.exists && existing.data().externalId !== userId) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    if (scheduledHabitTimers[habitId]) {
+      clearTimeout(scheduledHabitTimers[habitId]);
+      delete scheduledHabitTimers[habitId];
+    }
+    try { await habitRemindersCollection.doc(String(habitId)).delete(); } catch {}
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: 'Failed' }); }
 });
 
-// ============================================================
-//                    DELEGATE HUB
-// ============================================================
-app.post('/api/delegate/create', async (req, res) => {
-  const { taskId, title, description, dueDate, externalId, senderName } = req.body;
+// ═══════════════════════════════════════════════════════════
+//  DELEGATE HUB
+//  These are intentionally public (they power the share link),
+//  so we do NOT require auth here. But we use crypto-grade IDs
+//  and validate all input lengths.
+// ═══════════════════════════════════════════════════════════
+
+app.post('/api/delegate/create', requireAuth(), async (req, res) => {
+  const userId = getAuth(req).userId;
+  const { taskId, title, description, dueDate, senderName } = req.body || {};
   if (!taskId || !title) return res.status(400).json({ error: 'Missing taskId or title' });
   try {
-    const delegateId = `del-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const delegateId = `del-${randomUUID()}`;
     await delegateCollection.doc(delegateId).set({
-      delegateId, taskId, title,
-      description: description || '',
+      delegateId,
+      taskId: cap(String(taskId), 200),
+      title: cap(title, 500),
+      description: cap(description || '', 2000),
       dueDate: dueDate || null,
-      externalId: externalId || '',
-      senderName: senderName || 'A teammate',
+      externalId: userId,
+      senderName: cap(senderName || 'A teammate', 100),
       status: 'pending',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -730,7 +816,7 @@ app.post('/api/delegate/:delegateId/complete', async (req, res) => {
     if (!doc.exists) return res.status(404).json({ error: 'Not found' });
     await delegateCollection.doc(delegateId).update({
       status: 'completed',
-      completedBy: completedBy || 'Anonymous',
+      completedBy: cap(completedBy || 'Anonymous', 100),
       completedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
@@ -746,13 +832,14 @@ app.post('/api/delegate/:delegateId/reject', async (req, res) => {
     if (!doc.exists) return res.status(404).json({ error: 'Not found' });
     await delegateCollection.doc(delegateId).update({
       status: 'rejected',
-      rejectionReason: reason || '',
+      rejectionReason: cap(reason || '', 500),
       updatedAt: new Date().toISOString(),
     });
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: 'Failed' }); }
 });
 
+// Public delegate HTML page (intentionally public, HTML-escaped)
 app.get('/delegate/:delegateId', async (req, res) => {
   const { delegateId } = req.params;
   let task = null;
@@ -782,9 +869,7 @@ app.get('/delegate/:delegateId', async (req, res) => {
   res.set('Content-Type', 'text/html; charset=utf-8').send(html);
 });
 
-// ============================================================
-//                    TOMBSTONE GARBAGE COLLECTION
-// ============================================================
+// ─── Tombstone GC (unchanged) ──────────────────────────────
 const TOMBSTONE_TTL_DAYS = 30;
 const GC_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
@@ -798,12 +883,10 @@ async function garbageCollectTombstones() {
       { name: 'milestones', coll: syncMilestonesCollection },
       { name: 'projects', coll: syncProjectsCollection },
     ];
-
     let totalDeleted = 0;
     for (const { name, coll } of collections) {
       const snapshot = await coll.where('deletedAt', '<', cutoff).get();
       if (snapshot.empty) continue;
-
       const docs = snapshot.docs;
       const CHUNK = 450;
       for (let i = 0; i < docs.length; i += CHUNK) {
@@ -815,12 +898,7 @@ async function garbageCollectTombstones() {
       }
       console.log(`🧹 GC(${name}): hard-deleted ${snapshot.size} tombstone(s)`);
     }
-
-    if (totalDeleted === 0) {
-      console.log(`🧹 GC: no tombstones older than ${TOMBSTONE_TTL_DAYS} days`);
-    } else {
-      console.log(`🧹 GC: total ${totalDeleted} tombstone(s) removed`);
-    }
+    console.log(`🧹 GC: total ${totalDeleted} tombstone(s) removed`);
   } catch (err) {
     console.error('❌ GC failed:', err);
   }
@@ -831,7 +909,7 @@ async function garbageCollectTombstones() {
   setInterval(() => { void garbageCollectTombstones(); }, GC_INTERVAL_MS);
 })();
 
-app.get('/', (req, res) => { res.send('Task Priority Server is alive! 🚀'); });
+app.get('/', (req, res) => { res.send('MerakiList Server is alive! 🚀'); });
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
