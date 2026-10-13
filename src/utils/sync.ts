@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────────────────────
 //  FILE: src/utils/sync.ts
-//  Two-way sync for tasks, habits, check-ins, milestones, and projects.
+//  Two-way sync — authenticated with Clerk session token.
 //  Pull changes since last sync, merge by updatedAt (LWW),
 //  push local changes back. All 5 types in one round trip.
 // ─────────────────────────────────────────────────────────────
@@ -90,12 +90,28 @@ export type SyncAllResult = {
   pulled: number;
 };
 
+type TokenGetter = () => Promise<string | null>;
+
+/** Build an Authorization header from the Clerk session token. */
+async function authHeaders(getToken?: TokenGetter): Promise<Record<string, string>> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (!getToken) return headers;
+  try {
+    const token = await getToken();
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+  } catch { /* no token available — request will 401 and syncAll returns null */ }
+  return headers;
+}
+
 export async function syncAll(
   userId: string,
-  local: SyncAllInput
+  local: SyncAllInput,
+  getToken?: TokenGetter,
 ): Promise<SyncAllResult | null> {
   if (!userId) return null;
   const since = getLastSyncAt(userId);
+
+  const headers = await authHeaders(getToken);
 
   // ── 1. PULL remote changes ──
   let remoteTasks: Task[] = [];
@@ -107,9 +123,13 @@ export async function syncAll(
 
   try {
     const res = await fetch(
-      `${SERVER_URL}/api/sync/${encodeURIComponent(userId)}/full?since=${encodeURIComponent(since)}`
+      `${SERVER_URL}/api/sync/${encodeURIComponent(userId)}/full?since=${encodeURIComponent(since)}`,
+      { headers },
     );
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.warn(`⚠️ Sync pull failed: ${res.status}`);
+      return null;
+    }
     const data = await res.json();
     if (!data.success) return null;
 
@@ -119,7 +139,8 @@ export async function syncAll(
     remoteMilestones = (data.milestones || []) as Milestone[];
     remoteProjects = (data.projects || []) as Project[];
     serverTime = data.serverTime || serverTime;
-  } catch {
+  } catch (err) {
+    console.warn('⚠️ Sync pull network error:', err);
     return null; // offline — leave local as-is
   }
 
@@ -147,7 +168,7 @@ export async function syncAll(
     try {
       const res = await fetch(`${SERVER_URL}/api/sync/${encodeURIComponent(userId)}/full`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           tasks: tasksToPush,
           habits: habitsToPush,
@@ -159,8 +180,11 @@ export async function syncAll(
       if (res.ok) {
         const data = await res.json();
         pushed = data.applied || totalPush;
+      } else {
+        console.warn(`⚠️ Sync push failed: ${res.status}`);
       }
-    } catch {
+    } catch (err) {
+      console.warn('⚠️ Sync push network error:', err);
       /* offline — will retry next sync */
     }
   }
@@ -195,7 +219,11 @@ type LegacySyncResult = {
   pulled: number;
 };
 
-export async function syncTasks(userId: string, localTasks: Task[]): Promise<LegacySyncResult | null> {
+export async function syncTasks(
+  userId: string,
+  localTasks: Task[],
+  getToken?: TokenGetter,
+): Promise<LegacySyncResult | null> {
   if (!userId) return null;
   const result = await syncAll(userId, {
     tasks: localTasks,
@@ -203,7 +231,7 @@ export async function syncTasks(userId: string, localTasks: Task[]): Promise<Leg
     checkIns: [],
     milestones: [],
     projects: [],
-  });
+  }, getToken);
   if (!result) return null;
   return {
     merged: result.tasks,
