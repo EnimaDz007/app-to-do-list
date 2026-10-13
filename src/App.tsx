@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────────────────────
 //  FILE: src/App.tsx
-//  Full file — with Clear All archived + 30-day auto-cleanup
+//  Full file — with Clerk-authenticated API calls
 // ─────────────────────────────────────────────────────────────
 
 /**
@@ -9,7 +9,7 @@
  */
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { useUser } from '@clerk/clerk-react';
+import { useUser, useAuth } from '@clerk/clerk-react';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { PushNotifications } from '@capacitor/push-notifications';
 import { LocalNotifications } from '@capacitor/local-notifications';
@@ -100,6 +100,7 @@ import { scheduleTaskReminders, cancelTaskReminders, recomputeReminder } from '.
 import { FullBackup } from './utils/fullBackup';
 import { Mic } from 'lucide-react';
 import { triggerHaptic } from './utils/haptics';
+import { makeAuthedFetch } from './utils/authFetch';
 
 const STORAGE_KEY = 'taskflow_tasks_list';
 const HABITS_STORAGE_KEY = 'taskflow_habits_list';
@@ -116,10 +117,8 @@ const SERVER_URL = 'https://task-priority-server-pir6.onrender.com';
 
 const OVERDUE_NOTIFICATION_ID = 999_998;
 
-/** Archived tasks get auto-soft-deleted after this many days. */
 const ARCHIVE_TTL_DAYS = 30;
 const ARCHIVE_TTL_MS = ARCHIVE_TTL_DAYS * 24 * 60 * 60 * 1000;
-/** How often to scan for expired archives. 1 hour. */
 const ARCHIVE_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 
 const KARMA_PER_QUADRANT: Record<QuadrantId, number> = {
@@ -199,7 +198,11 @@ export default function App() {
   const { language } = useLanguage();
 
   const { user } = useUser();
+  const { getToken } = useAuth();
   const userId = user?.id ?? '';
+
+  // 🔒 Authenticated fetch — attaches Clerk session token to every request
+  const authedFetch = useMemo(() => makeAuthedFetch(getToken), [getToken]);
 
   const hasSyncedHabitsRef = useRef(false);
   const hasSyncedTasksRef = useRef(false);
@@ -348,6 +351,7 @@ export default function App() {
     }, 1400);
   };
 
+  // 🔒 runSync now passes getToken down to sync.ts
   const runSync = useCallback(async (opts?: { silent?: boolean }) => {
     if (!userId) return;
     if (syncingRef.current) return;
@@ -357,13 +361,17 @@ export default function App() {
     if (!opts?.silent) setIsSyncing(true);
 
     try {
-      const result = await runSyncAll(userId, {
-        tasks: tasksRef.current,
-        habits: habitsRef.current,
-        checkIns: checkInsRef.current,
-        milestones: milestonesRef.current,
-        projects: projectsRef.current,
-      });
+      const result = await runSyncAll(
+        userId,
+        {
+          tasks: tasksRef.current,
+          habits: habitsRef.current,
+          checkIns: checkInsRef.current,
+          milestones: milestonesRef.current,
+          projects: projectsRef.current,
+        },
+        getToken,
+      );
       if (!result) return;
 
       const serverTs = new Date(result.serverTime).getTime();
@@ -437,7 +445,7 @@ export default function App() {
       syncingRef.current = false;
       setIsSyncing(false);
     }
-  }, [userId]);
+  }, [userId, getToken]);
 
   const scheduleSync = useCallback(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -509,10 +517,6 @@ export default function App() {
     };
   }, [userId, runSync]);
 
-  // ─────────────────────────────────────────────────────────────
-  //  AUTO-CLEANUP: soft-delete archived tasks older than 30 days.
-  //  Runs on mount + every hour. Syncs to server after each pass.
-  // ─────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!userId) return;
 
@@ -539,9 +543,7 @@ export default function App() {
       }
     };
 
-    // First sweep shortly after boot (let sync finish first)
     const bootTimer = setTimeout(sweep, 5000);
-    // Then every hour
     const interval = setInterval(sweep, ARCHIVE_CLEANUP_INTERVAL_MS);
 
     return () => {
@@ -550,6 +552,7 @@ export default function App() {
     };
   }, [userId, runSync]);
 
+  // 🔒 scheduleTaskReminder now uses authedFetch
   const scheduleTaskReminder = async (task: Task) => {
     if (task.quadrant !== 'do_first') return;
     if (task.status === 'completed') return;
@@ -594,11 +597,10 @@ export default function App() {
     }
 
     try {
-      const response = await fetch(`${SERVER_URL}/api/schedule-reminder`, {
+      const response = await authedFetch(`${SERVER_URL}/api/schedule-reminder`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          externalId: userId,
           title: task.title,
           dueTime: task.dueDate,
           taskId: task.id,
@@ -613,6 +615,7 @@ export default function App() {
     }
   };
 
+  // 🔒 cancelTaskReminder now uses authedFetch
   const cancelTaskReminder = async (taskId: string) => {
     if (!Capacitor.isNativePlatform()) return;
     try {
@@ -620,7 +623,7 @@ export default function App() {
       try { await LocalNotifications.cancel({ notifications: [{ id: hashTaskId(taskId) + 1 }] }); } catch {}
       try { await cancelNagsForTask(taskId); } catch {}
       try {
-        await fetch(`${SERVER_URL}/api/cancel-reminder`, {
+        await authedFetch(`${SERVER_URL}/api/cancel-reminder`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ taskId }),
@@ -629,9 +632,10 @@ export default function App() {
     } catch {}
   };
 
+  // 🔒 completeTaskOnServer now uses authedFetch
   const completeTaskOnServer = async (taskId: string): Promise<Task | null> => {
     try {
-      const response = await fetch(`${SERVER_URL}/api/complete-reminder`, {
+      const response = await authedFetch(`${SERVER_URL}/api/complete-reminder`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ taskId }),
@@ -644,17 +648,17 @@ export default function App() {
     return null;
   };
 
+  // 🔒 syncHabitReminderToServer now uses authedFetch
   const syncHabitReminderToServer = async (habit: Habit) => {
     if (!Capacitor.isNativePlatform()) return;
     try {
       if (habit.reminderEnabled && habit.reminderTime) {
         const tzOffset = new Date().getTimezoneOffset();
-        await fetch(`${SERVER_URL}/api/schedule-habit-reminder`, {
+        await authedFetch(`${SERVER_URL}/api/schedule-habit-reminder`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             habitId: habit.id,
-            externalId: userId,
             name: habit.name,
             emoji: habit.emoji,
             reminderTime: habit.reminderTime,
@@ -664,7 +668,7 @@ export default function App() {
         });
         console.log('✅ Habit reminder synced:', habit.name);
       } else {
-        await fetch(`${SERVER_URL}/api/cancel-habit-reminder`, {
+        await authedFetch(`${SERVER_URL}/api/cancel-habit-reminder`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ habitId: habit.id }),
@@ -675,10 +679,11 @@ export default function App() {
     }
   };
 
+  // 🔒 cancelHabitReminderOnServer now uses authedFetch
   const cancelHabitReminderOnServer = async (habitId: string) => {
     if (!Capacitor.isNativePlatform()) return;
     try {
-      await fetch(`${SERVER_URL}/api/cancel-habit-reminder`, {
+      await authedFetch(`${SERVER_URL}/api/cancel-habit-reminder`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ habitId }),
@@ -711,6 +716,7 @@ export default function App() {
     registerNotificationActions();
   }, []);
 
+  // 🔒 Push registration now uses authedFetch
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
     const setupPush = async () => {
@@ -722,12 +728,14 @@ export default function App() {
         if (permStatus.receive !== 'granted') return;
         await PushNotifications.register();
         PushNotifications.addListener('registration', async (token) => {
-          console.log('📱 FCM TOKEN RECEIVED:', token.value);
+          if (import.meta.env.DEV) {
+            console.log('📱 FCM TOKEN RECEIVED:', token.value);
+          }
           try {
-            await fetch(`${SERVER_URL}/api/register-device`, {
+            await authedFetch(`${SERVER_URL}/api/register-device`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ userId, fcmToken: token.value }),
+              body: JSON.stringify({ fcmToken: token.value }),
             });
           } catch {}
         });
@@ -737,7 +745,7 @@ export default function App() {
       } catch {}
     };
     setupPush();
-  }, [userId]);
+  }, [userId, authedFetch]);
 
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
@@ -1328,7 +1336,6 @@ export default function App() {
     scheduleSync();
   };
 
-  // ─── NEW: Clear all archived tasks ───
   const handleClearAllArchived = () => {
     const now = new Date().toISOString();
     let count = 0;
