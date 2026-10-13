@@ -44,6 +44,9 @@ const syncProjectsCollection = db.collection('syncProjects');
 // ─── 2. App + CORS + body limits ───────────────────────────
 const app = express();
 
+// Trust Render's reverse proxy so express-rate-limit sees the real client IP
+app.set('trust proxy', 1);
+
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
   .split(',')
   .map((s) => s.trim())
@@ -101,7 +104,7 @@ app.use(clerkMiddleware());
 // Helper: safe string length cap
 const cap = (s, n) => (typeof s === 'string' ? s.slice(0, n) : '');
 
-// ─── FCM stale-token helpers (unchanged) ───────────────────
+// ─── FCM stale-token helpers ───────────────────────────────
 const STALE_TOKEN_CODES = [
   'messaging/registration-token-not-registered',
   'messaging/invalid-registration-token',
@@ -120,7 +123,7 @@ async function handleStaleToken(externalId, err) {
   return true;
 }
 
-// ─── Task timers (unchanged) ───────────────────────────────
+// ─── Task timers ───────────────────────────────────────────
 const scheduledTimers = {};
 const scheduledReminderTimers = {};
 
@@ -250,7 +253,7 @@ function scheduleTask(task) {
   return true;
 }
 
-// ─── Custom reminders (unchanged) ──────────────────────────
+// ─── Custom reminders ──────────────────────────────────────
 function reminderBody(reminder) {
   if (!reminder || typeof reminder.minutesBefore !== 'number') return 'Your task is coming up.';
   const mins = reminder.minutesBefore;
@@ -324,7 +327,7 @@ async function rescheduleAllTasks() {
   } catch (err) { console.error('Failed to reschedule tasks:', err); }
 }
 
-// ─── Habit timers (unchanged) ──────────────────────────────
+// ─── Habit timers ──────────────────────────────────────────
 const scheduledHabitTimers = {};
 
 function computeNextHabitFire(habit, fromTimeMs = Date.now()) {
@@ -869,7 +872,7 @@ app.get('/delegate/:delegateId', async (req, res) => {
   res.set('Content-Type', 'text/html; charset=utf-8').send(html);
 });
 
-// ─── Tombstone GC (unchanged) ──────────────────────────────
+// ─── Tombstone GC ──────────────────────────────────────────
 const TOMBSTONE_TTL_DAYS = 30;
 const GC_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
