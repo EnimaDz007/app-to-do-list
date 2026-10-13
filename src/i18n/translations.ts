@@ -16,7 +16,7 @@ export const SUPPORTED_LANGUAGES: LanguageOption[] = [
 
 export const translations = {
   en: {
-    app_title: 'Task Priority',
+    app_title: 'MerakiList',
     app_badge: 'v2.0 Mobile',
     btn_new_task: 'New Task',
     settings_btn: 'Settings',
@@ -106,8 +106,8 @@ export const translations = {
     notif_test_schedule: 'Schedule',
     notif_activated_title: 'Notifications Activated! 🔔',
     notif_activated_body: 'You will receive reminders for upcoming and high-priority tasks.',
-    notif_denied_hint: 'Notifications were denied. Open Android Settings → Apps → Task Priority → Notifications and enable them manually.',
-    notif_reminder_title: 'Task Priority Reminder',
+    notif_denied_hint: 'Notifications were denied. Open Android Settings → Apps → MerakiList → Notifications and enable them manually.',
+    notif_reminder_title: 'MerakiList Reminder',
     notif_reminder_body: 'You have {count} task(s) scheduled for today or overdue.',
     notif_test_5s_msg_task: '⏱️ Notification arriving in 5s — tap it to jump to "{title}"',
     notif_test_5s_msg_no_task: '⏱️ Notification arriving in 5s — no Do First task to highlight, but you can still tap it.',
@@ -390,7 +390,7 @@ export const translations = {
   },
 
   fr: {
-    app_title: 'Priorité des Tâches',
+    app_title: 'MerakiList',
     app_badge: 'v2.0 Mobile',
     btn_new_task: 'Nouvelle tâche',
     settings_btn: 'Paramètres',
@@ -479,8 +479,8 @@ export const translations = {
     notif_test_schedule: 'Planifier',
     notif_activated_title: 'Notifications activées ! 🔔',
     notif_activated_body: 'Vous recevrez des rappels pour vos tâches à venir.',
-    notif_denied_hint: 'Notifications refusées. Ouvrez Paramètres Android → Applications → Task Priority → Notifications.',
-    notif_reminder_title: 'Rappel Task Priority',
+    notif_denied_hint: 'Notifications refusées. Ouvrez Paramètres Android → Applications → MerakiList → Notifications.',
+    notif_reminder_title: 'Rappel MerakiList',
     notif_reminder_body: 'Vous avez {count} tâche(s) prévue(s) aujourd’hui ou en retard.',
     notif_test_5s_msg_task: '⏱️ Notification dans 5s — appuyez pour aller à "{title}"',
     notif_test_5s_msg_no_task: '⏱️ Notification dans 5s — pas de tâche Do First à mettre en avant.',
@@ -763,7 +763,7 @@ export const translations = {
   },
 
   ar: {
-    app_title: 'أولويات المهام',
+    app_title: 'MerakiList',
     app_badge: 'نسخة الجوال v2.0',
     btn_new_task: 'مهمة جديدة',
     settings_btn: 'الإعدادات',
@@ -852,8 +852,8 @@ export const translations = {
     notif_test_schedule: 'جدولة',
     notif_activated_title: 'تم تفعيل الإشعارات! 🔔',
     notif_activated_body: 'ستتلقى تذكيرات للمهام القادمة وعالية الأهمية.',
-    notif_denied_hint: 'تم رفض الإشعارات. افتح إعدادات Android → التطبيقات → Task Priority → الإشعارات.',
-    notif_reminder_title: 'تذكير Task Priority',
+    notif_denied_hint: 'تم رفض الإشعارات. افتح إعدادات Android → التطبيقات → MerakiList → الإشعارات.',
+    notif_reminder_title: 'تذكير MerakiList',
     notif_reminder_body: 'لديك {count} مهمة مجدولة اليوم أو متأخرة.',
     notif_test_5s_msg_task: '⏱️ الإشعار خلال 5 ثوانٍ — اضغط للانتقال إلى "{title}"',
     notif_test_5s_msg_no_task: '⏱️ الإشعار خلال 5 ثوانٍ — لا توجد مهمة "افعل أولاً" لتمييزها.',

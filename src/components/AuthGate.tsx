@@ -1,6 +1,7 @@
 // ─────────────────────────────────────────────────────────────
 //  FILE: src/components/AuthGate.tsx
-//  Aurora Mesh sign-in — with MerakiList logo
+//  Aurora Mesh sign-in — bigger logo, tighter halo rings
+//  + locked social buttons (no text-drag on background click)
 // ─────────────────────────────────────────────────────────────
 
 import React, { useEffect, useRef } from 'react';
@@ -132,12 +133,12 @@ const AURORA_CSS = `
     pointer-events: none;
   }
 
-  /* ── Logo ── */
+  /* ── Logo — bigger (72px) + tighter halos ── */
   .am-logo-wrap {
     position: relative;
-    width: 64px;
-    height: 64px;
-    margin: 0 auto 16px;
+    width: 72px;
+    height: 72px;
+    margin: 0 auto 18px;
   }
   .am-logo-slot {
     position: absolute;
@@ -150,8 +151,8 @@ const AURORA_CSS = `
   }
   .am-halo {
     position: absolute;
-    inset: -5px;
-    border-radius: 25px;
+    inset: -4px;
+    border-radius: 26px;
     border: 1.5px solid rgba(99,102,241,0.5);
     animation: am-haloPulse 2.4s ease-out infinite;
     pointer-events: none;
@@ -164,7 +165,7 @@ const AURORA_CSS = `
   }
   .am-orbit {
     position: absolute;
-    inset: -18px;
+    inset: -15px;
     animation: am-orbitSpin 8s linear infinite;
     pointer-events: none;
   }
@@ -215,6 +216,54 @@ const AURORA_CSS = `
     font-size: 10px;
     color: #94a3b8;
     margin-top: 16px;
+  }
+
+  /* ═══════════════════════════════════════════════════════════
+     🔒 LOCK: prevent background-click from drag-selecting the
+     Google / Apple labels (or any text) inside the sign-in card.
+     Input fields are re-enabled so users can still select text.
+     ═══════════════════════════════════════════════════════════ */
+  .am-card {
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    -webkit-touch-callout: none;
+  }
+  .am-card input,
+  .am-card textarea,
+  .am-clerk-slot input,
+  .am-clerk-slot textarea {
+    user-select: text;
+    -webkit-user-select: text;
+    -moz-user-select: text;
+    -ms-user-select: text;
+  }
+  /* Belt-and-braces: lock the social + primary buttons themselves
+     and every child (label text, SVG icons, spans). */
+  .am-clerk-slot .cl-socialButtonsBlockButton,
+  .am-clerk-slot .cl-socialButtonsBlockButton *,
+  .am-clerk-slot .cl-socialButtonsBlockButtonText,
+  .am-clerk-slot .cl-formButtonPrimary,
+  .am-clerk-slot .cl-formButtonPrimary * {
+    user-select: none !important;
+    -webkit-user-select: none !important;
+    -moz-user-select: none !important;
+    -ms-user-select: none !important;
+    -webkit-user-drag: none !important;
+    -khtml-user-drag: none !important;
+    -moz-user-drag: none !important;
+    -o-user-drag: none !important;
+    -webkit-touch-callout: none !important;
+    cursor: pointer !important;
+  }
+  /* Kill the native image/icon drag on the provider logos */
+  .am-clerk-slot .cl-socialButtonsBlockButton svg,
+  .am-clerk-slot .cl-socialButtonsBlockButton img,
+  .am-clerk-slot .cl-socialButtonsIconButton svg,
+  .am-clerk-slot .cl-socialButtonsIconButton img {
+    pointer-events: none !important;
+    -webkit-user-drag: none !important;
   }
 
   /* ═══════════════════════════════════════════════════════════
@@ -438,7 +487,7 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
                   <div className="am-halo am-d2" />
                   <div className="am-orbit" />
                   <div className="am-logo-slot">
-                    <AppLogo size={64} />
+                    <AppLogo size={72} />
                   </div>
                 </div>
 
