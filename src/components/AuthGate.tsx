@@ -1,29 +1,32 @@
 // ─────────────────────────────────────────────────────────────
 //  FILE: src/components/AuthGate.tsx
-//  Aurora Mesh sign-in — animated premium design
-//  Clerk's <SignIn> embedded with deep appearance customization
-//  Google + Apple buttons appear automatically if enabled in
-//  your Clerk dashboard → User & Authentication → SSO connections
+//  Aurora Mesh sign-in — v2 (fixed overflow + Clerk transparency)
 // ─────────────────────────────────────────────────────────────
 
 import React, { useEffect, useRef } from 'react';
 import { SignIn, useUser } from '@clerk/clerk-react';
 
-/* ═════════════════════════════════════════════════════════════
-   Aurora Mesh CSS — scoped to the sign-in screen.
-   All class names prefixed `am-` to avoid collisions.
-   ═════════════════════════════════════════════════════════════ */
 const AURORA_CSS = `
+  html, body { margin: 0; padding: 0; }
+
   .am-wrap {
     position: fixed;
     inset: 0;
     background: #f8fafc;
-    overflow: hidden;
+    overflow-y: auto;
+    overflow-x: hidden;
+    z-index: 1;
+  }
+
+  /* Inner wrapper holds min-height for centering */
+  .am-inner {
+    position: relative;
+    min-height: 100%;
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 24px;
-    z-index: 1;
+    padding: 40px 20px;
+    box-sizing: border-box;
   }
 
   /* ── Animated gradient mesh ── */
@@ -38,6 +41,7 @@ const AURORA_CSS = `
       radial-gradient(circle at 50% 50%, rgba(251,191,36,0.12), transparent 50%);
     filter: blur(60px);
     animation: am-meshShift 20s ease-in-out infinite alternate;
+    pointer-events: none;
   }
   @keyframes am-meshShift {
     0%   { transform: translate(0, 0) scale(1) rotate(0deg); }
@@ -46,7 +50,6 @@ const AURORA_CSS = `
     100% { transform: translate(0, 0) scale(1.03) rotate(0deg); }
   }
 
-  /* ── Grain overlay ── */
   .am-grain {
     position: absolute;
     inset: 0;
@@ -56,7 +59,6 @@ const AURORA_CSS = `
     pointer-events: none;
   }
 
-  /* ── Floating particles ── */
   .am-particles {
     position: absolute;
     inset: 0;
@@ -78,7 +80,6 @@ const AURORA_CSS = `
     100% { transform: translateY(-110vh) scale(1); opacity: 0; }
   }
 
-  /* ── Cursor-follow spotlight ── */
   .am-spotlight {
     position: absolute;
     width: 500px;
@@ -90,74 +91,72 @@ const AURORA_CSS = `
     transition: opacity 0.4s;
     opacity: 0;
     z-index: 2;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
   }
-  .am-wrap:hover .am-spotlight { opacity: 1; }
+  .am-inner:hover .am-spotlight { opacity: 1; }
 
-  /* ── Content wrapper ── */
+  /* ── Content ── */
   .am-content {
     position: relative;
     z-index: 5;
     width: 100%;
-    max-width: 440px;
+    max-width: 420px;
   }
 
-  /* ── Card ── */
+  /* ── Glass card ── */
   .am-card {
     width: 100%;
-    padding: 36px 32px 32px;
-    border-radius: 28px;
-    background: rgba(255,255,255,0.72);
-    backdrop-filter: blur(30px) saturate(180%);
-    -webkit-backdrop-filter: blur(30px) saturate(180%);
-    border: 1px solid rgba(255,255,255,0.9);
+    padding: 32px 28px 24px;
+    border-radius: 26px;
+    background: rgba(255,255,255,0.55);
+    backdrop-filter: blur(28px) saturate(180%);
+    -webkit-backdrop-filter: blur(28px) saturate(180%);
+    border: 1px solid rgba(255,255,255,0.85);
     box-shadow:
-      0 40px 90px -30px rgba(99,102,241,0.35),
-      0 0 0 1px rgba(255,255,255,0.8) inset;
+      0 30px 80px -30px rgba(99,102,241,0.35),
+      0 0 0 1px rgba(255,255,255,0.6) inset;
     position: relative;
-    animation: am-cardFloat 6s ease-in-out infinite;
-  }
-  @keyframes am-cardFloat {
-    0%, 100% { transform: translateY(0); }
-    50% { transform: translateY(-6px); }
   }
   .am-card::before {
     content: '';
     position: absolute;
     inset: -1px;
-    border-radius: 28px;
+    border-radius: 26px;
     padding: 1px;
-    background: linear-gradient(135deg, rgba(99,102,241,0.4), transparent 30%, transparent 70%, rgba(217,70,239,0.4));
+    background: linear-gradient(135deg, rgba(99,102,241,0.45), transparent 35%, transparent 65%, rgba(217,70,239,0.45));
     -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
     -webkit-mask-composite: xor;
     mask-composite: exclude;
     pointer-events: none;
   }
 
-  /* ── Logo with halos + orbit ── */
+  /* ── Logo ── */
   .am-logo-wrap {
     position: relative;
-    width: 72px;
-    height: 72px;
-    margin: 0 auto 20px;
+    width: 64px;
+    height: 64px;
+    margin: 0 auto 16px;
   }
   .am-logo {
     position: absolute;
     inset: 0;
-    border-radius: 22px;
+    border-radius: 20px;
     background: linear-gradient(135deg, #0f172a, #1e1b4b 60%, #4c1d95);
     color: #fbbf24;
     font-weight: 900;
-    font-size: 24px;
+    font-size: 22px;
     display: flex;
     align-items: center;
     justify-content: center;
-    box-shadow: 0 20px 40px -12px rgba(76,29,149,0.55);
+    box-shadow: 0 16px 32px -10px rgba(76,29,149,0.55);
     z-index: 2;
   }
   .am-halo {
     position: absolute;
-    inset: -6px;
-    border-radius: 28px;
+    inset: -5px;
+    border-radius: 25px;
     border: 1.5px solid rgba(99,102,241,0.5);
     animation: am-haloPulse 2.4s ease-out infinite;
     pointer-events: none;
@@ -166,11 +165,11 @@ const AURORA_CSS = `
   .am-halo.am-d2 { animation-delay: 1.6s; }
   @keyframes am-haloPulse {
     0%   { transform: scale(1); opacity: 0.9; }
-    100% { transform: scale(1.4); opacity: 0; }
+    100% { transform: scale(1.35); opacity: 0; }
   }
   .am-orbit {
     position: absolute;
-    inset: -22px;
+    inset: -18px;
     animation: am-orbitSpin 8s linear infinite;
     pointer-events: none;
   }
@@ -191,14 +190,14 @@ const AURORA_CSS = `
     to   { transform: rotate(360deg); }
   }
 
-  /* ── Title with gradient shimmer ── */
+  /* ── Title ── */
   .am-title {
-    font-size: 26px;
+    font-size: 24px;
     font-weight: 900;
     letter-spacing: -0.035em;
     text-align: center;
     margin: 0 0 4px;
-    background: linear-gradient(135deg, #0f172a 0%, #4f46e5 60%, #d946ef 100%);
+    background: linear-gradient(135deg, #0f172a 0%, #4f46e5 55%, #d946ef 100%);
     background-size: 200% 100%;
     -webkit-background-clip: text;
     background-clip: text;
@@ -213,32 +212,23 @@ const AURORA_CSS = `
     font-size: 12px;
     color: #64748b;
     text-align: center;
-    margin: 0 0 24px;
+    margin: 0 0 20px;
   }
 
-  /* ── Trust row ── */
   .am-trust {
     text-align: center;
     font-size: 10px;
     color: #94a3b8;
-    margin-top: 20px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    animation: am-fadeIn 1s 0.7s backwards;
-  }
-  @keyframes am-fadeIn {
-    from { opacity: 0; }
-    to   { opacity: 1; }
+    margin-top: 16px;
   }
 
   /* ═══════════════════════════════════════════════════════════
-     Clerk <SignIn> overrides — everything inside .am-clerk-slot
+     CLERK OVERRIDES — aggressive
      ═══════════════════════════════════════════════════════════ */
   .am-clerk-slot .cl-rootBox,
   .am-clerk-slot .cl-cardBox {
-    width: 100%;
+    width: 100% !important;
+    max-width: 100% !important;
   }
   .am-clerk-slot .cl-card {
     background: transparent !important;
@@ -246,27 +236,41 @@ const AURORA_CSS = `
     border: none !important;
     padding: 0 !important;
     margin: 0 !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    width: 100% !important;
+  }
+  .am-clerk-slot .cl-main {
+    margin: 0 !important;
+    padding: 0 !important;
+    gap: 10px !important;
   }
   .am-clerk-slot .cl-header,
   .am-clerk-slot .cl-headerTitle,
   .am-clerk-slot .cl-headerSubtitle,
   .am-clerk-slot .cl-logoBox,
-  .am-clerk-slot .cl-logoImage {
+  .am-clerk-slot .cl-logoImage,
+  .am-clerk-slot .cl-headerTitle__signIn {
     display: none !important;
   }
-  .am-clerk-slot .cl-main { margin: 0 !important; }
   .am-clerk-slot .cl-formFieldLabel {
     display: none !important;
+  }
+  .am-clerk-slot .cl-formFieldRow,
+  .am-clerk-slot .cl-formField {
+    margin: 0 0 10px !important;
   }
   .am-clerk-slot .cl-formFieldInput {
     background: #ffffff !important;
     border: 1px solid #e2e8f0 !important;
     border-radius: 13px !important;
-    padding: 13px 16px !important;
+    padding: 12px 16px !important;
     font-size: 13px !important;
     color: #0f172a !important;
     transition: all 0.25s !important;
     height: auto !important;
+    min-height: 0 !important;
+    box-shadow: 0 1px 2px rgba(15,23,42,0.04) !important;
   }
   .am-clerk-slot .cl-formFieldInput:focus {
     border-color: #6366f1 !important;
@@ -279,23 +283,20 @@ const AURORA_CSS = `
   .am-clerk-slot .cl-formButtonPrimary {
     background: linear-gradient(135deg, #6366f1, #8b5cf6, #d946ef) !important;
     background-size: 200% 200% !important;
-    animation: am-gradientSlide 4s ease infinite !important;
     color: #ffffff !important;
     font-weight: 800 !important;
     font-size: 13px !important;
     border-radius: 13px !important;
-    padding: 14px !important;
+    padding: 13px !important;
     box-shadow: 0 12px 32px -10px rgba(99,102,241,0.55) !important;
     letter-spacing: 0.2px !important;
     height: auto !important;
-    transition: transform 0.2s !important;
+    min-height: 0 !important;
+    transition: transform 0.15s !important;
+    text-transform: none !important;
   }
   .am-clerk-slot .cl-formButtonPrimary:hover {
     transform: translateY(-1px) !important;
-  }
-  @keyframes am-gradientSlide {
-    0%, 100% { background-position: 0% 50%; }
-    50%      { background-position: 100% 50%; }
   }
   .am-clerk-slot .cl-socialButtons {
     display: flex !important;
@@ -306,40 +307,42 @@ const AURORA_CSS = `
     border: 1px solid #e2e8f0 !important;
     background: #ffffff !important;
     border-radius: 14px !important;
-    padding: 13px 16px !important;
+    padding: 12px 16px !important;
     font-weight: 700 !important;
     font-size: 13px !important;
     color: #0f172a !important;
-    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+    transition: all 0.25s !important;
     box-shadow: 0 1px 2px rgba(15,23,42,0.04) !important;
     height: auto !important;
+    min-height: 0 !important;
   }
   .am-clerk-slot .cl-socialButtonsBlockButton:hover {
-    transform: translateY(-2px) scale(1.01) !important;
+    transform: translateY(-1px) !important;
     border-color: #c7d2fe !important;
-    box-shadow: 0 12px 32px -12px rgba(99,102,241,0.35) !important;
+    box-shadow: 0 10px 24px -10px rgba(99,102,241,0.3) !important;
     background: #ffffff !important;
   }
   .am-clerk-slot .cl-socialButtonsBlockButtonText {
     font-weight: 700 !important;
     color: #0f172a !important;
+    font-size: 13px !important;
   }
-  .am-clerk-slot .cl-socialButtonsBlockButton__apple,
-  .am-clerk-slot .cl-socialButtonsBlockButton__apple:hover {
+  /* Apple button dark style — Clerk uses data-provider attribute */
+  .am-clerk-slot .cl-socialButtonsBlockButton[data-provider="apple"],
+  .am-clerk-slot .cl-socialButtonsBlockButton[data-provider="apple"]:hover {
     background: #0f172a !important;
     border-color: #0f172a !important;
-    color: #ffffff !important;
     box-shadow: 0 1px 2px rgba(15,23,42,0.15) !important;
   }
-  .am-clerk-slot .cl-socialButtonsBlockButton__apple .cl-socialButtonsBlockButtonText {
+  .am-clerk-slot .cl-socialButtonsBlockButton[data-provider="apple"] .cl-socialButtonsBlockButtonText {
     color: #ffffff !important;
   }
   .am-clerk-slot .cl-dividerRow {
-    margin: 18px 0 !important;
+    margin: 14px 0 !important;
     gap: 12px !important;
   }
   .am-clerk-slot .cl-dividerLine {
-    background: linear-gradient(90deg, transparent, #e2e8f0 40%, #e2e8f0 60%, transparent) !important;
+    background: linear-gradient(90deg, transparent, #cbd5e1 40%, #cbd5e1 60%, transparent) !important;
     height: 1px !important;
   }
   .am-clerk-slot .cl-dividerText {
@@ -348,14 +351,19 @@ const AURORA_CSS = `
     font-weight: 800 !important;
     letter-spacing: 1.5px !important;
     text-transform: uppercase !important;
+    background: transparent !important;
+    padding: 0 4px !important;
   }
+  /* Hide "Secured by Clerk" + "Development mode" footer */
   .am-clerk-slot .cl-footer {
-    background: transparent !important;
-    padding: 0 !important;
-    margin-top: 16px !important;
+    display: none !important;
   }
+  /* But keep sign-up link visible — it lives in footerAction in some versions */
   .am-clerk-slot .cl-footerAction {
+    display: block !important;
     background: transparent !important;
+    margin-top: 12px !important;
+    text-align: center !important;
   }
   .am-clerk-slot .cl-footerActionText {
     color: #64748b !important;
@@ -365,31 +373,21 @@ const AURORA_CSS = `
     color: #6366f1 !important;
     font-weight: 700 !important;
     font-size: 11px !important;
+    text-decoration: none !important;
   }
-  .am-clerk-slot .cl-formFieldRow { margin: 0 !important; }
-  .am-clerk-slot .cl-formField { margin-bottom: 10px !important; }
   .am-clerk-slot .cl-form { gap: 10px !important; display: flex !important; flex-direction: column !important; }
   .am-clerk-slot .cl-alert,
   .am-clerk-slot .cl-alertText {
     font-size: 11px !important;
     border-radius: 12px !important;
   }
-  .am-clerk-slot .cl-formResendCodeLink,
-  .am-clerk-slot .cl-otpCodeFieldInput {
-    border-radius: 12px !important;
-  }
 `;
-
-/* ═════════════════════════════════════════════════════════════
-   COMPONENT
-   ═════════════════════════════════════════════════════════════ */
 
 export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { isLoaded, isSignedIn } = useUser();
   const particleHostRef = useRef<HTMLDivElement>(null);
   const spotlightRef = useRef<HTMLDivElement>(null);
 
-  // Spawn particles once on mount
   useEffect(() => {
     const host = particleHostRef.current;
     if (!host) return;
@@ -410,16 +408,15 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
     host.appendChild(frag);
   }, []);
 
-  // Cursor spotlight
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     const spot = spotlightRef.current;
     if (!spot) return;
     const rect = e.currentTarget.getBoundingClientRect();
     spot.style.left = `${e.clientX - rect.left - 250}px`;
     spot.style.top = `${e.clientY - rect.top - 250}px`;
+    spot.style.transform = 'none';
   };
 
-  /* ── Loading ── */
   if (!isLoaded) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-100 dark:bg-slate-950">
@@ -428,7 +425,6 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
     );
   }
 
-  /* ── Signed out: Aurora Mesh sign-in ── */
   if (!isSignedIn) {
     return (
       <>
@@ -438,53 +434,65 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
           <div className="am-mesh" />
           <div className="am-grain" />
           <div className="am-particles" ref={particleHostRef} />
-          <div className="am-spotlight" ref={spotlightRef} />
 
-          <div className="am-content">
-            <div className="am-card">
-              <div className="am-logo-wrap">
-                <div className="am-halo" />
-                <div className="am-halo am-d1" />
-                <div className="am-halo am-d2" />
-                <div className="am-orbit" />
-                <div className="am-logo">TP</div>
+          <div className="am-inner">
+            <div className="am-spotlight" ref={spotlightRef} />
+
+            <div className="am-content">
+              <div className="am-card">
+                <div className="am-logo-wrap">
+                  <div className="am-halo" />
+                  <div className="am-halo am-d1" />
+                  <div className="am-halo am-d2" />
+                  <div className="am-orbit" />
+                  <div className="am-logo">TP</div>
+                </div>
+
+                <h2 className="am-title">Welcome back.</h2>
+                <p className="am-sub">Sign in to sync across your devices</p>
+
+                <div className="am-clerk-slot">
+                  <SignIn
+                    routing="hash"
+                    appearance={{
+                      variables: {
+                        colorPrimary: '#6366f1',
+                        colorText: '#0f172a',
+                        colorTextSecondary: '#64748b',
+                        colorBackground: 'transparent',
+                        colorInputBackground: '#ffffff',
+                        colorInputText: '#0f172a',
+                        borderRadius: '14px',
+                        fontFamily:
+                          '-apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif',
+                        fontSize: '13px',
+                      },
+                      layout: {
+                        logoPlacement: 'none',
+                        socialButtonsVariant: 'blockButton',
+                        socialButtonsPlacement: 'top',
+                        showOptionalFields: false,
+                        shimmer: false,
+                        animations: true,
+                      },
+                      elements: {
+                        rootBox: { width: '100%', maxWidth: '100%' },
+                        cardBox: { width: '100%', maxWidth: '100%', boxShadow: 'none' },
+                        card: {
+                          background: 'transparent',
+                          boxShadow: 'none',
+                          border: 'none',
+                          padding: '0',
+                          margin: '0',
+                          width: '100%',
+                        },
+                      },
+                    }}
+                  />
+                </div>
+
+                <div className="am-trust">🔒 Encrypted · No ads</div>
               </div>
-
-              <h2 className="am-title">Welcome back.</h2>
-              <p className="am-sub">Sign in to sync across your devices</p>
-
-              <div className="am-clerk-slot">
-                <SignIn
-                  routing="hash"
-                  appearance={{
-                    variables: {
-                      colorPrimary: '#6366f1',
-                      colorText: '#0f172a',
-                      colorTextSecondary: '#64748b',
-                      colorBackground: 'transparent',
-                      colorInputBackground: '#ffffff',
-                      colorInputText: '#0f172a',
-                      borderRadius: '14px',
-                      fontFamily:
-                        '-apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif',
-                    },
-                    layout: {
-                      logoPlacement: 'none',
-                      socialButtonsVariant: 'blockButton',
-                      socialButtonsPlacement: 'top',
-                      showOptionalFields: false,
-                      shimmer: true,
-                      animations: true,
-                    },
-                    elements: {
-                      rootBox: 'w-full',
-                      cardBox: 'w-full',
-                    },
-                  }}
-                />
-              </div>
-
-              <div className="am-trust">🔒 Encrypted · No ads</div>
             </div>
           </div>
         </div>
@@ -492,6 +500,5 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
     );
   }
 
-  /* ── Signed in ── */
   return <>{children}</>;
 };
