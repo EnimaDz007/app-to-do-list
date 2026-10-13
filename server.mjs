@@ -13,7 +13,6 @@ import { getMessaging } from 'firebase-admin/messaging';
 import { getFirestore } from 'firebase-admin/firestore';
 import {
   clerkMiddleware,
-  requireAuth,
   getAuth,
 } from '@clerk/express';
 import fs from 'fs';
@@ -52,19 +51,14 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
   .map((s) => s.trim())
   .filter(Boolean);
 
-// Capacitor native apps send no Origin header or use these schemes.
 const NATIVE_ORIGINS = ['capacitor://localhost', 'ionic://localhost', 'http://localhost', 'https://localhost'];
 
 app.use(
   cors({
     origin: (origin, cb) => {
-      // Native mobile apps and server-to-server calls: no origin
       if (!origin) return cb(null, true);
-      // Capacitor WebView
       if (NATIVE_ORIGINS.includes(origin)) return cb(null, true);
-      // Explicit allowlist
       if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
-      // Localhost dev (any port)
       if (/^http:\/\/localhost(:\d+)?$/.test(origin)) return cb(null, true);
       console.warn(`🚫 CORS blocked origin: ${origin}`);
       return cb(null, false);
@@ -78,14 +72,13 @@ app.use(express.json({ limit: '2mb' }));
 // ─── 3. Rate limiting ──────────────────────────────────────
 const apiLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 120, // 120 requests per minute per IP
+  max: 120,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many requests. Please slow down.' },
 });
 app.use('/api/', apiLimiter);
 
-// Stricter limit for write-heavy / push endpoints
 const writeLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 60,
@@ -96,10 +89,28 @@ app.use('/api/register-device', writeLimiter);
 app.use('/api/schedule-reminder', writeLimiter);
 app.use('/api/schedule-habit-reminder', writeLimiter);
 
-// ─── 4. Clerk auth middleware ──────────────────────────────
-// Attaches req.auth to every request. requireAuth() then
-// rejects any request without a valid session JWT.
+// ─── 4. Clerk middleware ───────────────────────────────────
+// Attaches req.auth to every request. We do NOT use requireAuth()
+// because it redirects instead of returning 401. Our own authGuard
+// below returns a proper JSON 401 so the client never follows a redirect.
 app.use(clerkMiddleware());
+
+/**
+ * 🔒 Strict auth guard: returns 401 JSON for unauthenticated requests.
+ * Never redirects. Use on every endpoint that requires a real user.
+ */
+function authGuard(req, res, next) {
+  try {
+    const { userId } = getAuth(req) || {};
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    next();
+  } catch (err) {
+    console.error('authGuard error:', err);
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+}
 
 // Helper: safe string length cap
 const cap = (s, n) => (typeof s === 'string' ? s.slice(0, n) : '');
@@ -407,7 +418,7 @@ async function rescheduleAllHabitReminders() {
 //  The userId is ALWAYS taken from the JWT — never from the body.
 // ═══════════════════════════════════════════════════════════
 
-app.post('/api/register-device', requireAuth(), async (req, res) => {
+app.post('/api/register-device', authGuard, async (req, res) => {
   const userId = getAuth(req).userId;
   const { fcmToken } = req.body || {};
   if (!fcmToken || typeof fcmToken !== 'string') {
@@ -424,7 +435,7 @@ app.post('/api/register-device', requireAuth(), async (req, res) => {
   }
 });
 
-app.post('/api/schedule-reminder', requireAuth(), async (req, res) => {
+app.post('/api/schedule-reminder', authGuard, async (req, res) => {
   const userId = getAuth(req).userId;
   const { title, dueTime, taskId, recurrence, reminders, fullTask } = req.body || {};
 
@@ -437,14 +448,13 @@ app.post('/api/schedule-reminder', requireAuth(), async (req, res) => {
   }
 
   try {
-    // ── Ownership check: if this taskId already exists, it must belong to us
     const existing = await tasksCollection.doc(String(taskId)).get();
     if (existing.exists && existing.data().externalId !== userId) {
       return res.status(403).json({ error: 'Forbidden' });
     }
 
     const taskRecord = {
-      externalId: userId,               // ← always from JWT
+      externalId: userId,
       title: cap(title, 500),
       dueTime,
       taskId: String(taskId),
@@ -464,7 +474,7 @@ app.post('/api/schedule-reminder', requireAuth(), async (req, res) => {
   }
 });
 
-app.post('/api/complete-reminder', requireAuth(), async (req, res) => {
+app.post('/api/complete-reminder', authGuard, async (req, res) => {
   const userId = getAuth(req).userId;
   const { taskId } = req.body || {};
   if (!taskId) return res.status(400).json({ error: 'taskId required' });
@@ -492,7 +502,7 @@ app.post('/api/complete-reminder', requireAuth(), async (req, res) => {
   }
 });
 
-app.post('/api/cancel-reminder', requireAuth(), async (req, res) => {
+app.post('/api/cancel-reminder', authGuard, async (req, res) => {
   const userId = getAuth(req).userId;
   const { taskId } = req.body || {};
   if (!taskId) return res.status(400).json({ error: 'taskId required' });
@@ -519,10 +529,10 @@ app.post('/api/cancel-reminder', requireAuth(), async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════
-//  TWO-WAY SYNC — scoped strictly to the authenticated user
+//  TWO-WAY SYNC
 // ═══════════════════════════════════════════════════════════
 
-app.get('/api/sync/:userId', requireAuth(), async (req, res) => {
+app.get('/api/sync/:userId', authGuard, async (req, res) => {
   const userId = getAuth(req).userId;
   if (req.params.userId !== userId) return res.status(403).json({ error: 'Forbidden' });
   const since = req.query.since ? String(req.query.since) : null;
@@ -548,7 +558,7 @@ app.get('/api/sync/:userId', requireAuth(), async (req, res) => {
   }
 });
 
-app.post('/api/sync/:userId', requireAuth(), async (req, res) => {
+app.post('/api/sync/:userId', authGuard, async (req, res) => {
   const userId = getAuth(req).userId;
   if (req.params.userId !== userId) return res.status(403).json({ error: 'Forbidden' });
   const { tasks } = req.body || {};
@@ -561,7 +571,6 @@ app.post('/api/sync/:userId', requireAuth(), async (req, res) => {
 
     for (const task of tasks.slice(0, CAP)) {
       if (!task || !task.id) continue;
-      // Ownership check per task
       const existing = await syncTasksCollection.doc(String(task.id)).get();
       if (existing.exists && existing.data().externalId !== userId) {
         console.warn(`🚫 Skipped foreign task id=${task.id}`);
@@ -581,7 +590,7 @@ app.post('/api/sync/:userId', requireAuth(), async (req, res) => {
   }
 });
 
-app.post('/api/sync/:userId/delete', requireAuth(), async (req, res) => {
+app.post('/api/sync/:userId/delete', authGuard, async (req, res) => {
   const userId = getAuth(req).userId;
   if (req.params.userId !== userId) return res.status(403).json({ error: 'Forbidden' });
   const { taskId } = req.body || {};
@@ -598,11 +607,7 @@ app.post('/api/sync/:userId/delete', requireAuth(), async (req, res) => {
   }
 });
 
-// ═══════════════════════════════════════════════════════════
-//  FULL SYNC — all entity types
-// ═══════════════════════════════════════════════════════════
-
-app.get('/api/sync/:userId/full', requireAuth(), async (req, res) => {
+app.get('/api/sync/:userId/full', authGuard, async (req, res) => {
   const userId = getAuth(req).userId;
   if (req.params.userId !== userId) return res.status(403).json({ error: 'Forbidden' });
   const since = req.query.since ? String(req.query.since) : null;
@@ -644,7 +649,7 @@ app.get('/api/sync/:userId/full', requireAuth(), async (req, res) => {
   }
 });
 
-app.post('/api/sync/:userId/full', requireAuth(), async (req, res) => {
+app.post('/api/sync/:userId/full', authGuard, async (req, res) => {
   const userId = getAuth(req).userId;
   if (req.params.userId !== userId) return res.status(403).json({ error: 'Forbidden' });
   const { tasks = [], habits = [], checkIns = [], milestones = [], projects = [] } = req.body || {};
@@ -659,7 +664,6 @@ app.post('/api/sync/:userId/full', requireAuth(), async (req, res) => {
       { items: projects, collection: syncProjectsCollection },
     ];
 
-    // Pre-fetch existing docs for ownership checks
     const candidates = [];
     for (const { items, collection } of sources) {
       for (const item of items) {
@@ -700,7 +704,7 @@ app.post('/api/sync/:userId/full', requireAuth(), async (req, res) => {
 //  USER PREFERENCES
 // ═══════════════════════════════════════════════════════════
 
-app.get('/api/preferences/:userId', requireAuth(), async (req, res) => {
+app.get('/api/preferences/:userId', authGuard, async (req, res) => {
   const userId = getAuth(req).userId;
   if (req.params.userId !== userId) return res.status(403).json({ error: 'Forbidden' });
   try {
@@ -710,7 +714,7 @@ app.get('/api/preferences/:userId', requireAuth(), async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'Failed' }); }
 });
 
-app.post('/api/preferences/:userId', requireAuth(), async (req, res) => {
+app.post('/api/preferences/:userId', authGuard, async (req, res) => {
   const userId = getAuth(req).userId;
   if (req.params.userId !== userId) return res.status(403).json({ error: 'Forbidden' });
   const { uiDesign } = req.body ?? {};
@@ -730,13 +734,13 @@ app.post('/api/preferences/:userId', requireAuth(), async (req, res) => {
 //  HABIT REMINDERS
 // ═══════════════════════════════════════════════════════════
 
-app.post('/api/schedule-habit-reminder', requireAuth(), async (req, res) => {
+app.post('/api/schedule-habit-reminder', authGuard, async (req, res) => {
   const userId = getAuth(req).userId;
   const { habitId, name, emoji, reminderTime, daysOfWeek, timezoneOffsetMinutes } = req.body || {};
   if (!habitId || !reminderTime) return res.status(400).json({ error: 'Missing fields' });
 
   const habit = {
-    externalId: userId,                    // ← from JWT
+    externalId: userId,
     name: cap(name || 'Habit', 200),
     emoji: cap(emoji || '🎯', 8),
     reminderTime: cap(reminderTime, 10),
@@ -756,7 +760,7 @@ app.post('/api/schedule-habit-reminder', requireAuth(), async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'Failed' }); }
 });
 
-app.post('/api/cancel-habit-reminder', requireAuth(), async (req, res) => {
+app.post('/api/cancel-habit-reminder', authGuard, async (req, res) => {
   const userId = getAuth(req).userId;
   const { habitId } = req.body || {};
   if (!habitId) return res.status(400).json({ error: 'habitId required' });
@@ -776,12 +780,9 @@ app.post('/api/cancel-habit-reminder', requireAuth(), async (req, res) => {
 
 // ═══════════════════════════════════════════════════════════
 //  DELEGATE HUB
-//  These are intentionally public (they power the share link),
-//  so we do NOT require auth here. But we use crypto-grade IDs
-//  and validate all input lengths.
 // ═══════════════════════════════════════════════════════════
 
-app.post('/api/delegate/create', requireAuth(), async (req, res) => {
+app.post('/api/delegate/create', authGuard, async (req, res) => {
   const userId = getAuth(req).userId;
   const { taskId, title, description, dueDate, senderName } = req.body || {};
   if (!taskId || !title) return res.status(400).json({ error: 'Missing taskId or title' });
@@ -842,7 +843,6 @@ app.post('/api/delegate/:delegateId/reject', async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'Failed' }); }
 });
 
-// Public delegate HTML page (intentionally public, HTML-escaped)
 app.get('/delegate/:delegateId', async (req, res) => {
   const { delegateId } = req.params;
   let task = null;
