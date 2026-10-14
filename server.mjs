@@ -1,7 +1,6 @@
 // ─────────────────────────────────────────────────────────────
 //  FILE: server.mjs
-//  MerakiList backend — secured with Clerk JWT verification,
-//  CORS allowlist, rate limiting, ownership checks.
+//  MerakiList backend — Clerk JWT + CORS + rate limit + logging
 // ─────────────────────────────────────────────────────────────
 
 import express from 'express';
@@ -11,13 +10,9 @@ import { randomUUID } from 'crypto';
 import { initializeApp, cert } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
 import { getFirestore } from 'firebase-admin/firestore';
-import {
-  clerkMiddleware,
-  getAuth,
-} from '@clerk/express';
+import { clerkMiddleware, getAuth } from '@clerk/express';
 import fs from 'fs';
 
-// ─── 1. Firebase Admin ─────────────────────────────────────
 let serviceAccount;
 if (process.env.FIREBASE_SERVICE_ACCOUNT) {
   serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
@@ -40,69 +35,50 @@ const syncHabitCheckinsCollection = db.collection('syncHabitCheckins');
 const syncMilestonesCollection = db.collection('syncMilestones');
 const syncProjectsCollection = db.collection('syncProjects');
 
-// ─── 2. App + CORS + body limits ───────────────────────────
 const app = express();
-
-// Trust Render's reverse proxy so express-rate-limit sees the real client IP
 app.set('trust proxy', 1);
 
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
-  .split(',')
-  .map((s) => s.trim())
-  .filter(Boolean);
+  .split(',').map((s) => s.trim()).filter(Boolean);
 
 const NATIVE_ORIGINS = ['capacitor://localhost', 'ionic://localhost', 'http://localhost', 'https://localhost'];
 
-app.use(
-  cors({
-    origin: (origin, cb) => {
-      if (!origin) return cb(null, true);
-      if (NATIVE_ORIGINS.includes(origin)) return cb(null, true);
-      if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
-      if (/^http:\/\/localhost(:\d+)?$/.test(origin)) return cb(null, true);
-      console.warn(`🚫 CORS blocked origin: ${origin}`);
-      return cb(null, false);
-    },
-    credentials: true,
-  })
-);
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true);
+    if (NATIVE_ORIGINS.includes(origin)) return cb(null, true);
+    if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+    if (/^http:\/\/localhost(:\d+)?$/.test(origin)) return cb(null, true);
+    console.warn(`🚫 CORS blocked origin: ${origin}`);
+    return cb(null, false);
+  },
+  credentials: true,
+}));
 
 app.use(express.json({ limit: '2mb' }));
 
-// ─── 3. Rate limiting ──────────────────────────────────────
 const apiLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 120,
-  standardHeaders: true,
-  legacyHeaders: false,
+  windowMs: 60 * 1000, max: 120,
+  standardHeaders: true, legacyHeaders: false,
   message: { error: 'Too many requests. Please slow down.' },
 });
 app.use('/api/', apiLimiter);
 
 const writeLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 60,
-  standardHeaders: true,
-  legacyHeaders: false,
+  windowMs: 60 * 1000, max: 60,
+  standardHeaders: true, legacyHeaders: false,
 });
 app.use('/api/register-device', writeLimiter);
 app.use('/api/schedule-reminder', writeLimiter);
 app.use('/api/schedule-habit-reminder', writeLimiter);
 
-// ─── 4. Clerk middleware ───────────────────────────────────
-// Attaches req.auth to every request. We do NOT use requireAuth()
-// because it redirects instead of returning 401. Our own authGuard
-// below returns a proper JSON 401 so the client never follows a redirect.
 app.use(clerkMiddleware());
 
-/**
- * 🔒 Strict auth guard: returns 401 JSON for unauthenticated requests.
- * Never redirects. Use on every endpoint that requires a real user.
- */
 function authGuard(req, res, next) {
   try {
     const { userId } = getAuth(req) || {};
     if (!userId) {
+      console.warn(`🔒 401 on ${req.method} ${req.path}`);
       return res.status(401).json({ error: 'Unauthorized' });
     }
     next();
@@ -112,10 +88,8 @@ function authGuard(req, res, next) {
   }
 }
 
-// Helper: safe string length cap
 const cap = (s, n) => (typeof s === 'string' ? s.slice(0, n) : '');
 
-// ─── FCM stale-token helpers ───────────────────────────────
 const STALE_TOKEN_CODES = [
   'messaging/registration-token-not-registered',
   'messaging/invalid-registration-token',
@@ -134,7 +108,6 @@ async function handleStaleToken(externalId, err) {
   return true;
 }
 
-// ─── Task timers ───────────────────────────────────────────
 const scheduledTimers = {};
 const scheduledReminderTimers = {};
 
@@ -155,8 +128,7 @@ function computeNextDueDate(fromISO, rec) {
         break;
       case 'weekly': {
         const days = (rec.daysOfWeek && rec.daysOfWeek.length > 0)
-          ? [...rec.daysOfWeek].sort((a, b) => a - b)
-          : [from.getDay()];
+          ? [...rec.daysOfWeek].sort((a, b) => a - b) : [from.getDay()];
         const curDay = next.getDay();
         let found = null;
         for (const day of days) { if (day > curDay) { found = day; break; } }
@@ -195,26 +167,16 @@ async function createNextOccurrence(task) {
   if (!task.fullTask) return null;
   const nextDue = computeNextDueDate(task.dueTime, task.recurrence);
   if (!nextDue) { console.log(`🔁 Recurrence ended for "${task.title}"`); return null; }
-
   const nextTaskId = `${task.taskId}-recur-${Date.now()}`;
   const nextFullTask = {
-    ...task.fullTask,
-    id: nextTaskId,
-    dueDate: nextDue,
-    status: 'todo',
-    completedAt: undefined,
-    archivedAt: undefined,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    ...task.fullTask, id: nextTaskId, dueDate: nextDue, status: 'todo',
+    completedAt: undefined, archivedAt: undefined,
+    createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
   };
   const nextRecord = {
-    externalId: task.externalId,
-    title: task.title,
-    dueTime: nextDue,
-    taskId: nextTaskId,
-    recurrence: task.recurrence,
-    reminders: task.reminders,
-    fullTask: nextFullTask,
+    externalId: task.externalId, title: task.title, dueTime: nextDue,
+    taskId: nextTaskId, recurrence: task.recurrence,
+    reminders: task.reminders, fullTask: nextFullTask,
   };
   await tasksCollection.doc(nextTaskId).set(nextRecord);
   console.log(`🔁 Auto-created next occurrence: "${task.title}" → ${nextDue}`);
@@ -231,10 +193,9 @@ async function sendPushForTask(taskId) {
     const task = taskDoc.data();
     const tokenDoc = await tokensCollection.doc(task.externalId).get();
     if (tokenDoc.exists) {
-      const fcmToken = tokenDoc.data().fcmToken;
       try {
         await getMessaging().send({
-          token: fcmToken,
+          token: tokenDoc.data().fcmToken,
           notification: { title: '⏰ ' + task.title, body: 'Your task is due now!' },
           android: { priority: 'high', notification: { channelId: 'task-reminders-critical' } }
         });
@@ -246,9 +207,7 @@ async function sendPushForTask(taskId) {
     }
     await createNextOccurrence(task);
     await tasksCollection.doc(taskId).delete();
-  } catch (error) {
-    console.error('❌ sendPushForTask error:', error);
-  }
+  } catch (error) { console.error('❌ sendPushForTask error:', error); }
   delete scheduledTimers[taskId];
 }
 
@@ -264,7 +223,6 @@ function scheduleTask(task) {
   return true;
 }
 
-// ─── Custom reminders ──────────────────────────────────────
 function reminderBody(reminder) {
   if (!reminder || typeof reminder.minutesBefore !== 'number') return 'Your task is coming up.';
   const mins = reminder.minutesBefore;
@@ -338,7 +296,6 @@ async function rescheduleAllTasks() {
   } catch (err) { console.error('Failed to reschedule tasks:', err); }
 }
 
-// ─── Habit timers ──────────────────────────────────────────
 const scheduledHabitTimers = {};
 
 function computeNextHabitFire(habit, fromTimeMs = Date.now()) {
@@ -414,8 +371,6 @@ async function rescheduleAllHabitReminders() {
 
 // ═══════════════════════════════════════════════════════════
 //  AUTHENTICATED TASK ROUTES
-//  Every route below requires a valid Clerk session JWT.
-//  The userId is ALWAYS taken from the JWT — never from the body.
 // ═══════════════════════════════════════════════════════════
 
 app.post('/api/register-device', authGuard, async (req, res) => {
@@ -431,6 +386,7 @@ app.post('/api/register-device', authGuard, async (req, res) => {
     });
     res.json({ success: true });
   } catch (err) {
+    console.error('❌ register-device failed:', err);
     res.status(500).json({ error: 'Failed to register device' });
   }
 });
@@ -452,7 +408,6 @@ app.post('/api/schedule-reminder', authGuard, async (req, res) => {
     if (existing.exists && existing.data().externalId !== userId) {
       return res.status(403).json({ error: 'Forbidden' });
     }
-
     const taskRecord = {
       externalId: userId,
       title: cap(title, 500),
@@ -462,14 +417,12 @@ app.post('/api/schedule-reminder', authGuard, async (req, res) => {
     if (recurrence && recurrence.frequency) taskRecord.recurrence = recurrence;
     if (fullTask) taskRecord.fullTask = fullTask;
     if (Array.isArray(reminders)) taskRecord.reminders = reminders;
-
     await tasksCollection.doc(String(taskId)).set(taskRecord);
-
     if (dueTimestamp > Date.now()) scheduleTask(taskRecord);
     scheduleTaskReminders(taskRecord);
-
     res.json({ success: true, fireInMs: dueTimestamp - Date.now() });
   } catch (err) {
+    console.error('❌ schedule-reminder failed:', err);
     res.status(500).json({ error: 'Failed to schedule reminder' });
   }
 });
@@ -480,7 +433,10 @@ app.post('/api/complete-reminder', authGuard, async (req, res) => {
   if (!taskId) return res.status(400).json({ error: 'taskId required' });
   try {
     const doc = await tasksCollection.doc(String(taskId)).get();
-    if (!doc.exists) return res.json({ success: true, nextTask: null });
+    if (!doc.exists) {
+      console.log(`ℹ️ complete-reminder: task not found (already done or never scheduled): ${taskId}`);
+      return res.json({ success: true, nextTask: null });
+    }
     const task = doc.data();
     if (task.externalId !== userId) return res.status(403).json({ error: 'Forbidden' });
     task.taskId = String(taskId);
@@ -498,6 +454,7 @@ app.post('/api/complete-reminder', authGuard, async (req, res) => {
     await tasksCollection.doc(String(taskId)).delete();
     res.json({ success: true, nextTask });
   } catch (err) {
+    console.error('❌ complete-reminder failed:', err);
     res.status(500).json({ error: 'Failed' });
   }
 });
@@ -524,33 +481,31 @@ app.post('/api/cancel-reminder', authGuard, async (req, res) => {
     try { await tasksCollection.doc(String(taskId)).delete(); } catch {}
     res.json({ success: true });
   } catch (err) {
+    console.error('❌ cancel-reminder failed:', err);
     res.status(500).json({ error: 'Failed' });
   }
 });
 
 // ═══════════════════════════════════════════════════════════
-//  TWO-WAY SYNC
+//  SYNC
 // ═══════════════════════════════════════════════════════════
 
 app.get('/api/sync/:userId', authGuard, async (req, res) => {
   const userId = getAuth(req).userId;
   if (req.params.userId !== userId) return res.status(403).json({ error: 'Forbidden' });
   const since = req.query.since ? String(req.query.since) : null;
-
   try {
     const serverTime = new Date().toISOString();
     const snapshot = await syncTasksCollection.where('externalId', '==', userId).get();
     const sinceTs = since ? new Date(since).getTime() : 0;
     const tasks = [];
     let maxServerUpdatedAt = serverTime;
-
     snapshot.forEach((doc) => {
       const data = doc.data();
       const serverTs = new Date(data.serverUpdatedAt || 0).getTime();
       if (serverTs > sinceTs) tasks.push({ ...data, id: doc.id });
       if (serverTs > new Date(maxServerUpdatedAt).getTime()) maxServerUpdatedAt = data.serverUpdatedAt;
     });
-
     res.json({ success: true, tasks, serverTime: maxServerUpdatedAt, count: tasks.length });
   } catch (err) {
     console.error('❌ sync GET failed:', err);
@@ -563,26 +518,19 @@ app.post('/api/sync/:userId', authGuard, async (req, res) => {
   if (req.params.userId !== userId) return res.status(403).json({ error: 'Forbidden' });
   const { tasks } = req.body || {};
   if (!Array.isArray(tasks)) return res.status(400).json({ error: 'tasks[] required' });
-
   try {
     const now = new Date().toISOString();
     let applied = 0;
     const CAP = 400;
-
     for (const task of tasks.slice(0, CAP)) {
       if (!task || !task.id) continue;
       const existing = await syncTasksCollection.doc(String(task.id)).get();
-      if (existing.exists && existing.data().externalId !== userId) {
-        console.warn(`🚫 Skipped foreign task id=${task.id}`);
-        continue;
-      }
+      if (existing.exists && existing.data().externalId !== userId) continue;
       await syncTasksCollection.doc(String(task.id)).set(
-        { ...task, externalId: userId, serverUpdatedAt: now },
-        { merge: false }
+        { ...task, externalId: userId, serverUpdatedAt: now }, { merge: false }
       );
       applied++;
     }
-
     res.json({ success: true, applied, serverTime: now });
   } catch (err) {
     console.error('❌ sync POST failed:', err);
@@ -603,6 +551,7 @@ app.post('/api/sync/:userId/delete', authGuard, async (req, res) => {
     await syncTasksCollection.doc(String(taskId)).delete();
     res.json({ success: true });
   } catch (err) {
+    console.error('❌ sync delete failed:', err);
     res.status(500).json({ error: 'Failed' });
   }
 });
@@ -611,11 +560,9 @@ app.get('/api/sync/:userId/full', authGuard, async (req, res) => {
   const userId = getAuth(req).userId;
   if (req.params.userId !== userId) return res.status(403).json({ error: 'Forbidden' });
   const since = req.query.since ? String(req.query.since) : null;
-
   try {
     const serverTime = new Date().toISOString();
     const sinceTs = since ? new Date(since).getTime() : 0;
-
     const [tasksSnap, habitsSnap, checkInsSnap, milestonesSnap, projectsSnap] = await Promise.all([
       syncTasksCollection.where('externalId', '==', userId).get(),
       syncHabitsCollection.where('externalId', '==', userId).get(),
@@ -623,7 +570,6 @@ app.get('/api/sync/:userId/full', authGuard, async (req, res) => {
       syncMilestonesCollection.where('externalId', '==', userId).get(),
       syncProjectsCollection.where('externalId', '==', userId).get(),
     ]);
-
     const filterSince = (snap) => {
       const out = [];
       snap.forEach((doc) => {
@@ -633,7 +579,6 @@ app.get('/api/sync/:userId/full', authGuard, async (req, res) => {
       });
       return out;
     };
-
     res.json({
       success: true,
       tasks: filterSince(tasksSnap),
@@ -653,7 +598,6 @@ app.post('/api/sync/:userId/full', authGuard, async (req, res) => {
   const userId = getAuth(req).userId;
   if (req.params.userId !== userId) return res.status(403).json({ error: 'Forbidden' });
   const { tasks = [], habits = [], checkIns = [], milestones = [], projects = [] } = req.body || {};
-
   try {
     const now = new Date().toISOString();
     const sources = [
@@ -663,7 +607,6 @@ app.post('/api/sync/:userId/full', authGuard, async (req, res) => {
       { items: milestones, collection: syncMilestonesCollection },
       { items: projects, collection: syncProjectsCollection },
     ];
-
     const candidates = [];
     for (const { items, collection } of sources) {
       for (const item of items) {
@@ -672,17 +615,12 @@ app.post('/api/sync/:userId/full', authGuard, async (req, res) => {
       }
     }
     const existingDocs = await Promise.all(candidates.map((c) => c.ref.get()));
-
     const ops = [];
     candidates.forEach((c, i) => {
       const existing = existingDocs[i];
       if (existing.exists && existing.data().externalId !== userId) return;
-      ops.push({
-        ref: c.ref,
-        payload: { ...c.item, externalId: userId, serverUpdatedAt: now },
-      });
+      ops.push({ ref: c.ref, payload: { ...c.item, externalId: userId, serverUpdatedAt: now } });
     });
-
     const CHUNK = 450;
     let applied = 0;
     for (let i = 0; i < ops.length; i += CHUNK) {
@@ -692,7 +630,6 @@ app.post('/api/sync/:userId/full', authGuard, async (req, res) => {
       await batch.commit();
       applied += slice.length;
     }
-
     res.json({ success: true, applied, serverTime: now });
   } catch (err) {
     console.error('❌ syncPushAll failed:', err);
@@ -701,7 +638,7 @@ app.post('/api/sync/:userId/full', authGuard, async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════
-//  USER PREFERENCES
+//  PREFERENCES
 // ═══════════════════════════════════════════════════════════
 
 app.get('/api/preferences/:userId', authGuard, async (req, res) => {
@@ -711,7 +648,10 @@ app.get('/api/preferences/:userId', authGuard, async (req, res) => {
     const doc = await prefsCollection.doc(userId).get();
     if (!doc.exists) return res.json({ success: true, preferences: null });
     res.json({ success: true, preferences: doc.data() });
-  } catch (err) { res.status(500).json({ error: 'Failed' }); }
+  } catch (err) {
+    console.error('❌ get preferences failed:', err);
+    res.status(500).json({ error: 'Failed' });
+  }
 });
 
 app.post('/api/preferences/:userId', authGuard, async (req, res) => {
@@ -727,18 +667,20 @@ app.post('/api/preferences/:userId', authGuard, async (req, res) => {
       { merge: true }
     );
     res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: 'Failed' }); }
+  } catch (err) {
+    console.error('❌ set preferences failed:', err);
+    res.status(500).json({ error: 'Failed' });
+  }
 });
 
 // ═══════════════════════════════════════════════════════════
-//  HABIT REMINDERS
+//  HABITS
 // ═══════════════════════════════════════════════════════════
 
 app.post('/api/schedule-habit-reminder', authGuard, async (req, res) => {
   const userId = getAuth(req).userId;
   const { habitId, name, emoji, reminderTime, daysOfWeek, timezoneOffsetMinutes } = req.body || {};
   if (!habitId || !reminderTime) return res.status(400).json({ error: 'Missing fields' });
-
   const habit = {
     externalId: userId,
     name: cap(name || 'Habit', 200),
@@ -757,7 +699,10 @@ app.post('/api/schedule-habit-reminder', authGuard, async (req, res) => {
     habit.habitId = String(habitId);
     scheduleHabitReminder(habit);
     res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: 'Failed' }); }
+  } catch (err) {
+    console.error('❌ schedule-habit-reminder failed:', err);
+    res.status(500).json({ error: 'Failed' });
+  }
 });
 
 app.post('/api/cancel-habit-reminder', authGuard, async (req, res) => {
@@ -775,11 +720,14 @@ app.post('/api/cancel-habit-reminder', authGuard, async (req, res) => {
     }
     try { await habitRemindersCollection.doc(String(habitId)).delete(); } catch {}
     res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: 'Failed' }); }
+  } catch (err) {
+    console.error('❌ cancel-habit-reminder failed:', err);
+    res.status(500).json({ error: 'Failed' });
+  }
 });
 
 // ═══════════════════════════════════════════════════════════
-//  DELEGATE HUB
+//  DELEGATES
 // ═══════════════════════════════════════════════════════════
 
 app.post('/api/delegate/create', authGuard, async (req, res) => {
@@ -789,19 +737,17 @@ app.post('/api/delegate/create', authGuard, async (req, res) => {
   try {
     const delegateId = `del-${randomUUID()}`;
     await delegateCollection.doc(delegateId).set({
-      delegateId,
-      taskId: cap(String(taskId), 200),
-      title: cap(title, 500),
-      description: cap(description || '', 2000),
-      dueDate: dueDate || null,
-      externalId: userId,
-      senderName: cap(senderName || 'A teammate', 100),
+      delegateId, taskId: cap(String(taskId), 200), title: cap(title, 500),
+      description: cap(description || '', 2000), dueDate: dueDate || null,
+      externalId: userId, senderName: cap(senderName || 'A teammate', 100),
       status: 'pending',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     });
     res.json({ success: true, delegateId });
-  } catch (err) { res.status(500).json({ error: 'Failed' }); }
+  } catch (err) {
+    console.error('❌ delegate create failed:', err);
+    res.status(500).json({ error: 'Failed' });
+  }
 });
 
 app.get('/api/delegate/:delegateId', async (req, res) => {
@@ -819,10 +765,8 @@ app.post('/api/delegate/:delegateId/complete', async (req, res) => {
     const doc = await delegateCollection.doc(delegateId).get();
     if (!doc.exists) return res.status(404).json({ error: 'Not found' });
     await delegateCollection.doc(delegateId).update({
-      status: 'completed',
-      completedBy: cap(completedBy || 'Anonymous', 100),
-      completedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      status: 'completed', completedBy: cap(completedBy || 'Anonymous', 100),
+      completedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     });
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: 'Failed' }); }
@@ -835,8 +779,7 @@ app.post('/api/delegate/:delegateId/reject', async (req, res) => {
     const doc = await delegateCollection.doc(delegateId).get();
     if (!doc.exists) return res.status(404).json({ error: 'Not found' });
     await delegateCollection.doc(delegateId).update({
-      status: 'rejected',
-      rejectionReason: cap(reason || '', 500),
+      status: 'rejected', rejectionReason: cap(reason || '', 500),
       updatedAt: new Date().toISOString(),
     });
     res.json({ success: true });
@@ -872,7 +815,10 @@ app.get('/delegate/:delegateId', async (req, res) => {
   res.set('Content-Type', 'text/html; charset=utf-8').send(html);
 });
 
-// ─── Tombstone GC ──────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════
+//  TOMBSTONE GC
+// ═══════════════════════════════════════════════════════════
+
 const TOMBSTONE_TTL_DAYS = 30;
 const GC_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
