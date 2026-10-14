@@ -1,6 +1,7 @@
 // ─────────────────────────────────────────────────────────────
 //  FILE: server.mjs
 //  MerakiList backend — Clerk JWT + CORS + rate limit + logging
+//  Fix: ignoreUndefinedProperties so Firestore accepts partial docs
 // ─────────────────────────────────────────────────────────────
 
 import express from 'express';
@@ -24,6 +25,10 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT) {
 initializeApp({ credential: cert(serviceAccount) });
 
 const db = getFirestore();
+// ✅ FIX: silently drop `undefined` fields instead of throwing.
+// This prevents 500s on legacy tasks that lack fields like `reminders`.
+db.settings({ ignoreUndefinedProperties: true });
+
 const tokensCollection = db.collection('tokens');
 const tasksCollection = db.collection('tasks');
 const habitRemindersCollection = db.collection('habitReminders');
