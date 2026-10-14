@@ -1,32 +1,58 @@
 // ─────────────────────────────────────────────────────────────
 //  FILE: src/utils/authFetch.ts
 //  Adds Clerk session token to every API call.
-//  Handles two failure modes:
-//    1. getToken() returns null (Clerk not ready) → retry with backoff
-//    2. Server returns 401 (token expired/invalid) → force fresh token, retry once
+//  Features:
+//    • Caches the token in memory for ~25s (avoids Clerk rate-limits)
+//    • Deduplicates parallel getToken() calls into one network request
+//    • Retries on null token (Clerk not ready)
+//    • Forces fresh token and retries once on 401 (expired token)
 // ─────────────────────────────────────────────────────────────
 
 type TokenGetter = (options?: { skipCache?: boolean }) => Promise<string | null>;
 
-export function makeAuthedFetch(getToken: TokenGetter) {
-  return async (url: string, init: RequestInit = {}): Promise<Response> => {
-    // ── 1. Try to get a token, retrying if Clerk returns null ──
-    let token: string | null = null;
-    try {
-      token = await getToken();
-    } catch {
-      token = null;
-    }
+// How long to keep a fetched token before asking Clerk again.
+// Clerk tokens last ~60s; 25s is safely inside that window.
+const TOKEN_TTL_MS = 25_000;
 
+export function makeAuthedFetch(getToken: TokenGetter) {
+  // ── Per-instance token cache (shared across all calls) ──
+  let cachedToken: string | null = null;
+  let cachedAt = 0;
+  let inflight: Promise<string | null> | null = null;
+
+  async function fetchToken(skipCache = false): Promise<string | null> {
+    const now = Date.now();
+    if (!skipCache && cachedToken && now - cachedAt < TOKEN_TTL_MS) {
+      return cachedToken;
+    }
+    // If another call is already fetching, share its promise
+    if (inflight) return inflight;
+
+    inflight = (async () => {
+      try {
+        const token = await getToken(skipCache ? { skipCache: true } : undefined);
+        cachedToken = token;
+        cachedAt = Date.now();
+        return token;
+      } catch {
+        return null;
+      } finally {
+        inflight = null;
+      }
+    })();
+
+    return inflight;
+  }
+
+  return async (url: string, init: RequestInit = {}): Promise<Response> => {
+    // ── 1. Get a token (cached or fresh) ──
+    let token = await fetchToken();
+
+    // ── 2. If Clerk returned null, wait and retry a few times ──
     if (!token) {
-      // Clerk can return null briefly during page load / session hydration
       for (const delay of [200, 400, 800, 1500]) {
         await new Promise((r) => setTimeout(r, delay));
-        try {
-          token = await getToken();
-        } catch {
-          token = null;
-        }
+        token = await fetchToken(true); // skipCache for these retries
         if (token) break;
       }
     }
@@ -36,22 +62,17 @@ export function makeAuthedFetch(getToken: TokenGetter) {
 
     let res = await fetch(url, { ...init, headers });
 
-    // ── 2. If the server rejected the token, force a fresh one and retry ──
-    // This handles the case where Clerk's cached token has expired but
-    // Clerk still returns it. skipCache forces a network refresh.
+    // ── 3. If server rejected the token, force a fresh one and retry ──
     if (res.status === 401) {
       try {
-        const freshToken = await getToken({ skipCache: true });
-        if (freshToken) {
+        const fresh = await fetchToken(true); // skipCache = bypass stale cache
+        if (fresh && fresh !== token) {
           const retryHeaders = new Headers(init.headers || {});
-          retryHeaders.set('Authorization', `Bearer ${freshToken}`);
+          retryHeaders.set('Authorization', `Bearer ${fresh}`);
           res = await fetch(url, { ...init, headers: retryHeaders });
         }
-      } catch (err) {
-        // Swallow — the original 401 will be returned to the caller
-        if (import.meta.env.DEV) {
-          console.warn('Token refresh on 401 failed:', err);
-        }
+      } catch {
+        /* fall through, return original 401 */
       }
     }
 
