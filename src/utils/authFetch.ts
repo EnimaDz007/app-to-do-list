@@ -2,28 +2,35 @@
 //  FILE: src/utils/authFetch.ts
 //  Adds Clerk session token to every API call.
 //
-//  Features:
-//    • Dedupes parallel getToken() calls into one network request
-//    • Retries on null token (Clerk not ready)
-//    • Forces fresh token + retry on 401 (expired cached token)
+//  Hardened:
+//    • Deduped getToken()
+//    • Retries on null token with longer backoff (Clerk not ready)
+//    • Throws when token is unavailable — never sends unauthenticated
+//    • Forces fresh token + retry on 401
 //    • Fetch timeout via AbortController
-//    • Retries on 5xx / network errors with exponential backoff
+//    • Retries on 5xx / network errors
 //    • Preserves caller-supplied AbortSignal
 // ─────────────────────────────────────────────────────────────
 
 type TokenGetter = (options?: { skipCache?: boolean }) => Promise<string | null>;
 
 const DEFAULT_TIMEOUT_MS = 20_000;
-const RETRY_5XX_ATTEMPTS = 2;   // total attempts = 1 + 2 = 3
-const RETRY_5XX_BACKOFF  = 400; // ms, doubles each attempt
+const RETRY_5XX_ATTEMPTS = 2;
+const RETRY_5XX_BACKOFF  = 400;
+const TOKEN_RETRY_DELAYS = [200, 400, 800, 1200, 1600, 2000, 2500, 3000]; // ~11.7s total
 
-/** Race fetch against a timeout. Preserves caller signal if provided. */
+export class AuthTokenUnavailableError extends Error {
+  constructor() {
+    super('Clerk token unavailable — request aborted');
+    this.name = 'AuthTokenUnavailableError';
+  }
+}
+
 async function fetchWithTimeout(
   url: string,
   init: RequestInit,
   timeoutMs: number,
 ): Promise<Response> {
-  // If the caller already provided a signal, chain both.
   const callerSignal = init.signal;
   const controller = new AbortController();
 
@@ -43,7 +50,6 @@ async function fetchWithTimeout(
 }
 
 export function makeAuthedFetch(getToken: TokenGetter) {
-  // ── Deduped token fetch ──
   let inflight: Promise<string | null> | null = null;
 
   async function fetchToken(forceFresh = false): Promise<string | null> {
@@ -62,6 +68,20 @@ export function makeAuthedFetch(getToken: TokenGetter) {
     return inflight;
   }
 
+  async function ensureToken(): Promise<string> {
+    let token = await fetchToken();
+    if (token) return token;
+
+    for (const delay of TOKEN_RETRY_DELAYS) {
+      await new Promise((r) => setTimeout(r, delay));
+      token = await fetchToken(true);
+      if (token) return token;
+    }
+
+    // Token genuinely unavailable — refuse to send unauthenticated.
+    throw new AuthTokenUnavailableError();
+  }
+
   return async (
     url: string,
     init: RequestInit = {},
@@ -69,27 +89,16 @@ export function makeAuthedFetch(getToken: TokenGetter) {
   ): Promise<Response> => {
     const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
-    // ── 1. Get a token ──
-    let token = await fetchToken();
+    let token = await ensureToken();
 
-    // ── 2. Clerk not ready → retry with backoff ──
-    if (!token) {
-      for (const delay of [200, 400, 800, 1500]) {
-        await new Promise((r) => setTimeout(r, delay));
-        token = await fetchToken(true);
-        if (token) break;
-      }
-    }
-
-    const buildHeaders = (tok: string | null): Headers => {
+    const buildHeaders = (tok: string): Headers => {
       const h = new Headers(init.headers || {});
-      if (tok) h.set('Authorization', `Bearer ${tok}`);
+      h.set('Authorization', `Bearer ${tok}`);
       return h;
     };
 
-    // ── 3. Initial attempt with 5xx / network retry ──
-    let lastError: unknown = null;
     let res: Response | null = null;
+    let lastError: unknown = null;
 
     for (let attempt = 0; attempt <= RETRY_5XX_ATTEMPTS; attempt++) {
       try {
@@ -99,18 +108,14 @@ export function makeAuthedFetch(getToken: TokenGetter) {
           timeoutMs,
         );
 
-        // Non-5xx → done, no retry
         if (res.status < 500) break;
 
-        // 5xx → retry unless last attempt
         if (attempt < RETRY_5XX_ATTEMPTS) {
           await new Promise((r) => setTimeout(r, RETRY_5XX_BACKOFF * Math.pow(2, attempt)));
           continue;
         }
-        // last attempt failed with 5xx — fall through to return res
       } catch (err) {
         lastError = err;
-        // Caller aborted → propagate immediately
         if (init.signal?.aborted) throw err;
 
         if (attempt < RETRY_5XX_ATTEMPTS) {
@@ -125,7 +130,7 @@ export function makeAuthedFetch(getToken: TokenGetter) {
       throw lastError instanceof Error ? lastError : new Error('Network request failed');
     }
 
-    // ── 4. On 401, force a fresh token and retry once ──
+    // 401 → refresh token once and retry
     if (res.status === 401) {
       await new Promise((r) => setTimeout(r, 250));
       try {
@@ -138,7 +143,7 @@ export function makeAuthedFetch(getToken: TokenGetter) {
           );
         }
       } catch {
-        /* return original 401 if refresh fails */
+        /* keep original 401 */
       }
     }
 
