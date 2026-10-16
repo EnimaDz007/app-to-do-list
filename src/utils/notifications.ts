@@ -231,14 +231,9 @@ export function sendBrowserNotification(
    TEST NOTIFICATION HELPERS
    ============================================================ */
 
-/**
- * Schedule a test reminder that fires 5 seconds from now.
- * Optionally pass a task so the notification's `extra.taskId`
- * lets the app jump to it when tapped.
- */
 export async function scheduleTestReminder(task?: Task | null): Promise<boolean> {
   const FIRE_IN_SECONDS = 5;
-  const title = 'Task Priority · Test Reminder';
+  const title = 'MerakiList · Test Reminder';
   const body = task
     ? `Tap to open "${task.title}" 🎯`
     : 'If you see this, notifications are working. 🎯';
@@ -302,7 +297,6 @@ export const ACTION_DONE = 'DONE';
 export function registerNotificationActions(): void {
   if (!Capacitor.isNativePlatform()) return;
   // Action registration is done via `actionTypeId` on individual notifications.
-  // This function exists as a safe no-op so App.tsx's useEffect calls don't break.
 }
 
 export async function snoozeTaskReminder(task: Task, minutes = 10): Promise<void> {
