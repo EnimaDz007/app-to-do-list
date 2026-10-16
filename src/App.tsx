@@ -101,6 +101,7 @@ import { FullBackup } from './utils/fullBackup';
 import { Mic } from 'lucide-react';
 import { triggerHaptic } from './utils/haptics';
 import { makeAuthedFetch } from './utils/authFetch';
+import { useSyncScheduler } from './hooks/useSyncScheduler';
 
 const STORAGE_KEY = 'taskflow_tasks_list';
 const HABITS_STORAGE_KEY = 'taskflow_habits_list';
@@ -497,11 +498,13 @@ export default function App() {
     void runSync({ silent: true });
   }, [userId, runSync]);
 
-  useEffect(() => {
-    if (!userId) return;
-    const id = setInterval(() => { void runSync({ silent: true }); }, 60_000);
-    return () => clearInterval(id);
-  }, [userId, runSync]);
+  // 🔒 Sync scheduler — visible-tab only, 5-minute interval (was 60s).
+  // Prevents Firestore free-tier quota exhaustion from idle tabs.
+  useSyncScheduler(
+    !!userId,
+    () => { void runSync({ silent: true }); },
+    5 * 60 * 1000,
+  );
 
   useEffect(() => {
     if (!userId) return;
@@ -552,7 +555,6 @@ export default function App() {
     };
   }, [userId, runSync]);
 
-  // 🔒 scheduleTaskReminder now uses authedFetch
   const scheduleTaskReminder = async (task: Task) => {
     if (task.quadrant !== 'do_first') return;
     if (task.status === 'completed') return;
@@ -615,7 +617,6 @@ export default function App() {
     }
   };
 
-  // 🔒 cancelTaskReminder now uses authedFetch
   const cancelTaskReminder = async (taskId: string) => {
     if (!Capacitor.isNativePlatform()) return;
     try {
@@ -632,7 +633,6 @@ export default function App() {
     } catch {}
   };
 
-  // 🔒 completeTaskOnServer now uses authedFetch
   const completeTaskOnServer = async (taskId: string): Promise<Task | null> => {
     try {
       const response = await authedFetch(`${SERVER_URL}/api/complete-reminder`, {
@@ -648,7 +648,6 @@ export default function App() {
     return null;
   };
 
-  // 🔒 syncHabitReminderToServer now uses authedFetch
   const syncHabitReminderToServer = async (habit: Habit) => {
     if (!Capacitor.isNativePlatform()) return;
     try {
@@ -679,7 +678,6 @@ export default function App() {
     }
   };
 
-  // 🔒 cancelHabitReminderOnServer now uses authedFetch
   const cancelHabitReminderOnServer = async (habitId: string) => {
     if (!Capacitor.isNativePlatform()) return;
     try {
@@ -716,7 +714,6 @@ export default function App() {
     registerNotificationActions();
   }, []);
 
-  // 🔒 Push registration now uses authedFetch
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
     const setupPush = async () => {
