@@ -28,10 +28,24 @@ Sentry.init({
   ],
 });
 
-const PUBLISHABLE_KEY = 'pk_test_Y2l2aWwtYm94ZXItODk4OS5jbGVyay5hY2NvdW50cy5kZXYk';
+// ── Clerk publishable key ─────────────────────────────────────
+// Read from the build-time env var (VITE_ prefix is required by Vite).
+// Never hardcode this — hardcoding overrides Vercel/env and ships
+// the wrong instance (e.g. a dev key) into production.
+const PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined;
 
 if (!PUBLISHABLE_KEY) {
-  throw new Error('Missing Clerk Publishable Key');
+  throw new Error(
+    'Missing VITE_CLERK_PUBLISHABLE_KEY. Set it in .env.local for dev and in Vercel → Project → Settings → Environment Variables for Production/Preview.'
+  );
+}
+
+// Guard against accidentally shipping a dev key to production.
+if (import.meta.env.PROD && PUBLISHABLE_KEY.startsWith('pk_test_')) {
+  // Throwing here prevents a silent misconfig from going live.
+  throw new Error(
+    'Production build is using a pk_test_ Clerk key. Set VITE_CLERK_PUBLISHABLE_KEY to the pk_live_ key in Vercel Production env vars and redeploy.'
+  );
 }
 
 // ── Fallback UI if the whole app crashes ─────────────────────
