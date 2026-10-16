@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────
 //  FILE: server.mjs
 //  MerakiList backend — Clerk JWT + CORS + rate limit + logging
-//  Fix: ignoreUndefinedProperties so Firestore accepts partial docs
+//  Fix: server-side delta filter on sync pull (since → Firestore where)
 // ─────────────────────────────────────────────────────────────
 
 import express from 'express';
@@ -25,8 +25,6 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT) {
 initializeApp({ credential: cert(serviceAccount) });
 
 const db = getFirestore();
-// ✅ FIX: silently drop `undefined` fields instead of throwing.
-// This prevents 500s on legacy tasks that lack fields like `reminders`.
 db.settings({ ignoreUndefinedProperties: true });
 
 const tokensCollection = db.collection('tokens');
@@ -39,6 +37,30 @@ const syncHabitsCollection = db.collection('syncHabits');
 const syncHabitCheckinsCollection = db.collection('syncHabitCheckins');
 const syncMilestonesCollection = db.collection('syncMilestones');
 const syncProjectsCollection = db.collection('syncProjects');
+
+// ─────────────────────────────────────────────────────────────
+//  Delta-sync helper
+//  Every user-owned doc is stamped with serverUpdatedAt (ISO 8601).
+//  ISO 8601 sorts lexicographically = chronologically, so a simple
+//  `>` comparison in Firestore is safe and index-friendly.
+// ─────────────────────────────────────────────────────────────
+const EPOCH_ISO = '1970-01-01T00:00:00.000Z';
+
+/** Build a Firestore query scoped to a user + optionally filtered by updatedAt. */
+function userDeltaQuery(collection, userId, sinceIso) {
+  const base = collection.where('externalId', '==', userId);
+  // Always apply the range filter — EPOCH_ISO makes the first sync return everything.
+  // serverUpdatedAt is stamped on every write, so no doc is ever missed.
+  return base.where('serverUpdatedAt', '>', sinceIso || EPOCH_ISO);
+}
+
+/** Normalize a `since` query param into a valid ISO string. */
+function normalizeSince(raw) {
+  if (!raw) return EPOCH_ISO;
+  const d = new Date(String(raw));
+  if (isNaN(d.getTime())) return EPOCH_ISO;
+  return d.toISOString();
+}
 
 const app = express();
 app.set('trust proxy', 1);
@@ -492,26 +514,18 @@ app.post('/api/cancel-reminder', authGuard, async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════
-//  SYNC
+//  SYNC — delta-filtered at the Firestore query level
 // ═══════════════════════════════════════════════════════════
 
 app.get('/api/sync/:userId', authGuard, async (req, res) => {
   const userId = getAuth(req).userId;
   if (req.params.userId !== userId) return res.status(403).json({ error: 'Forbidden' });
-  const since = req.query.since ? String(req.query.since) : null;
+  const sinceIso = normalizeSince(req.query.since);
   try {
     const serverTime = new Date().toISOString();
-    const snapshot = await syncTasksCollection.where('externalId', '==', userId).get();
-    const sinceTs = since ? new Date(since).getTime() : 0;
-    const tasks = [];
-    let maxServerUpdatedAt = serverTime;
-    snapshot.forEach((doc) => {
-      const data = doc.data();
-      const serverTs = new Date(data.serverUpdatedAt || 0).getTime();
-      if (serverTs > sinceTs) tasks.push({ ...data, id: doc.id });
-      if (serverTs > new Date(maxServerUpdatedAt).getTime()) maxServerUpdatedAt = data.serverUpdatedAt;
-    });
-    res.json({ success: true, tasks, serverTime: maxServerUpdatedAt, count: tasks.length });
+    const snapshot = await userDeltaQuery(syncTasksCollection, userId, sinceIso).get();
+    const tasks = snapshot.docs.map((doc) => ({ ...doc.data(), id: doc.id }));
+    res.json({ success: true, tasks, serverTime, count: tasks.length });
   } catch (err) {
     console.error('❌ sync GET failed:', err);
     res.status(500).json({ error: 'Failed' });
@@ -564,33 +578,24 @@ app.post('/api/sync/:userId/delete', authGuard, async (req, res) => {
 app.get('/api/sync/:userId/full', authGuard, async (req, res) => {
   const userId = getAuth(req).userId;
   if (req.params.userId !== userId) return res.status(403).json({ error: 'Forbidden' });
-  const since = req.query.since ? String(req.query.since) : null;
+  const sinceIso = normalizeSince(req.query.since);
   try {
     const serverTime = new Date().toISOString();
-    const sinceTs = since ? new Date(since).getTime() : 0;
     const [tasksSnap, habitsSnap, checkInsSnap, milestonesSnap, projectsSnap] = await Promise.all([
-      syncTasksCollection.where('externalId', '==', userId).get(),
-      syncHabitsCollection.where('externalId', '==', userId).get(),
-      syncHabitCheckinsCollection.where('externalId', '==', userId).get(),
-      syncMilestonesCollection.where('externalId', '==', userId).get(),
-      syncProjectsCollection.where('externalId', '==', userId).get(),
+      userDeltaQuery(syncTasksCollection, userId, sinceIso).get(),
+      userDeltaQuery(syncHabitsCollection, userId, sinceIso).get(),
+      userDeltaQuery(syncHabitCheckinsCollection, userId, sinceIso).get(),
+      userDeltaQuery(syncMilestonesCollection, userId, sinceIso).get(),
+      userDeltaQuery(syncProjectsCollection, userId, sinceIso).get(),
     ]);
-    const filterSince = (snap) => {
-      const out = [];
-      snap.forEach((doc) => {
-        const data = doc.data();
-        const ts = new Date(data.serverUpdatedAt || 0).getTime();
-        if (ts > sinceTs) out.push({ ...data, id: doc.id });
-      });
-      return out;
-    };
+    const pack = (snap) => snap.docs.map((doc) => ({ ...doc.data(), id: doc.id }));
     res.json({
       success: true,
-      tasks: filterSince(tasksSnap),
-      habits: filterSince(habitsSnap),
-      checkIns: filterSince(checkInsSnap),
-      milestones: filterSince(milestonesSnap),
-      projects: filterSince(projectsSnap),
+      tasks: pack(tasksSnap),
+      habits: pack(habitsSnap),
+      checkIns: pack(checkInsSnap),
+      milestones: pack(milestonesSnap),
+      projects: pack(projectsSnap),
       serverTime,
     });
   } catch (err) {
