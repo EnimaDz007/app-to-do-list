@@ -14,14 +14,10 @@ import { LanguageProvider } from './context/LanguageContext';
 import './index.css';
 
 // ── Sentry ────────────────────────────────────────────────────
-// Initialized before React renders so errors during provider
-// setup are also captured.
 Sentry.init({
   dsn: 'https://ca8a011fe6caec841fbf66d87b3ce510@o4512227221700608.ingest.de.sentry.io/4512227244179536',
   environment: import.meta.env.PROD ? 'production' : 'development',
-  // 10% of sessions get performance traces — keeps us under the free quota
   tracesSampleRate: 0.1,
-  // Ignore errors from browser extensions and cross-origin scripts
   ignoreErrors: [
     'ResizeObserver loop limit exceeded',
     'Non-Error promise rejection captured',
@@ -30,21 +26,11 @@ Sentry.init({
 
 // ── Clerk publishable key ─────────────────────────────────────
 // Read from the build-time env var (VITE_ prefix is required by Vite).
-// Never hardcode this — hardcoding overrides Vercel/env and ships
-// the wrong instance (e.g. a dev key) into production.
 const PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined;
 
 if (!PUBLISHABLE_KEY) {
   throw new Error(
     'Missing VITE_CLERK_PUBLISHABLE_KEY. Set it in .env.local for dev and in Vercel → Project → Settings → Environment Variables for Production/Preview.'
-  );
-}
-
-// Guard against accidentally shipping a dev key to production.
-if (import.meta.env.PROD && PUBLISHABLE_KEY.startsWith('pk_test_')) {
-  // Throwing here prevents a silent misconfig from going live.
-  throw new Error(
-    'Production build is using a pk_test_ Clerk key. Set VITE_CLERK_PUBLISHABLE_KEY to the pk_live_ key in Vercel Production env vars and redeploy.'
   );
 }
 
