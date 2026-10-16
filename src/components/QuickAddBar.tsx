@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { Task } from '../types';
 import { triggerHaptic } from '../utils/haptics';
+import { unlockAudio } from '../utils/notifications';
 import {
   parseQuickAdd,
   quickAddToTask,
@@ -72,10 +73,12 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({ onAddTask, disabled })
           active?.isContentEditable === true;
         if (!isEditable) {
           e.preventDefault();
+          triggerHaptic('selection');
           inputRef.current?.focus();
         }
       }
       if (e.key === 'Escape' && document.activeElement === inputRef.current) {
+        triggerHaptic('light');
         setValue('');
         inputRef.current?.blur();
       }
@@ -92,6 +95,13 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({ onAddTask, disabled })
     setValue('');
     setParsed(null);
     inputRef.current?.blur();
+  };
+
+  const handleFocus = () => {
+    triggerHaptic('selection');
+    // Warm up the AudioContext on the first real gesture
+    unlockAudio();
+    setFocused(true);
   };
 
   const isEmpty = value.trim().length === 0;
@@ -122,7 +132,7 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({ onAddTask, disabled })
           type="text"
           value={value}
           onChange={(e) => setValue(e.target.value)}
-          onFocus={() => setFocused(true)}
+          onFocus={handleFocus}
           onBlur={() => setTimeout(() => setFocused(false), 180)}
           disabled={disabled}
           placeholder='Add a task…  try "Buy milk tomorrow 5pm #personal"'
@@ -133,7 +143,7 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({ onAddTask, disabled })
           <button
             type="submit"
             disabled={!parsed?.isValid || disabled}
-            className="shrink-0 inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-400 to-orange-500 hover:from-amber-300 hover:to-orange-400 disabled:opacity-40 disabled:cursor-not-allowed text-black text-xs font-bold transition"
+            className="shrink-0 inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-400 to-orange-500 hover:from-amber-300 hover:to-orange-400 disabled:opacity-40 disabled:cursor-not-allowed text-black text-xs font-bold transition cursor-pointer"
           >
             Add
             <ArrowRight className="w-3 h-3 rtl:rotate-180" />

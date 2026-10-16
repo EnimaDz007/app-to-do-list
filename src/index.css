@@ -16,6 +16,7 @@ html, body {
 
 html {
   font-size: 16px;
+  scroll-behavior: smooth;
 }
 
 @layer utilities {
@@ -29,17 +30,14 @@ html {
 }
 
 /* 🚀 Performance: GPU acceleration for blur effects */
+.backdrop-blur-sm,
 .backdrop-blur-md,
-.backdrop-blur-sm {
+.backdrop-blur-lg,
+.backdrop-blur-xl {
   will-change: backdrop-filter;
   transform: translateZ(0);
   -webkit-backface-visibility: hidden;
   backface-visibility: hidden;
-}
-
-/* Smooth scrolling */
-html {
-  scroll-behavior: smooth;
 }
 
 /* Reduce heavy transitions */
@@ -57,7 +55,6 @@ html {
 
 /* ⚡ Smart Adaptive Performance */
 
-/* Low-tier devices: disable heavy effects */
 html.perf-low #app-header,
 html.perf-low nav#bottom-tab-bar {
   backdrop-filter: none !important;
@@ -103,6 +100,7 @@ html.perf-low *::before,
 html.perf-low *::after {
   animation-duration: 0s !important;
   animation-delay: 0s !important;
+  animation-iteration-count: 1 !important;
   transition-duration: 0s !important;
   transition-delay: 0s !important;
 }
@@ -117,6 +115,12 @@ html.perf-low .min-h-screen {
 html.perf-low.dark body,
 html.perf-low.dark .min-h-screen {
   background-color: #0f172a !important;
+}
+
+/* Mid-tier: moderate optimizations */
+html.perf-mid .backdrop-blur-xl {
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
 }
 
 /* 🎨 UI THEME SYSTEM — user-selectable design themes */
@@ -212,34 +216,6 @@ html.perf-low.dark .min-h-screen {
   --ui-text: #F1F5F9;
   --ui-text-muted: #94A3B8;
   --ui-nav-bg: #0F172A;
-}
-
-/* Mid-tier: moderate optimizations */
-html.perf-mid .backdrop-blur-xl {
-  backdrop-filter: blur(8px) !important;
-  -webkit-backdrop-filter: blur(8px) !important;
-}
-
-/* 🚀 Reduce animations on low-tier devices */
-html.perf-low * {
-  animation-duration: 0.001s !important;
-  animation-iteration-count: 1 !important;
-  transition-duration: 0.05s !important;
-}
-
-html.perf-low .animate-pulse,
-html.perf-low .animate-spin,
-html.perf-low .animate-bounce,
-html.perf-low .animate-ping {
-  animation: none !important;
-}
-
-html.perf-low .backdrop-blur-xl,
-html.perf-low .backdrop-blur-lg,
-html.perf-low .backdrop-blur-md,
-html.perf-low .backdrop-blur-sm {
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
 }
 
 /* 🐝 Bee animations for Honeycomb Hive */

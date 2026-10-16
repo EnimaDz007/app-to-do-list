@@ -3,6 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { X, Share2, Copy, Check, RefreshCw, Users, Clock, ExternalLink } from 'lucide-react';
 import { Task, DelegateStatus } from '../types';
 import { triggerHaptic } from '../utils/haptics';
+import { useLanguage } from '../context/LanguageContext';
+import { TranslationKey } from '../i18n/translations';
 import {
   createDelegateShare,
   getDelegateStatus,
@@ -24,17 +26,18 @@ interface DelegateShareModalProps {
 }
 
 type Phase = 'intro' | 'creating' | 'ready' | 'error';
-
-const STATUS_LABEL: Record<DelegateStatus, string> = {
-  pending: 'Waiting for them…',
-  completed: 'Completed 🎉',
-  rejected: 'Declined',
-};
+type LocalLang = 'en' | 'fr' | 'ar';
 
 const STATUS_COLOR: Record<DelegateStatus, string> = {
   pending: '#F59E0B',
   completed: '#059669',
   rejected: '#E11D48',
+};
+
+const STATUS_KEY: Record<DelegateStatus, TranslationKey> = {
+  pending: 'delegate_status_pending' as TranslationKey,
+  completed: 'delegate_status_completed' as TranslationKey,
+  rejected: 'delegate_status_rejected' as TranslationKey,
 };
 
 export const DelegateShareModal: React.FC<DelegateShareModalProps> = ({
@@ -44,6 +47,10 @@ export const DelegateShareModal: React.FC<DelegateShareModalProps> = ({
   onDelegateIdCreated,
   onDelegateStatusChanged,
 }) => {
+  const { t, language } = useLanguage();
+  const lang = (language as LocalLang) || 'en';
+  const isRtl = lang === 'ar';
+
   const [phase, setPhase] = useState<Phase>('intro');
   const [shareUrl, setShareUrl] = useState<string>('');
   const [delegateId, setDelegateId] = useState<string>('');
@@ -51,7 +58,6 @@ export const DelegateShareModal: React.FC<DelegateShareModalProps> = ({
   const [currentStatus, setCurrentStatus] = useState<DelegateStatus | null>(null);
   const [checking, setChecking] = useState(false);
 
-  // Reset when a new task opens
   useEffect(() => {
     if (!isOpen) return;
     if (!task) {
@@ -64,13 +70,11 @@ export const DelegateShareModal: React.FC<DelegateShareModalProps> = ({
     }
 
     if (task.delegateId) {
-      // Already shared — go straight to ready
       const url = `https://task-priority-server-pir6.onrender.com/delegate/${task.delegateId}`;
       setDelegateId(task.delegateId);
       setShareUrl(url);
       setCurrentStatus(task.delegateStatus || 'pending');
       setPhase('ready');
-      // Fetch latest status immediately
       refreshStatus(task.delegateId, task.id);
     } else {
       setPhase('intro');
@@ -114,7 +118,6 @@ export const DelegateShareModal: React.FC<DelegateShareModalProps> = ({
     const msg = buildShareMessage(task.title, shareUrl);
     const shared = await nativeShare(msg, shareUrl);
     if (!shared) {
-      // fallback: copy
       await handleCopy();
     }
   };
@@ -140,24 +143,24 @@ export const DelegateShareModal: React.FC<DelegateShareModalProps> = ({
             className="fixed inset-0 z-[70] bg-slate-950/60 backdrop-blur-sm"
           />
           <motion.div
+            dir={isRtl ? 'rtl' : 'ltr'}
             initial={{ opacity: 0, scale: 0.95, y: 20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 20 }}
             transition={{ type: 'spring', stiffness: 400, damping: 28 }}
             className="fixed left-1/2 top-1/2 z-[71] w-[92%] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden max-h-[90vh] flex flex-col"
           >
-            {/* Header */}
             <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
               <div className="flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-xl bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
                   <Users className="w-4 h-4" />
                 </div>
-                <div>
+                <div className="text-start">
                   <h3 className="text-sm font-bold text-slate-900 dark:text-white leading-tight">
-                    Delegate task
+                    {t('delegate_title' as TranslationKey)}
                   </h3>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                    Share via link — no account needed
+                    {t('delegate_subtitle' as TranslationKey)}
                   </p>
                 </div>
               </div>
@@ -169,11 +172,10 @@ export const DelegateShareModal: React.FC<DelegateShareModalProps> = ({
               </button>
             </div>
 
-            {/* Body */}
             <div className="p-5 overflow-y-auto">
               <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 mb-4">
                 <div className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">
-                  Task
+                  {t('delegate_task_label' as TranslationKey)}
                 </div>
                 <div className="text-[13px] font-bold text-slate-900 dark:text-white leading-snug">
                   {task.title}
@@ -188,14 +190,14 @@ export const DelegateShareModal: React.FC<DelegateShareModalProps> = ({
               {phase === 'intro' && (
                 <>
                   <p className="text-[12px] text-slate-600 dark:text-slate-300 leading-relaxed mb-4">
-                    Creates a public link you can send via <span className="font-semibold">WhatsApp, SMS, or email</span>. They tap the link → see the task → tap "Mark as done". You get auto-notified in the app.
+                    {t('delegate_intro_text' as TranslationKey)}
                   </p>
                   <button
                     onClick={handleCreateLink}
                     className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm shadow-md shadow-emerald-600/30 transition active:scale-[0.98] cursor-pointer"
                   >
                     <Share2 className="w-4 h-4" />
-                    <span>Generate share link</span>
+                    <span>{t('delegate_generate' as TranslationKey)}</span>
                   </button>
                 </>
               )}
@@ -204,7 +206,7 @@ export const DelegateShareModal: React.FC<DelegateShareModalProps> = ({
                 <div className="py-8 text-center">
                   <div className="w-10 h-10 mx-auto border-3 border-emerald-500 border-t-transparent rounded-full animate-spin" />
                   <p className="text-[12px] text-slate-500 dark:text-slate-400 mt-3">
-                    Creating your link…
+                    {t('delegate_creating' as TranslationKey)}
                   </p>
                 </div>
               )}
@@ -212,21 +214,20 @@ export const DelegateShareModal: React.FC<DelegateShareModalProps> = ({
               {phase === 'error' && (
                 <>
                   <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 text-[12px] text-rose-700 dark:text-rose-300 mb-4">
-                    Couldn't reach the server. Check your connection and try again.
+                    {t('delegate_error' as TranslationKey)}
                   </div>
                   <button
                     onClick={handleCreateLink}
                     className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-sm transition cursor-pointer"
                   >
                     <RefreshCw className="w-4 h-4" />
-                    <span>Try again</span>
+                    <span>{t('delegate_retry' as TranslationKey)}</span>
                   </button>
                 </>
               )}
 
               {phase === 'ready' && (
                 <>
-                  {/* Status chip */}
                   <div className="flex items-center justify-between mb-3">
                     <div
                       className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold"
@@ -239,7 +240,7 @@ export const DelegateShareModal: React.FC<DelegateShareModalProps> = ({
                         className="w-1.5 h-1.5 rounded-full"
                         style={{ backgroundColor: STATUS_COLOR[currentStatus || 'pending'] }}
                       />
-                      {STATUS_LABEL[currentStatus || 'pending']}
+                      {t(STATUS_KEY[currentStatus || 'pending'])}
                     </div>
                     <button
                       onClick={() => refreshStatus(delegateId, task.id)}
@@ -247,39 +248,40 @@ export const DelegateShareModal: React.FC<DelegateShareModalProps> = ({
                       className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition cursor-pointer disabled:opacity-50"
                     >
                       <RefreshCw className={`w-3 h-3 ${checking ? 'animate-spin' : ''}`} />
-                      Refresh
+                      {t('delegate_refresh' as TranslationKey)}
                     </button>
                   </div>
 
-                  {/* The link */}
                   <div className="p-3 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 mb-3">
                     <div className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1.5">
-                      Share link
+                      {t('delegate_link_label' as TranslationKey)}
                     </div>
-                    <div className="font-mono text-[11px] text-slate-700 dark:text-slate-300 break-all leading-snug">
+                    <div className="font-mono text-[11px] text-slate-700 dark:text-slate-300 break-all leading-snug" dir="ltr">
                       {shareUrl}
                     </div>
                   </div>
 
-                  {/* Actions */}
                   <div className="grid grid-cols-2 gap-2 mb-3">
                     <button
                       onClick={handleCopy}
                       className="flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold text-xs border border-slate-200 dark:border-slate-700 transition cursor-pointer"
                     >
                       {copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
-                      <span>{copied ? 'Copied!' : 'Copy'}</span>
+                      <span>
+                        {copied
+                          ? t('delegate_copied' as TranslationKey)
+                          : t('delegate_copy' as TranslationKey)}
+                      </span>
                     </button>
                     <button
                       onClick={handleShare}
                       className="flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md shadow-emerald-600/30 transition cursor-pointer"
                     >
                       <Share2 className="w-3.5 h-3.5" />
-                      <span>Share</span>
+                      <span>{t('delegate_share' as TranslationKey)}</span>
                     </button>
                   </div>
 
-                  {/* Open in browser */}
                   <a
                     href={shareUrl}
                     target="_blank"
@@ -287,16 +289,17 @@ export const DelegateShareModal: React.FC<DelegateShareModalProps> = ({
                     className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl text-[11px] font-bold text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition"
                   >
                     <ExternalLink className="w-3 h-3" />
-                    <span>Preview link as recipient</span>
+                    <span>{t('delegate_preview' as TranslationKey)}</span>
                   </a>
 
-                  {/* Recipient info if completed */}
                   {currentStatus === 'completed' && task.delegateCompletedBy && (
                     <div className="mt-3 p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900/60 text-[11px] text-emerald-800 dark:text-emerald-200">
-                      <div className="font-bold">Completed by {task.delegateCompletedBy}</div>
+                      <div className="font-bold">
+                        {t('delegate_completed_by' as TranslationKey, { name: task.delegateCompletedBy })}
+                      </div>
                       {task.delegateCompletedAt && (
                         <div className="text-[10px] opacity-80 mt-0.5">
-                          {new Date(task.delegateCompletedAt).toLocaleString('en-US', {
+                          {new Date(task.delegateCompletedAt).toLocaleString(lang, {
                             month: 'short',
                             day: 'numeric',
                             hour: 'numeric',
@@ -309,9 +312,7 @@ export const DelegateShareModal: React.FC<DelegateShareModalProps> = ({
 
                   <div className="mt-3 flex items-start gap-1.5 text-[10px] text-slate-400 dark:text-slate-500 leading-snug">
                     <Clock className="w-3 h-3 mt-0.5 shrink-0" />
-                    <span>
-                      Status updates automatically when you open the app. The recipient doesn't need to install anything.
-                    </span>
+                    <span>{t('delegate_footer' as TranslationKey)}</span>
                   </div>
                 </>
               )}

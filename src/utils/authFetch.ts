@@ -1,20 +1,49 @@
 // ─────────────────────────────────────────────────────────────
 //  FILE: src/utils/authFetch.ts
 //  Adds Clerk session token to every API call.
+//
 //  Features:
 //    • Dedupes parallel getToken() calls into one network request
 //    • Retries on null token (Clerk not ready)
 //    • Forces fresh token + retry on 401 (expired cached token)
-//  Note: no long-lived cache here — Clerk's own cache handles that.
+//    • Fetch timeout via AbortController
+//    • Retries on 5xx / network errors with exponential backoff
+//    • Preserves caller-supplied AbortSignal
 // ─────────────────────────────────────────────────────────────
 
 type TokenGetter = (options?: { skipCache?: boolean }) => Promise<string | null>;
 
+const DEFAULT_TIMEOUT_MS = 20_000;
+const RETRY_5XX_ATTEMPTS = 2;   // total attempts = 1 + 2 = 3
+const RETRY_5XX_BACKOFF  = 400; // ms, doubles each attempt
+
+/** Race fetch against a timeout. Preserves caller signal if provided. */
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  // If the caller already provided a signal, chain both.
+  const callerSignal = init.signal;
+  const controller = new AbortController();
+
+  const onCallerAbort = () => controller.abort(callerSignal?.reason);
+  if (callerSignal) {
+    if (callerSignal.aborted) controller.abort(callerSignal.reason);
+    else callerSignal.addEventListener('abort', onCallerAbort, { once: true });
+  }
+
+  const timer = setTimeout(() => controller.abort(new Error('timeout')), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+    if (callerSignal) callerSignal.removeEventListener('abort', onCallerAbort);
+  }
+}
+
 export function makeAuthedFetch(getToken: TokenGetter) {
   // ── Deduped token fetch ──
-  // Only ONE getToken() network call happens at a time across all parallel
-  // requests. Clerk's own internal cache handles the "fresh vs cached"
-  // decision — we just avoid hammering it with parallel calls.
   let inflight: Promise<string | null> | null = null;
 
   async function fetchToken(forceFresh = false): Promise<string | null> {
@@ -22,8 +51,7 @@ export function makeAuthedFetch(getToken: TokenGetter) {
 
     inflight = (async () => {
       try {
-        const token = await getToken(forceFresh ? { skipCache: true } : undefined);
-        return token;
+        return await getToken(forceFresh ? { skipCache: true } : undefined);
       } catch {
         return null;
       } finally {
@@ -34,11 +62,17 @@ export function makeAuthedFetch(getToken: TokenGetter) {
     return inflight;
   }
 
-  return async (url: string, init: RequestInit = {}): Promise<Response> => {
+  return async (
+    url: string,
+    init: RequestInit = {},
+    options: { timeoutMs?: number } = {},
+  ): Promise<Response> => {
+    const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+
     // ── 1. Get a token ──
     let token = await fetchToken();
 
-    // ── 2. If Clerk returned null (not ready), retry with backoff ──
+    // ── 2. Clerk not ready → retry with backoff ──
     if (!token) {
       for (const delay of [200, 400, 800, 1500]) {
         await new Promise((r) => setTimeout(r, delay));
@@ -47,24 +81,64 @@ export function makeAuthedFetch(getToken: TokenGetter) {
       }
     }
 
-    const headers = new Headers(init.headers || {});
-    if (token) headers.set('Authorization', `Bearer ${token}`);
+    const buildHeaders = (tok: string | null): Headers => {
+      const h = new Headers(init.headers || {});
+      if (tok) h.set('Authorization', `Bearer ${tok}`);
+      return h;
+    };
 
-    let res = await fetch(url, { ...init, headers });
+    // ── 3. Initial attempt with 5xx / network retry ──
+    let lastError: unknown = null;
+    let res: Response | null = null;
 
-    // ── 3. On 401, force a fresh token and retry once ──
+    for (let attempt = 0; attempt <= RETRY_5XX_ATTEMPTS; attempt++) {
+      try {
+        res = await fetchWithTimeout(
+          url,
+          { ...init, headers: buildHeaders(token) },
+          timeoutMs,
+        );
+
+        // Non-5xx → done, no retry
+        if (res.status < 500) break;
+
+        // 5xx → retry unless last attempt
+        if (attempt < RETRY_5XX_ATTEMPTS) {
+          await new Promise((r) => setTimeout(r, RETRY_5XX_BACKOFF * Math.pow(2, attempt)));
+          continue;
+        }
+        // last attempt failed with 5xx — fall through to return res
+      } catch (err) {
+        lastError = err;
+        // Caller aborted → propagate immediately
+        if (init.signal?.aborted) throw err;
+
+        if (attempt < RETRY_5XX_ATTEMPTS) {
+          await new Promise((r) => setTimeout(r, RETRY_5XX_BACKOFF * Math.pow(2, attempt)));
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    if (!res) {
+      throw lastError instanceof Error ? lastError : new Error('Network request failed');
+    }
+
+    // ── 4. On 401, force a fresh token and retry once ──
     if (res.status === 401) {
-      // Small delay: Clerk may still be committing the last session update
       await new Promise((r) => setTimeout(r, 250));
       try {
         const fresh = await fetchToken(true);
         if (fresh && fresh !== token) {
-          const retryHeaders = new Headers(init.headers || {});
-          retryHeaders.set('Authorization', `Bearer ${fresh}`);
-          res = await fetch(url, { ...init, headers: retryHeaders });
+          res = await fetchWithTimeout(
+            url,
+            { ...init, headers: buildHeaders(fresh) },
+            timeoutMs,
+          );
         }
       } catch {
-        /* return the original 401 if refresh fails */
+        /* return original 401 if refresh fails */
       }
     }
 

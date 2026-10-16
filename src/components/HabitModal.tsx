@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { X, Save, Repeat, Clock, Target, Bell, BellOff } from 'lucide-react';
 import { Habit, HabitFrequency, HabitGoalType } from '../types';
 import { triggerHaptic } from '../utils/haptics';
+import { useLanguage } from '../context/LanguageContext';
+import { TranslationKey } from '../i18n/translations';
 
 interface HabitModalProps {
   isOpen: boolean;
@@ -16,18 +18,23 @@ const EMOJI_OPTIONS = [
 ];
 
 const COLOR_OPTIONS = [
-  '#8b5cf6', // violet
-  '#ec4899', // pink
-  '#ef4444', // red
-  '#f97316', // orange
-  '#eab308', // yellow
-  '#10b981', // emerald
-  '#06b6d4', // cyan
-  '#3b82f6', // blue
+  '#8b5cf6', '#ec4899', '#ef4444', '#f97316',
+  '#eab308', '#10b981', '#06b6d4', '#3b82f6',
 ];
 
-const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
-const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+type LocalLang = 'en' | 'fr' | 'ar';
+
+const DAY_LABELS: Record<LocalLang, string[]> = {
+  en: ['S', 'M', 'T', 'W', 'T', 'F', 'S'],
+  fr: ['D', 'L', 'M', 'M', 'J', 'V', 'S'],
+  ar: ['ح', 'ن', 'ث', 'ر', 'خ', 'ج', 'س'],
+};
+
+const DAY_NAMES: Record<LocalLang, string[]> = {
+  en: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
+  fr: ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'],
+  ar: ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'],
+};
 
 export const HabitModal: React.FC<HabitModalProps> = ({
   isOpen,
@@ -35,6 +42,12 @@ export const HabitModal: React.FC<HabitModalProps> = ({
   onSaveHabit,
   editingHabit,
 }) => {
+  const { t, language } = useLanguage();
+  const lang = (language as LocalLang) || 'en';
+  const isRtl = lang === 'ar';
+  const dayLabels = DAY_LABELS[lang] ?? DAY_LABELS.en;
+  const dayNames = DAY_NAMES[lang] ?? DAY_NAMES.en;
+
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [emoji, setEmoji] = useState('🎯');
@@ -42,12 +55,10 @@ export const HabitModal: React.FC<HabitModalProps> = ({
   const [frequency, setFrequency] = useState<HabitFrequency>('daily');
   const [daysOfWeek, setDaysOfWeek] = useState<number[]>([1, 2, 3, 4, 5]);
   const [goalType, setGoalType] = useState<HabitGoalType>('check');
-  // 🔑 Use `number | ''` so the input can be empty while typing
   const [goalCount, setGoalCount] = useState<number | ''>(5);
   const [reminderEnabled, setReminderEnabled] = useState(false);
   const [reminderTime, setReminderTime] = useState('09:00');
 
-  // Load editing habit data
   useEffect(() => {
     if (!isOpen) return;
 
@@ -82,8 +93,7 @@ export const HabitModal: React.FC<HabitModalProps> = ({
     triggerHaptic('light');
     setDaysOfWeek((prev) => {
       const has = prev.includes(dayIdx);
-      const next = has ? prev.filter((d) => d !== dayIdx) : [...prev, dayIdx].sort();
-      return next;
+      return has ? prev.filter((d) => d !== dayIdx) : [...prev, dayIdx].sort();
     });
   };
 
@@ -93,7 +103,6 @@ export const HabitModal: React.FC<HabitModalProps> = ({
 
     triggerHaptic('success');
 
-    // 🔑 Convert `number | ''` to a real number for saving
     const finalGoalCount = goalType === 'count'
       ? (goalCount === '' ? 1 : Math.max(1, Math.min(100, goalCount)))
       : 1;
@@ -115,19 +124,21 @@ export const HabitModal: React.FC<HabitModalProps> = ({
     onClose();
   };
 
+  const daysJoined = daysOfWeek.map((i) => dayNames[i].slice(0, 3)).join(', ');
+
   return (
     <div
       id="habit-modal-backdrop"
+      dir={isRtl ? 'rtl' : 'ltr'}
       className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 dark:bg-black/75 backdrop-blur-xs p-0 sm:p-4 animate-in fade-in duration-200"
     >
       <div
         id="habit-modal-container"
         className="w-full max-w-lg rounded-t-3xl sm:rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-5 shadow-2xl text-slate-900 dark:text-slate-100 max-h-[92vh] overflow-y-auto"
       >
-        {/* Header */}
         <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
           <h3 className="text-base font-semibold text-slate-900 dark:text-white">
-            {editingHabit ? 'Edit Habit' : 'New Habit'}
+            {editingHabit ? t('habit_edit_title' as TranslationKey) : t('habit_new_title' as TranslationKey)}
           </h3>
           <button
             onClick={onClose}
@@ -138,50 +149,48 @@ export const HabitModal: React.FC<HabitModalProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="mt-4 space-y-4 text-xs">
-          {/* Preview badge */}
           <div className="flex justify-center">
             <div
               className="flex items-center gap-2 px-4 py-2 rounded-2xl"
               style={{ backgroundColor: color + '20', border: `1px solid ${color}` }}
             >
               <span className="text-2xl">{emoji}</span>
-              <span className="font-bold text-sm" style={{ color }}>{name || 'My Habit'}</span>
+              <span className="font-bold text-sm" style={{ color }}>
+                {name || t('habit_preview_name' as TranslationKey)}
+              </span>
             </div>
           </div>
 
-          {/* Name */}
           <div>
             <label className="block font-medium text-slate-700 dark:text-slate-300 mb-1">
-              Habit Name <span className="text-rose-500">*</span>
+              {t('habit_name_label' as TranslationKey)} <span className="text-rose-500">*</span>
             </label>
             <input
               type="text"
               required
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Exercise, Read, Meditate"
+              placeholder={t('habit_name_placeholder' as TranslationKey)}
               className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2.5 text-sm text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500 transition"
             />
           </div>
 
-          {/* Description */}
           <div>
             <label className="block font-medium text-slate-700 dark:text-slate-300 mb-1">
-              Description (optional)
+              {t('habit_description_label' as TranslationKey)}
             </label>
             <input
               type="text"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="e.g. 30 minutes of cardio"
-              className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500 transition"
+              placeholder={t('habit_description_placeholder' as TranslationKey)}
+              className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500 transition"
             />
           </div>
 
-          {/* Emoji Picker */}
           <div>
             <label className="block font-medium text-slate-700 dark:text-slate-300 mb-1">
-              Icon
+              {t('habit_icon_label' as TranslationKey)}
             </label>
             <div className="flex flex-wrap gap-1.5">
               {EMOJI_OPTIONS.map((e) => (
@@ -201,10 +210,9 @@ export const HabitModal: React.FC<HabitModalProps> = ({
             </div>
           </div>
 
-          {/* Color Picker */}
           <div>
             <label className="block font-medium text-slate-700 dark:text-slate-300 mb-1">
-              Color
+              {t('habit_color_label' as TranslationKey)}
             </label>
             <div className="flex flex-wrap gap-2">
               {COLOR_OPTIONS.map((c) => (
@@ -221,12 +229,11 @@ export const HabitModal: React.FC<HabitModalProps> = ({
             </div>
           </div>
 
-          {/* Frequency */}
           <div>
             <label className="block font-medium text-slate-700 dark:text-slate-300 mb-1">
               <span className="flex items-center gap-1">
                 <Repeat className="w-3.5 h-3.5 text-indigo-500" />
-                <span>Frequency</span>
+                <span>{t('habit_frequency_label' as TranslationKey)}</span>
               </span>
             </label>
             <div className="flex gap-1.5">
@@ -241,21 +248,25 @@ export const HabitModal: React.FC<HabitModalProps> = ({
                       : 'bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700'
                   }`}
                 >
-                  {f === 'daily' ? 'Every day' : f === 'weekly' ? 'Weekly' : 'Custom'}
+                  {f === 'daily'
+                    ? t('habit_frequency_daily' as TranslationKey)
+                    : f === 'weekly'
+                    ? t('habit_frequency_weekly' as TranslationKey)
+                    : t('habit_frequency_custom' as TranslationKey)}
                 </button>
               ))}
             </div>
 
             {(frequency === 'weekly' || frequency === 'custom') && (
               <div className="mt-2 flex gap-1">
-                {DAY_LABELS.map((d, i) => {
+                {dayLabels.map((d, i) => {
                   const selected = daysOfWeek.includes(i);
                   return (
                     <button
                       key={i}
                       type="button"
                       onClick={() => toggleDay(i)}
-                      title={DAY_NAMES[i]}
+                      title={dayNames[i]}
                       className={`flex-1 h-9 rounded-lg text-[11px] font-bold transition cursor-pointer ${
                         selected
                           ? 'bg-indigo-600 text-white'
@@ -271,23 +282,22 @@ export const HabitModal: React.FC<HabitModalProps> = ({
             {frequency === 'weekly' && (
               <p className="text-[10px] text-slate-400 mt-1">
                 {daysOfWeek.length === 0
-                  ? 'Pick at least one day'
-                  : `On ${daysOfWeek.map((i) => DAY_NAMES[i].slice(0, 3)).join(', ')}`}
+                  ? t('habit_days_none_selected' as TranslationKey)
+                  : t('habit_days_on' as TranslationKey, { days: daysJoined })}
               </p>
             )}
             {frequency === 'custom' && (
               <p className="text-[10px] text-slate-400 mt-1">
-                Only these days count toward your streak.
+                {t('habit_custom_days_hint' as TranslationKey)}
               </p>
             )}
           </div>
 
-          {/* Goal Type */}
           <div>
             <label className="block font-medium text-slate-700 dark:text-slate-300 mb-1">
               <span className="flex items-center gap-1">
                 <Target className="w-3.5 h-3.5 text-indigo-500" />
-                <span>Goal Type</span>
+                <span>{t('habit_goal_type_label' as TranslationKey)}</span>
               </span>
             </label>
             <div className="flex gap-1.5">
@@ -302,21 +312,22 @@ export const HabitModal: React.FC<HabitModalProps> = ({
                       : 'bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700'
                   }`}
                 >
-                  {g === 'check' ? '✓ Done / Not done' : '# Count per day'}
+                  {g === 'check'
+                    ? t('habit_goal_check' as TranslationKey)
+                    : t('habit_goal_count' as TranslationKey)}
                 </button>
               ))}
             </div>
 
             {goalType === 'count' && (
               <div className="mt-2 flex items-center gap-2 text-[11px] text-slate-600 dark:text-slate-300">
-                <span>Target per day:</span>
+                <span>{t('habit_target_per_day' as TranslationKey)}</span>
                 <input
                   type="number"
                   min={1}
                   max={100}
                   value={goalCount}
                   onChange={(e) => {
-                    // 🔑 Allow empty value while typing
                     const raw = e.target.value;
                     if (raw === '') {
                       setGoalCount('');
@@ -326,7 +337,6 @@ export const HabitModal: React.FC<HabitModalProps> = ({
                     }
                   }}
                   onBlur={() => {
-                    // If left empty, reset to 1
                     if (goalCount === '' || goalCount < 1) setGoalCount(1);
                   }}
                   className="w-20 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-center text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500"
@@ -335,12 +345,11 @@ export const HabitModal: React.FC<HabitModalProps> = ({
             )}
           </div>
 
-          {/* Reminder */}
           <div>
             <label className="block font-medium text-slate-700 dark:text-slate-300 mb-1">
               <span className="flex items-center gap-1">
                 <Clock className="w-3.5 h-3.5 text-indigo-500" />
-                <span>Reminder</span>
+                <span>{t('habit_reminder_label' as TranslationKey)}</span>
               </span>
             </label>
             <div className="flex items-center gap-2">
@@ -354,7 +363,11 @@ export const HabitModal: React.FC<HabitModalProps> = ({
                 }`}
               >
                 {reminderEnabled ? <Bell className="w-3.5 h-3.5" /> : <BellOff className="w-3.5 h-3.5" />}
-                <span>{reminderEnabled ? 'ON' : 'OFF'}</span>
+                <span>
+                  {reminderEnabled
+                    ? t('habit_reminder_on' as TranslationKey)
+                    : t('habit_reminder_off' as TranslationKey)}
+                </span>
               </button>
               {reminderEnabled && (
                 <input
@@ -367,26 +380,29 @@ export const HabitModal: React.FC<HabitModalProps> = ({
             </div>
             {reminderEnabled && (
               <p className="text-[10px] text-slate-400 mt-1">
-                You'll get a notification at {reminderTime} on scheduled days.
+                {t('habit_reminder_hint' as TranslationKey, { time: reminderTime })}
               </p>
             )}
           </div>
 
-          {/* Buttons */}
           <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex gap-2">
             <button
               type="button"
               onClick={onClose}
               className="flex-1 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-medium text-xs transition cursor-pointer"
             >
-              Cancel
+              {t('habit_cancel' as TranslationKey)}
             </button>
             <button
               type="submit"
               className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs transition shadow-md shadow-indigo-600/30 flex items-center justify-center gap-1.5 cursor-pointer"
             >
               <Save className="w-4 h-4" />
-              <span>{editingHabit ? 'Save' : 'Create'}</span>
+              <span>
+                {editingHabit
+                  ? t('habit_save' as TranslationKey)
+                  : t('habit_create' as TranslationKey)}
+              </span>
             </button>
           </div>
         </form>

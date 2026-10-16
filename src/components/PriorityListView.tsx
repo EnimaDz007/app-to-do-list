@@ -491,7 +491,7 @@ export const PriorityListView: React.FC<PriorityListViewProps> = ({
                 deselectViewOnManualChange();
                 setSelectedCategory(cat.id);
               }}
-              className={`px-2.5 py-1 rounded-lg text-xs whitespace-nowrap transition cursor-pointer font-medium ${
+              className={`px-2.5 py-1 rounded-lg text-[11px] whitespace-nowrap transition cursor-pointer font-bold ${
                 isSelected
                   ? 'bg-indigo-600 text-white shadow-xs'
                   : 'bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
@@ -564,7 +564,7 @@ export const PriorityListView: React.FC<PriorityListViewProps> = ({
                 deselectViewOnManualChange();
                 setStatusFilter(st);
               }}
-              className={`px-2 py-1 rounded-md capitalize text-[11px] font-medium transition cursor-pointer ${
+              className={`px-2.5 py-1 rounded-lg capitalize text-[11px] font-bold transition cursor-pointer ${
                 statusFilter === st
                   ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs'
                   : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'

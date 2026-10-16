@@ -1,6 +1,5 @@
 // ─────────────────────────────────────────────────────────────
 //  FILE: src/components/SettingsModal.tsx
-//  Full — Clerk signed-in card + Cloud Sync + Full Backup + Reset
 // ─────────────────────────────────────────────────────────────
 
 import React, { useState, useRef, useEffect } from 'react';
@@ -16,6 +15,7 @@ import { Task, Habit, HabitCheckIn, Milestone, Project, Template } from '../type
 import { triggerHaptic } from '../utils/haptics';
 import { useLanguage } from '../context/LanguageContext';
 import { useTheme } from '../context/ThemeContext';
+import { TranslationKey } from '../i18n/translations';
 import {
   exportTasksToJSON, exportTasksToCSV, importTasksFromJSON, importTasksFromCSV,
 } from '../utils/dataTransfer';
@@ -43,14 +43,11 @@ interface SettingsModalProps {
   onChangeDailyDigest: (next: DailyDigestConfig) => void;
   escalation: EscalationConfig;
   onChangeEscalation: (next: EscalationConfig) => void;
-
   onSyncNow?: () => void | Promise<void>;
   isSyncing?: boolean;
   lastSyncedAt?: string | null;
   syncError?: string | null;
   syncCounts?: { tasks: number; habits: number; checkIns: number; milestones: number };
-
-  /* ─── Full-backup feature (all optional — feature hidden if not passed) ─── */
   fullBackupData?: FullBackupData;
   onRestoreFullBackup?: (backup: FullBackup) => void;
   onResetEverything?: () => void;
@@ -69,6 +66,24 @@ const SYNC_COPY: Record<LocalLang, {
   signedInAs: string;
   signOut: string;
   accountHint: string;
+  stateSyncing: string;
+  stateIssue: string;
+  stateOk: string;
+  lastSyncedPrefix: string;
+  syncNow: string;
+  never: string;
+  justNow: string;
+  minAgo: (n: number) => string;
+  hrAgo: (n: number) => string;
+  hrsAgo: (n: number) => string;
+  dayAgo: (n: number) => string;
+  daysAgo: (n: number) => string;
+  taskOne: string;
+  taskMany: string;
+  habitOne: string;
+  habitMany: string;
+  milestoneOne: string;
+  milestoneMany: string;
 }> = {
   en: {
     tab: 'Sync',
@@ -77,6 +92,24 @@ const SYNC_COPY: Record<LocalLang, {
     signedInAs: 'Signed in as',
     signOut: 'Sign out',
     accountHint: 'Your tasks sync automatically to this account. Sign in with the same account on any device to see them.',
+    stateSyncing: 'Syncing…',
+    stateIssue: 'Sync issue',
+    stateOk: 'Up to date',
+    lastSyncedPrefix: 'Last synced:',
+    syncNow: 'Sync now',
+    never: 'Never',
+    justNow: 'Just now',
+    minAgo: (n) => `${n} min ago`,
+    hrAgo: (n) => `${n} hr ago`,
+    hrsAgo: (n) => `${n} hrs ago`,
+    dayAgo: (n) => `${n} day ago`,
+    daysAgo: (n) => `${n} days ago`,
+    taskOne: 'task',
+    taskMany: 'tasks',
+    habitOne: 'habit',
+    habitMany: 'habits',
+    milestoneOne: 'milestone',
+    milestoneMany: 'milestones',
   },
   fr: {
     tab: 'Synchro',
@@ -85,18 +118,53 @@ const SYNC_COPY: Record<LocalLang, {
     signedInAs: 'Connecté en tant que',
     signOut: 'Se déconnecter',
     accountHint: 'Vos tâches se synchronisent automatiquement sur ce compte. Connectez-vous avec le même compte sur n\u2019importe quel appareil pour les retrouver.',
+    stateSyncing: 'Synchronisation…',
+    stateIssue: 'Problème de synchro',
+    stateOk: 'À jour',
+    lastSyncedPrefix: 'Dernière synchro :',
+    syncNow: 'Synchroniser',
+    never: 'Jamais',
+    justNow: "À l'instant",
+    minAgo: (n) => `il y a ${n} min`,
+    hrAgo: (n) => `il y a ${n} h`,
+    hrsAgo: (n) => `il y a ${n} h`,
+    dayAgo: (n) => `il y a ${n} jour`,
+    daysAgo: (n) => `il y a ${n} jours`,
+    taskOne: 'tâche',
+    taskMany: 'tâches',
+    habitOne: 'habitude',
+    habitMany: 'habitudes',
+    milestoneOne: 'jalon',
+    milestoneMany: 'jalons',
   },
   ar: {
-    tab: '\u0627\u0644\u0645\u0632\u0627\u0645\u0646\u0629',
-    title: '\u0627\u0644\u0645\u0632\u0627\u0645\u0646\u0629 \u0628\u064a\u0646 \u0627\u0644\u0623\u062c\u0647\u0632\u0629',
-    desc: '\u0633\u062c\u0651\u0644 \u0627\u0644\u062f\u062e\u0648\u0644 \u0644\u0646\u0642\u0644 \u0645\u0647\u0627\u0645\u0643 \u0625\u0644\u0649 \u0623\u064a \u062c\u0647\u0627\u0632.',
-    signedInAs: '\u0645\u0633\u062c\u0651\u0644 \u0627\u0644\u062f\u062e\u0648\u0644 \u0628\u0627\u0633\u0645',
-    signOut: '\u062a\u0633\u062c\u064a\u0644 \u0627\u0644\u062e\u0631\u0648\u062c',
-    accountHint: '\u0645\u0647\u0627\u0645\u0643 \u062a\u062a\u0632\u0627\u0645\u0646 \u062a\u0644\u0642\u0627\u0626\u064a\u0627\u064b \u0645\u0639 \u0647\u0630\u0627 \u0627\u0644\u062d\u0633\u0627\u0628.',
+    tab: 'المزامنة',
+    title: 'المزامنة بين الأجهزة',
+    desc: 'سجّل الدخول لنقل مهامك إلى أي جهاز.',
+    signedInAs: 'مسجّل الدخول باسم',
+    signOut: 'تسجيل الخروج',
+    accountHint: 'مهامك تتزامن تلقائياً مع هذا الحساب. سجّل الدخول بنفس الحساب على أي جهاز لعرضها.',
+    stateSyncing: 'جارٍ المزامنة…',
+    stateIssue: 'مشكلة في المزامنة',
+    stateOk: 'محدَّث',
+    lastSyncedPrefix: 'آخر مزامنة:',
+    syncNow: 'زامن الآن',
+    never: 'أبداً',
+    justNow: 'الآن',
+    minAgo: (n) => `قبل ${n} دقيقة`,
+    hrAgo: (n) => `قبل ${n} ساعة`,
+    hrsAgo: (n) => `قبل ${n} ساعات`,
+    dayAgo: (n) => `قبل ${n} يوم`,
+    daysAgo: (n) => `قبل ${n} أيام`,
+    taskOne: 'مهمة',
+    taskMany: 'مهام',
+    habitOne: 'عادة',
+    habitMany: 'عادات',
+    milestoneOne: 'إنجاز',
+    milestoneMany: 'إنجازات',
   },
 };
 
-// ─── Full-backup copy (new) ───
 const FULL_BACKUP_COPY: Record<LocalLang, {
   cardTitle: string;
   cardDesc: string;
@@ -148,7 +216,7 @@ const FULL_BACKUP_COPY: Record<LocalLang, {
   },
   fr: {
     cardTitle: 'Sauvegarde complète',
-    cardDesc: 'Enregistrez tout — tâches, habitudes, étapes, projets et réglages — dans un seul fichier.',
+    cardDesc: 'Enregistrez tout — tâches, habitudes, jalons, projets et réglages — dans un seul fichier.',
     download: 'Télécharger',
     downloadHint: 'Inclut toutes les données de chaque onglet.',
     restore: 'Restaurer',
@@ -164,7 +232,7 @@ const FULL_BACKUP_COPY: Record<LocalLang, {
     dangerDesc: 'Supprime définitivement toutes vos données de cet appareil. Les données serveur seront resynchronisées.',
     resetBtn: 'Tout réinitialiser',
     resetConfirmTitle: 'Tout réinitialiser ?',
-    resetConfirmBody: 'Cela supprime toutes les tâches, habitudes, étapes et projets de cet appareil. Action irréversible.',
+    resetConfirmBody: 'Cela supprime toutes les tâches, habitudes, jalons et projets de cet appareil. Action irréversible.',
     resetTypeHint: 'Tapez DELETE ci-dessous pour confirmer.',
     resetTypePlaceholder: 'DELETE',
     resetConfirmKeyword: 'DELETE',
@@ -173,7 +241,7 @@ const FULL_BACKUP_COPY: Record<LocalLang, {
   },
   ar: {
     cardTitle: 'نسخة احتياطية كاملة',
-    cardDesc: 'احفظ كل شيء — المهام والعادات والمراحل والمشاريع والإعدادات — في ملف واحد.',
+    cardDesc: 'احفظ كل شيء — المهام والعادات والإنجازات والمشاريع والإعدادات — في ملف واحد.',
     download: 'تنزيل النسخة',
     downloadHint: 'يشمل جميع البيانات في كل تبويب.',
     restore: 'استعادة من ملف',
@@ -189,7 +257,7 @@ const FULL_BACKUP_COPY: Record<LocalLang, {
     dangerDesc: 'حذف جميع بياناتك نهائياً من هذا الجهاز. ستُعاد مزامنة بيانات الخادم.',
     resetBtn: 'إعادة تعيين كل شيء',
     resetConfirmTitle: 'إعادة تعيين كل شيء؟',
-    resetConfirmBody: 'سيحذف هذا جميع المهام والعادات والمراحل والمشاريع من هذا الجهاز. لا يمكن التراجع.',
+    resetConfirmBody: 'سيحذف هذا جميع المهام والعادات والإنجازات والمشاريع من هذا الجهاز. لا يمكن التراجع.',
     resetTypeHint: 'اكتب DELETE أدناه للتأكيد.',
     resetTypePlaceholder: 'DELETE',
     resetConfirmKeyword: 'DELETE',
@@ -207,47 +275,53 @@ const SOUND_TRANSLATIONS: Record<LocalLang, Record<string, { name: string; descr
     'Urgent Alert':  { name: 'Urgent Alert',  description: 'Double high-pitched alert',        tag: 'Loud' },
   },
   fr: {
-    'Silent':        { name: 'Silencieux',       description: 'Banni\u00e8re visuelle uniquement, aucun son', tag: 'Off' },
-    'Classic Beep':  { name: 'Bip classique',    description: 'Tonalit\u00e9 courte unique',                   tag: 'D\u00e9faut' },
-    'Soft Chime':    { name: 'Carillon doux',    description: 'Carillon agr\u00e9able \u00e0 deux notes',           tag: 'Doux' },
-    'Success':       { name: 'Succ\u00e8s',           description: 'Arp\u00e8ge montant \u00e0 trois notes',             tag: 'Entra\u00eenant' },
-    'Urgent Alert':  { name: 'Alerte urgente',   description: 'Double alerte aigu\u00eb',                      tag: 'Fort' },
+    'Silent':        { name: 'Silencieux',      description: 'Bannière visuelle uniquement, aucun son', tag: 'Off' },
+    'Classic Beep':  { name: 'Bip classique',   description: 'Tonalité courte unique',                  tag: 'Défaut' },
+    'Soft Chime':    { name: 'Carillon doux',   description: 'Carillon agréable à deux notes',          tag: 'Doux' },
+    'Success':       { name: 'Succès',          description: 'Arpège montant à trois notes',            tag: 'Entraînant' },
+    'Urgent Alert':  { name: 'Alerte urgente',  description: 'Double alerte aiguë',                     tag: 'Fort' },
   },
   ar: {
-    'Silent':        { name: '\u0635\u0627\u0645\u062a',           description: '\u0634\u0631\u064a\u0637 \u0645\u0631\u0626\u064a \u0641\u0642\u0637',         tag: '\u0625\u064a\u0642\u0627\u0641' },
-    'Classic Beep':  { name: '\u0635\u0641\u064a\u0631 \u0643\u0644\u0627\u0633\u064a\u0643\u064a',   description: '\u0646\u063a\u0645\u0629 \u0642\u0635\u064a\u0631\u0629',                tag: '\u0627\u0641\u062a\u0631\u0627\u0636\u064a' },
-    'Soft Chime':    { name: '\u0631\u0646\u064a\u0646 \u0646\u0627\u0639\u0645',      description: '\u0631\u0646\u064a\u0646 \u0644\u0637\u064a\u0641',             tag: '\u0647\u0627\u062f\u0626' },
-    'Success':       { name: '\u0646\u062c\u0627\u062d',           description: '\u0646\u063a\u0645\u0627\u062a \u0635\u0627\u0639\u062f\u0629',             tag: '\u0645\u062a\u0641\u0627\u0626\u0644' },
-    'Urgent Alert':  { name: '\u062a\u0646\u0628\u064a\u0647 \u0639\u0627\u062c\u0644',     description: '\u062a\u0646\u0628\u064a\u0647 \u0645\u0632\u062f\u0648\u062c',         tag: '\u0639\u0627\u0644\u064d' },
+    'Silent':        { name: 'صامت',              description: 'شريط مرئي فقط',              tag: 'إيقاف' },
+    'Classic Beep':  { name: 'صفير كلاسيكي',      description: 'نغمة قصيرة',                 tag: 'افتراضي' },
+    'Soft Chime':    { name: 'رنين ناعم',         description: 'رنين لطيف بنغمتين',          tag: 'هادئ' },
+    'Success':       { name: 'نجاح',              description: 'نغمات صاعدة',                tag: 'متفائل' },
+    'Urgent Alert':  { name: 'تنبيه عاجل',        description: 'تنبيه مزدوج حاد',            tag: 'عالٍ' },
   },
 };
 
 const PERM_LABELS: Record<LocalLang, Record<string, string>> = {
   en: { granted: 'Granted', denied: 'Denied', prompt: 'Not yet asked', default: 'Default' },
-  fr: { granted: 'Accord\u00e9e', denied: 'Refus\u00e9e', prompt: 'Pas encore demand\u00e9e', default: 'Par d\u00e9faut' },
-  ar: { granted: '\u0645\u0645\u0646\u0648\u062d', denied: '\u0645\u0631\u0641\u0648\u0636', prompt: '\u0644\u0645 \u064a\u064f\u0637\u0644\u0628 \u0628\u0639\u062f', default: '\u0627\u0641\u062a\u0631\u0627\u0636\u064a' },
+  fr: { granted: 'Accordée', denied: 'Refusée', prompt: 'Pas encore demandée', default: 'Par défaut' },
+  ar: { granted: 'ممنوح', denied: 'مرفوض', prompt: 'لم يُطلب بعد', default: 'افتراضي' },
 };
 
 const TIME_COPY: Record<LocalLang, { am: string; pm: string; h24: string; h12: string; switchTo24: string; switchTo12: string }> = {
   en: { am: 'AM', pm: 'PM', h24: '24h', h12: 'AM/PM', switchTo24: 'Switch to 24-hour', switchTo12: 'Switch to AM/PM' },
   fr: { am: 'AM', pm: 'PM', h24: '24h', h12: 'AM/PM', switchTo24: 'Passer au format 24h', switchTo12: 'Passer au format AM/PM' },
-  ar: { am: '\u0635', pm: '\u0645', h24: '\u0662\u0664\u0633', h12: '\u0635/\u0645', switchTo24: '\u0662\u0664 \u0633\u0627\u0639\u0629', switchTo12: '\u0635/\u0645' },
+  ar: { am: 'ص', pm: 'م', h24: '٢٤س', h12: 'ص/م', switchTo24: '٢٤ ساعة', switchTo12: 'ص/م' },
 };
 
-function formatRelative(iso: string | null | undefined): string {
-  if (!iso) return 'Never';
+/* ── Language-aware relative time ─────────────────────────── */
+function formatRelative(iso: string | null | undefined, copy: typeof SYNC_COPY.en): string {
+  if (!iso) return copy.never;
   const then = new Date(iso).getTime();
-  if (isNaN(then)) return 'Never';
+  if (isNaN(then)) return copy.never;
   const diff = Date.now() - then;
-  if (diff < 0) return 'Just now';
+  if (diff < 0) return copy.justNow;
   const s = Math.floor(diff / 1000);
-  if (s < 45) return 'Just now';
+  if (s < 45) return copy.justNow;
   const m = Math.floor(s / 60);
-  if (m < 60) return `${m} min ago`;
+  if (m < 60) return copy.minAgo(m);
   const h = Math.floor(m / 60);
-  if (h < 24) return `${h} hr${h === 1 ? '' : 's'} ago`;
+  if (h < 24) return h === 1 ? copy.hrAgo(h) : copy.hrsAgo(h);
   const d = Math.floor(h / 24);
-  return `${d} day${d === 1 ? '' : 's'} ago`;
+  return d === 1 ? copy.dayAgo(d) : copy.daysAgo(d);
+}
+
+/* ── Language-aware count ─────────────────────────────────── */
+function countLabel(n: number, singular: string, plural: string): string {
+  return `${n} ${n === 1 ? singular : plural}`;
 }
 
 function translateSoundOption(
@@ -300,6 +374,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const { signOut } = useClerk();
   const isDark = theme === 'dark';
   const lang = (language as LocalLang) || 'en';
+  const isRtl = lang === 'ar';
   const timeCopy = TIME_COPY[lang] ?? TIME_COPY.en;
   const syncCopy = SYNC_COPY[lang] ?? SYNC_COPY.en;
   const fbCopy = FULL_BACKUP_COPY[lang] ?? FULL_BACKUP_COPY.en;
@@ -317,7 +392,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [icsMessage, setIcsMessage] = useState<string | null>(null);
   const [hourFormat, setHourFormat] = useState<HourFormat>(() => readHourFormat());
 
-  // Full backup state
   const [pendingRestore, setPendingRestore] = useState<FullBackup | null>(null);
   const [fullRestoreMsg, setFullRestoreMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
@@ -371,7 +445,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const handleExportCSV = () => { triggerHaptic('success'); exportTasksToCSV(tasks); playAudioChime('beep'); };
   const handleExportICS = () => { triggerHaptic('success'); const content = generateICS(tasks); downloadICS(content, 'task-priority.ics'); playAudioChime('beep'); };
 
-  // ─── Full backup handlers ───
   const handleDownloadFullBackup = () => {
     if (!fullBackupData) return;
     triggerHaptic('success');
@@ -516,9 +589,28 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const canReset = !!onResetEverything;
   const resetReady = resetTyped.trim().toUpperCase() === fbCopy.resetConfirmKeyword;
 
+  const syncStatusText = isSyncing
+    ? syncCopy.stateSyncing
+    : syncError
+    ? syncCopy.stateIssue
+    : syncCopy.stateOk;
+
+  const lastSyncedText = syncError
+    ? syncError
+    : `${syncCopy.lastSyncedPrefix} ${formatRelative(lastSyncedAt, syncCopy)}`;
+
   return (
-    <div id="settings-modal-backdrop" className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-150" onClick={onClose}>
-      <div id="settings-modal-dialog" className="w-full max-w-md rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-150" onClick={(e) => e.stopPropagation()}>
+    <div
+      id="settings-modal-backdrop"
+      dir={isRtl ? 'rtl' : 'ltr'}
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-150"
+      onClick={onClose}
+    >
+      <div
+        id="settings-modal-dialog"
+        className="w-full max-w-md rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-150"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-xl bg-slate-100 dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">
@@ -540,8 +632,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               const isActive = activeTab === tab.id;
               const Icon = tab.icon;
               return (
-                <button key={tab.id} onClick={() => { triggerHaptic('light'); setActiveTab(tab.id); }}
-                  className={`flex items-center justify-center gap-0.5 py-1.5 px-0.5 rounded-lg text-xs transition-all cursor-pointer select-none ${isActive ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-white font-bold shadow-xs' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 font-medium'}`}>
+                <button
+                  key={tab.id}
+                  onClick={() => { triggerHaptic('light'); setActiveTab(tab.id); }}
+                  className={`flex items-center justify-center gap-0.5 py-1.5 px-0.5 rounded-lg text-xs transition-all cursor-pointer select-none ${
+                    isActive
+                      ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-white font-bold shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 font-medium'
+                  }`}
+                >
                   <Icon className={`w-3.5 h-3.5 shrink-0 ${isActive ? 'text-indigo-600 dark:text-indigo-400' : ''}`} />
                   <span className="truncate text-[10px] sm:text-[11px]">{tab.label}</span>
                 </button>
@@ -604,7 +703,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           {activeTab === 'backup' && (
             <div className="space-y-3.5 animate-in fade-in">
-              {/* ─── FULL ACCOUNT BACKUP (new) ─── */}
               {hasFullBackup && (
                 <div className="p-3.5 rounded-2xl border-2 border-indigo-300 dark:border-indigo-800 bg-gradient-to-br from-indigo-50/80 to-white dark:from-indigo-950/40 dark:to-slate-900 space-y-3">
                   <div className="flex items-start gap-2.5">
@@ -738,7 +836,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 {importError && (<div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 text-xs flex items-center gap-2"><AlertCircle className="w-4 h-4 shrink-0" /><span>{importError}</span></div>)}
               </div>
 
-              {/* ─── DANGER ZONE (new) ─── */}
               {canReset && (
                 <div className="pt-3 mt-1 border-t-2 border-dashed border-rose-200 dark:border-rose-900/60 space-y-2.5">
                   <div className="flex items-start gap-2.5">
@@ -777,10 +874,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <div className="flex items-center justify-between gap-3">
                   <div className="min-w-0 text-start">
                     <div className="text-xs font-bold text-slate-900 dark:text-white">
-                      {isSyncing ? 'Syncing…' : syncError ? 'Sync issue' : 'Up to date'}
+                      {syncStatusText}
                     </div>
                     <div className={`text-[11px] mt-0.5 truncate ${syncError ? 'text-rose-600 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'}`}>
-                      {syncError ? syncError : `Last synced: ${formatRelative(lastSyncedAt)}`}
+                      {lastSyncedText}
                     </div>
                   </div>
                   <button
@@ -789,16 +886,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl text-[11px] font-bold shadow-xs transition cursor-pointer ${isSyncing ? 'bg-indigo-300 dark:bg-indigo-900 text-white cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700 text-white'}`}
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-                    <span>{isSyncing ? 'Syncing…' : 'Sync now'}</span>
+                    <span>{isSyncing ? syncCopy.stateSyncing : syncCopy.syncNow}</span>
                   </button>
                 </div>
 
                 <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center gap-3 text-[10px] text-slate-500 dark:text-slate-400">
-                  <span className="font-semibold">{counts.tasks} task{counts.tasks === 1 ? '' : 's'}</span>
+                  <span className="font-semibold">{countLabel(counts.tasks, syncCopy.taskOne, syncCopy.taskMany)}</span>
                   <span className="text-slate-300 dark:text-slate-700">·</span>
-                  <span className="font-semibold">{counts.habits} habit{counts.habits === 1 ? '' : 's'}</span>
+                  <span className="font-semibold">{countLabel(counts.habits, syncCopy.habitOne, syncCopy.habitMany)}</span>
                   <span className="text-slate-300 dark:text-slate-700">·</span>
-                  <span className="font-semibold">{counts.milestones} milestone{counts.milestones === 1 ? '' : 's'}</span>
+                  <span className="font-semibold">{countLabel(counts.milestones, syncCopy.milestoneOne, syncCopy.milestoneMany)}</span>
                 </div>
               </div>
 
@@ -1018,9 +1115,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
       </div>
 
-      {/* ═══════════════════════════════════════════════════════
-          RESTORE CONFIRM MODAL
-      ═══════════════════════════════════════════════════════ */}
       {pendingRestore && (
         <div
           className="fixed inset-0 z-[60] bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-5"
@@ -1057,9 +1151,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
       )}
 
-      {/* ═══════════════════════════════════════════════════════
-          RESET CONFIRM MODAL (type DELETE)
-      ═══════════════════════════════════════════════════════ */}
       {showResetConfirm && (
         <div
           className="fixed inset-0 z-[60] bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-5"
@@ -1113,7 +1204,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     : 'bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed'
                 }`}
               >
-                {fbResetLabel(fbCopy)}
+                {fbCopy.resetConfirmBtn}
               </button>
             </div>
           </div>
@@ -1122,8 +1213,3 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     </div>
   );
 };
-
-// helper to avoid inline ternary in JSX above
-function fbResetLabel(copy: { resetConfirmBtn: string }): string {
-  return copy.resetConfirmBtn;
-}

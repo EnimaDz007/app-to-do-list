@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Plus, Mic } from 'lucide-react';
 import { useLanguage } from '../context/LanguageContext';
+import { triggerHaptic } from '../utils/haptics';
 
 interface FloatingActionButtonProps {
   onNewTask: () => void;
@@ -20,6 +21,26 @@ export const FloatingActionButton: React.FC<FloatingActionButtonProps> = ({
     setTimeout(action, 150);
   };
 
+  const handleToggle = () => {
+    triggerHaptic('light');
+    setIsOpen((v) => !v);
+  };
+
+  const handleBackdrop = () => {
+    triggerHaptic('light');
+    setIsOpen(false);
+  };
+
+  const handlePTT = () => {
+    triggerHaptic('medium');
+    closeAndRun(onPushToTalk);
+  };
+
+  const handleNewTask = () => {
+    triggerHaptic('medium');
+    closeAndRun(onNewTask);
+  };
+
   return (
     <>
       {/* Dark backdrop when open */}
@@ -30,7 +51,7 @@ export const FloatingActionButton: React.FC<FloatingActionButtonProps> = ({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
-            onClick={() => setIsOpen(false)}
+            onClick={handleBackdrop}
             className="fixed inset-0 z-40 bg-slate-900/40 backdrop-blur-sm"
           />
         )}
@@ -44,12 +65,13 @@ export const FloatingActionButton: React.FC<FloatingActionButtonProps> = ({
           {isOpen && (
             <motion.button
               key="ptt"
+              type="button"
               initial={{ opacity: 0, y: 20, scale: 0.7 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 20, scale: 0.7 }}
               transition={{ type: 'spring', stiffness: 400, damping: 25 }}
-              onClick={() => closeAndRun(onPushToTalk)}
-              className="flex items-center gap-2.5 rounded-full bg-gradient-to-r from-rose-500 to-red-600 px-5 py-3 text-sm font-bold text-white shadow-[0_8px_24px_rgba(244,63,94,0.45)] active:scale-95"
+              onClick={handlePTT}
+              className="flex items-center gap-2.5 rounded-full bg-gradient-to-r from-rose-500 to-red-600 px-5 py-3 text-sm font-bold text-white shadow-[0_8px_24px_rgba(244,63,94,0.45)] active:scale-95 cursor-pointer"
             >
               <Mic size={18} strokeWidth={2.5} />
               <span className="whitespace-nowrap">{t('ptt_btn_title')}</span>
@@ -62,12 +84,13 @@ export const FloatingActionButton: React.FC<FloatingActionButtonProps> = ({
           {isOpen && (
             <motion.button
               key="new-task"
+              type="button"
               initial={{ opacity: 0, y: 20, scale: 0.7 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 20, scale: 0.7 }}
               transition={{ type: 'spring', stiffness: 400, damping: 25, delay: 0.05 }}
-              onClick={() => closeAndRun(onNewTask)}
-              className="flex items-center gap-2.5 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 px-5 py-3 text-sm font-bold text-white shadow-[0_8px_24px_rgba(99,102,241,0.45)] active:scale-95"
+              onClick={handleNewTask}
+              className="flex items-center gap-2.5 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 px-5 py-3 text-sm font-bold text-white shadow-[0_8px_24px_rgba(99,102,241,0.45)] active:scale-95 cursor-pointer"
             >
               <Plus size={18} strokeWidth={3} />
               <span className="whitespace-nowrap">{t('btn_new_task')}</span>
@@ -77,11 +100,14 @@ export const FloatingActionButton: React.FC<FloatingActionButtonProps> = ({
 
         {/* Main FAB button (+ that rotates to ×) */}
         <motion.button
-          onClick={() => setIsOpen(!isOpen)}
+          type="button"
+          onClick={handleToggle}
           animate={{ rotate: isOpen ? 45 : 0 }}
           transition={{ type: 'spring', stiffness: 400, damping: 25 }}
           whileTap={{ scale: 0.9 }}
-          className="flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 via-purple-500 to-purple-600 text-white shadow-[0_8px_24px_rgba(99,102,241,0.5)] ring-4 ring-white/20"
+          className="flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 via-purple-500 to-purple-600 text-white shadow-[0_8px_24px_rgba(99,102,241,0.5)] ring-4 ring-white/20 cursor-pointer"
+          aria-label={isOpen ? 'Close menu' : 'Open menu'}
+          aria-expanded={isOpen}
         >
           <Plus size={26} strokeWidth={2.5} />
         </motion.button>
