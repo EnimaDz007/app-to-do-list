@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────
 //  FILE: server.mjs
 //  MerakiList backend — Clerk JWT + CORS + rate limit + logging
-//  Fix: server-side delta filter on sync pull (since → Firestore where)
+//  Fix: skip documents with huge IDs so Firestore batch commits don't crash
 // ─────────────────────────────────────────────────────────────
 
 import express from 'express';
@@ -38,23 +38,13 @@ const syncHabitCheckinsCollection = db.collection('syncHabitCheckins');
 const syncMilestonesCollection = db.collection('syncMilestones');
 const syncProjectsCollection = db.collection('syncProjects');
 
-// ─────────────────────────────────────────────────────────────
-//  Delta-sync helper
-//  Every user-owned doc is stamped with serverUpdatedAt (ISO 8601).
-//  ISO 8601 sorts lexicographically = chronologically, so a simple
-//  `>` comparison in Firestore is safe and index-friendly.
-// ─────────────────────────────────────────────────────────────
 const EPOCH_ISO = '1970-01-01T00:00:00.000Z';
 
-/** Build a Firestore query scoped to a user + optionally filtered by updatedAt. */
 function userDeltaQuery(collection, userId, sinceIso) {
   const base = collection.where('externalId', '==', userId);
-  // Always apply the range filter — EPOCH_ISO makes the first sync return everything.
-  // serverUpdatedAt is stamped on every write, so no doc is ever missed.
   return base.where('serverUpdatedAt', '>', sinceIso || EPOCH_ISO);
 }
 
-/** Normalize a `since` query param into a valid ISO string. */
 function normalizeSince(raw) {
   if (!raw) return EPOCH_ISO;
   const d = new Date(String(raw));
@@ -543,6 +533,10 @@ app.post('/api/sync/:userId', authGuard, async (req, res) => {
     const CAP = 400;
     for (const task of tasks.slice(0, CAP)) {
       if (!task || !task.id) continue;
+      if (String(task.id).length > 1000) {
+        console.warn(`⚠️ Skipping document with huge ID: ${String(task.id).length} chars`);
+        continue;
+      }
       const existing = await syncTasksCollection.doc(String(task.id)).get();
       if (existing.exists && existing.data().externalId !== userId) continue;
       await syncTasksCollection.doc(String(task.id)).set(
@@ -621,6 +615,10 @@ app.post('/api/sync/:userId/full', authGuard, async (req, res) => {
     for (const { items, collection } of sources) {
       for (const item of items) {
         if (!item || !item.id) continue;
+        if (String(item.id).length > 1000) {
+          console.warn(`⚠️ Skipping document with huge ID: ${String(item.id).length} chars`);
+          continue;
+        }
         candidates.push({ item, collection, ref: collection.doc(String(item.id)) });
       }
     }
