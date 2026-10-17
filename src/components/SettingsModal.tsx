@@ -16,6 +16,7 @@ import { triggerHaptic } from '../utils/haptics';
 import { useLanguage } from '../context/LanguageContext';
 import { useTheme } from '../context/ThemeContext';
 import { TranslationKey } from '../i18n/translations';
+import { AppLogo } from './AppLogo';
 import {
   exportTasksToJSON, exportTasksToCSV, importTasksFromJSON, importTasksFromCSV,
 } from '../utils/dataTransfer';
@@ -1091,8 +1092,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           {activeTab === 'about' && (
             <div className="space-y-3.5 animate-in fade-in">
-              <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/40 text-center space-y-2">
-                <div className="w-12 h-12 mx-auto rounded-2xl bg-gradient-to-br from-slate-800 via-slate-900 to-slate-950 text-amber-400 font-extrabold text-xl flex items-center justify-center ring-2 ring-amber-400/30 shadow-md">TP</div>
+              <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/40 text-center space-y-2 flex flex-col items-center justify-center">
+                <AppLogo size={56} />
                 <h4 className="text-sm font-bold text-slate-900 dark:text-white">{t('app_title')}</h4>
                 <p className="text-xs text-slate-500 dark:text-slate-400 max-w-xs mx-auto">{t('about_tagline')}</p>
                 <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[11px] font-semibold">
