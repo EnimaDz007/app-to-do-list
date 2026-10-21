@@ -145,7 +145,7 @@ export const PriorityListView: React.FC<PriorityListViewProps> = ({
   const [customViews, setCustomViews] = useState<SavedView[]>(() => {
     try {
       const saved = localStorage.getItem(CUSTOM_VIEWS_STORAGE_KEY);
-      if (saved) return JSON.parse(saved);
+      if (saved) { const p = JSON.parse(saved); return Array.isArray(p) ? p : []; }
     } catch {}
     return [];
   });

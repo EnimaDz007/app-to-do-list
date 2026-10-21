@@ -242,7 +242,7 @@ export default function App() {
   const [tasks, setTasks] = useState<Task[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) return JSON.parse(saved);
+      if (saved) { const p = JSON.parse(saved); return Array.isArray(p) ? p : []; }
     } catch {}
     return [];
   });
@@ -250,7 +250,7 @@ export default function App() {
   const [habits, setHabits] = useState<Habit[]>(() => {
     try {
       const saved = localStorage.getItem(HABITS_STORAGE_KEY);
-      if (saved) return JSON.parse(saved);
+      if (saved) { const p = JSON.parse(saved); return Array.isArray(p) ? p : []; }
     } catch {}
     return [];
   });
@@ -258,7 +258,7 @@ export default function App() {
   const [checkIns, setCheckIns] = useState<HabitCheckIn[]>(() => {
     try {
       const saved = localStorage.getItem(CHECKINS_STORAGE_KEY);
-      if (saved) return JSON.parse(saved);
+      if (saved) { const p = JSON.parse(saved); return Array.isArray(p) ? p : []; }
     } catch {}
     return [];
   });
@@ -266,7 +266,7 @@ export default function App() {
   const [milestones, setMilestones] = useState<Milestone[]>(() => {
     try {
       const saved = localStorage.getItem(MILESTONES_STORAGE_KEY);
-      if (saved) return JSON.parse(saved);
+      if (saved) { const p = JSON.parse(saved); return Array.isArray(p) ? p : []; }
     } catch {}
     return [];
   });
@@ -274,7 +274,7 @@ export default function App() {
   const [projects, setProjects] = useState<Project[]>(() => {
     try {
       const saved = localStorage.getItem(PROJECTS_STORAGE_KEY);
-      if (saved) return JSON.parse(saved);
+      if (saved) { const p = JSON.parse(saved); return Array.isArray(p) ? p : []; }
     } catch {}
     return [];
   });
