@@ -202,7 +202,6 @@ export default function App() {
   const { getToken } = useAuth();
   const userId = user?.id ?? '';
 
-  // 🔒 Authenticated fetch — attaches Clerk session token to every request
   const authedFetch = useMemo(() => makeAuthedFetch(getToken), [getToken]);
 
   const hasSyncedHabitsRef = useRef(false);
@@ -352,7 +351,6 @@ export default function App() {
     }, 1400);
   };
 
-  // 🔒 runSync now passes getToken down to sync.ts
   const runSync = useCallback(async (opts?: { silent?: boolean }) => {
     if (!userId) return;
     if (syncingRef.current) return;
@@ -498,8 +496,6 @@ export default function App() {
     void runSync({ silent: true });
   }, [userId, runSync]);
 
-  // 🔒 Sync scheduler — visible-tab only, 5-minute interval (was 60s).
-  // Prevents Firestore free-tier quota exhaustion from idle tabs.
   useSyncScheduler(
     !!userId,
     () => { void runSync({ silent: true }); },
@@ -665,7 +661,6 @@ export default function App() {
             timezoneOffsetMinutes: tzOffset,
           }),
         });
-        console.log('✅ Habit reminder synced:', habit.name);
       } else {
         await authedFetch(`${SERVER_URL}/api/cancel-habit-reminder`, {
           method: 'POST',
@@ -1888,7 +1883,20 @@ export default function App() {
 
           <main className="flex-1 flex flex-col px-4 py-3.5 pb-24 overflow-y-auto">
             {activeTab === 'matrix' && (
-              uiDesign === 'binder' ? (
+              activeTasks.length === 0 ? (
+                <div className="flex flex-col items-center justify-center p-8 text-center mt-10 animate-in fade-in zoom-in-95">
+                  <div className="w-16 h-16 rounded-2xl bg-indigo-100 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center mb-4 shadow-sm">
+                     <span className="text-2xl">🎯</span>
+                  </div>
+                  <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-1">No tasks yet</h3>
+                  <p className="text-sm text-slate-500 dark:text-slate-400 mb-6 max-w-xs">
+                    Add a task to see your {uiDesign} layout in action.
+                  </p>
+                  <button onClick={() => handleOpenNewTask('do_first')} className="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm shadow-md shadow-indigo-600/20 transition cursor-pointer">
+                    Create Task
+                  </button>
+                </div>
+              ) : uiDesign === 'binder' ? (
                 <BinderView
                   tasks={activeTasks}
                   onToggleStatus={handleToggleStatus}
