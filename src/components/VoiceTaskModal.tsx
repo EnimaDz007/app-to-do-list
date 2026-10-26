@@ -47,7 +47,6 @@ function isHallucination(text: string): boolean {
   return HALLUCINATION_EXACT.includes(cleaned);
 }
 
-/** Collapse immediate word-level repetition: "milk milk" → "milk". */
 function dedupeWords(text: string): string {
   const words = text.trim().split(/\s+/);
   if (words.length < 2) return text.trim();
@@ -154,14 +153,12 @@ function getContextMeta(id: string, copy: typeof COPY.en) {
   return { emoji: found.emoji, label: copy.contexts[id] ?? found.label };
 }
 
-/** Concatenate two strings, removing overlap between the tail of `a` and the head of `b`. */
 function mergeOverlap(a: string, b: string): string {
   const A = a.trim();
   const B = b.trim();
   if (!B) return A;
   if (!A) return B;
 
-  // Full containment
   const aLow = A.toLowerCase();
   const bLow = B.toLowerCase();
   if (aLow.includes(bLow)) return A;
@@ -195,13 +192,10 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
+  // FIX: Debounced smart-parse state (no longer computed inline on every render)
+  const [preview, setPreview] = useState<ReturnType<typeof parseSpokenTask> | null>(null);
 
   const fullTextRef = useRef('');
-  /**
-   * Text committed BEFORE the current recognition session started.
-   * For the native plugin (which returns accumulated partials per session),
-   * we replace the current session's contribution on top of this base.
-   */
   const sessionBaseRef = useRef('');
   const wantListeningRef = useRef(false);
   const webRecogRef = useRef<any>(null);
@@ -214,11 +208,19 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
   const speakingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const startingRef = useRef(false);
+  const isStoppingRef = useRef(false);
+  // FIX: Track the auto-start timeout from quadrant selection so it can't fire after modal close
+  const selectStartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // FIX: Track the debounced preview timer
+  const previewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const theme = QUADRANTS.find((q) => q.id === selectedQuadrant)!;
   const isNative = Capacitor.isNativePlatform();
 
-  const syncTranscript = () => setTranscript(fullTextRef.current);
+  // FIX: No-op guard — prevents re-render when partial merged text is identical
+  const syncTranscript = () => {
+    setTranscript(prev => (prev === fullTextRef.current ? prev : fullTextRef.current));
+  };
 
   const markSpeaking = () => {
     setIsSpeaking(true);
@@ -230,12 +232,11 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
 
   const attachNativeListeners = async () => {
     nativePartialRef.current = await SpeechRecognition.addListener('partialResults', (data: any) => {
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current || isStoppingRef.current) return;
       if (!data.matches || data.matches.length === 0) return;
-      // `matches[0]` is the ACCUMULATED transcript for the CURRENT session.
       const sessionText = dedupeWords((data.matches[0] || '').trim());
       if (!sessionText || isHallucination(sessionText)) return;
-      // Rebuild: base (previous sessions) + this session's accumulated text.
+      // RESUME BEHAVIOR: merge on top of sessionBaseRef (last committed full text)
       fullTextRef.current = mergeOverlap(sessionBaseRef.current, sessionText);
       lastActivityRef.current = Date.now();
       syncTranscript();
@@ -254,9 +255,11 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
         setIsListening(false);
         setIsSpeaking(false);
         startingRef.current = false;
-        // Commit what this session produced so the next session builds on it.
+        // RESUME BEHAVIOR: commit the current text as the new session base
         sessionBaseRef.current = fullTextRef.current;
-        if (wantListeningRef.current && isMountedRef.current) scheduleRestart(400);
+        if (wantListeningRef.current && isMountedRef.current && !isStoppingRef.current) {
+          scheduleRestart(400);
+        }
       }
     });
   };
@@ -275,17 +278,15 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
   const scheduleRestart = (delayMs: number) => {
     if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
     restartTimerRef.current = setTimeout(() => {
-      if (!isMountedRef.current) return;
-      if (!wantListeningRef.current) return;
+      if (!isMountedRef.current || !wantListeningRef.current || isStoppingRef.current) return;
       void startNativeOnce();
     }, delayMs);
   };
 
   const startNativeOnce = async () => {
-    if (!isMountedRef.current || startingRef.current) return;
-    if (!wantListeningRef.current) return;
+    if (!isMountedRef.current || startingRef.current || !wantListeningRef.current || isStoppingRef.current) return;
     startingRef.current = true;
-    // Snapshot current text as the session base BEFORE this session starts.
+    // RESUME BEHAVIOR: base = whatever we've captured so far
     sessionBaseRef.current = fullTextRef.current;
     try {
       await SpeechRecognition.start({
@@ -301,12 +302,13 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
       startingRef.current = false;
     } catch {
       startingRef.current = false;
-      if (!wantListeningRef.current) return;
+      if (!wantListeningRef.current || isStoppingRef.current) return;
       scheduleRestart(800);
     }
   };
 
   const stopNative = async () => {
+    isStoppingRef.current = true;
     wantListeningRef.current = false;
     if (restartTimerRef.current) {
       clearTimeout(restartTimerRef.current);
@@ -315,9 +317,11 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
     try { await SpeechRecognition.stop(); } catch {}
     setIsListening(false);
     setIsSpeaking(false);
+    setTimeout(() => { isStoppingRef.current = false; }, 500);
   };
 
   const stopWeb = () => {
+    isStoppingRef.current = true;
     wantListeningRef.current = false;
     const recog = webRecogRef.current;
     webRecogRef.current = null;
@@ -326,6 +330,7 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
     }
     setIsListening(false);
     setIsSpeaking(false);
+    setTimeout(() => { isStoppingRef.current = false; }, 500);
   };
 
   const startWebOnce = () => {
@@ -347,10 +352,7 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
     recog.maxAlternatives = 1;
 
     recog.onresult = (event: any) => {
-      if (!isMountedRef.current) return;
-      // Rebuild the session transcript from event.results (the source of truth).
-      // Interim results get REPLACED as the recognizer learns more, so we
-      // never want to append them across events.
+      if (!isMountedRef.current || isStoppingRef.current) return;
       let sessionText = '';
       for (let i = 0; i < event.results.length; i++) {
         const res = event.results[i];
@@ -359,6 +361,7 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
         sessionText = mergeOverlap(sessionText, txt);
       }
       sessionText = dedupeWords(sessionText);
+      // RESUME BEHAVIOR: merge on top of sessionBaseRef
       fullTextRef.current = mergeOverlap(sessionBaseRef.current, sessionText);
       lastActivityRef.current = Date.now();
       syncTranscript();
@@ -370,14 +373,14 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
       }
     };
     recog.onend = () => {
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current || isStoppingRef.current) return;
       setIsListening(false);
       setIsSpeaking(false);
-      // Commit this session's text and start a new base for the next session.
+      // RESUME BEHAVIOR: commit current text so restart continues from here
       sessionBaseRef.current = fullTextRef.current;
       if (wantListeningRef.current) {
         setTimeout(() => {
-          if (wantListeningRef.current && isMountedRef.current) {
+          if (wantListeningRef.current && isMountedRef.current && !isStoppingRef.current) {
             try { recog.start(); setIsListening(true); } catch {}
           }
         }, 250);
@@ -391,6 +394,7 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
 
   const startListeningSession = async () => {
     setVoiceError(null);
+    isStoppingRef.current = false;
 
     if (isNative) {
       try {
@@ -436,9 +440,7 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
   const startWatchdog = () => {
     if (watchdogRef.current) clearInterval(watchdogRef.current);
     watchdogRef.current = setInterval(() => {
-      if (!isMountedRef.current) return;
-      if (!wantListeningRef.current) return;
-      if (startingRef.current) return;
+      if (!isMountedRef.current || !wantListeningRef.current || startingRef.current || isStoppingRef.current) return;
       const idleMs = Date.now() - lastActivityRef.current;
       if (idleMs > 12000 && !isListening) {
         lastActivityRef.current = Date.now();
@@ -447,17 +449,46 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
     }, 2000);
   };
 
+  // FIX: Unmount cleanup now actually releases the mic engine
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
       wantListeningRef.current = false;
+      isStoppingRef.current = true;
       if (speakingTimerRef.current) clearTimeout(speakingTimerRef.current);
       if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
       if (watchdogRef.current) clearInterval(watchdogRef.current);
+      if (selectStartTimerRef.current) clearTimeout(selectStartTimerRef.current);
+      if (previewTimerRef.current) clearTimeout(previewTimerRef.current);
+      // FIX: Actually kill the web recognizer on unmount
+      if (webRecogRef.current) {
+        const r = webRecogRef.current;
+        webRecogRef.current = null;
+        try { r.onresult = null; r.onerror = null; r.onend = null; r.abort?.(); } catch {}
+      }
       detachNativeListeners();
+      // FIX: Actually stop the native recognizer on unmount
+      if (isNative) {
+        try { SpeechRecognition.stop(); } catch {}
+      }
     };
   }, []);
+
+  // FIX: Debounced smart-parse — no longer runs parseSpokenTask on every render/partial
+  useEffect(() => {
+    if (previewTimerRef.current) clearTimeout(previewTimerRef.current);
+    if (!transcript.trim()) {
+      setPreview(null);
+      return;
+    }
+    previewTimerRef.current = setTimeout(() => {
+      setPreview(parseSpokenTask(transcript));
+    }, 180);
+    return () => {
+      if (previewTimerRef.current) clearTimeout(previewTimerRef.current);
+    };
+  }, [transcript]);
 
   useEffect(() => {
     if (isOpen) {
@@ -472,6 +503,11 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
       setIsSpeaking(false);
       setVoiceError(null);
     } else {
+      // FIX: Cancel auto-start from quadrant selection if modal closes first
+      if (selectStartTimerRef.current) {
+        clearTimeout(selectStartTimerRef.current);
+        selectStartTimerRef.current = null;
+      }
       void stopListeningSession();
     }
     // eslint-disable-next-line
@@ -486,7 +522,12 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
     setIsSpeaking(false);
     setVoiceError(null);
     if (mode === 'voice') {
-      setTimeout(() => { void startListeningSession(); }, 250);
+      if (selectStartTimerRef.current) clearTimeout(selectStartTimerRef.current);
+      // FIX: Tracked timeout so it can be cancelled on modal close
+      selectStartTimerRef.current = setTimeout(() => {
+        selectStartTimerRef.current = null;
+        void startListeningSession();
+      }, 250);
     }
   };
 
@@ -550,13 +591,13 @@ export const VoiceTaskModal: React.FC<VoiceTaskModalProps> = ({
   const handleManualEdit = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const value = e.target.value;
     setTranscript(value);
+    // RESUME BEHAVIOR PRESERVED: manual edits become the new session base
     fullTextRef.current = value;
     sessionBaseRef.current = value;
   };
 
   const getQuadrantName = (id: QuadrantId) => t(`quad_${id}`);
 
-  const preview = transcript.trim() ? parseSpokenTask(transcript) : null;
   const previewContexts = preview?.contexts || [];
 
   const listeningNow = isListening || wantListeningRef.current;

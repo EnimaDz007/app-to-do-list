@@ -42,7 +42,7 @@ export interface UseSpeechRecognitionReturn {
 }
 
 export function useSpeechRecognition(manualMode: boolean = false): UseSpeechRecognitionReturn {
-  console.log(`[MIC] 🚀 useSpeechRecognition VERSION 14.0 (manualMode=${manualMode})`);
+  // FIX: Removed the console.log that was firing on every render
 
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
@@ -197,8 +197,10 @@ export function useSpeechRecognition(manualMode: boolean = false): UseSpeechReco
     }
   }, []);
 
-  // Watchdog
+  // FIX: Watchdog interval now pauses when not actively listening
   useEffect(() => {
+    if (!isListening && !sessionActiveRef.current) return;
+
     const interval = setInterval(() => {
       if (!sessionActiveRef.current) return;
       if (isRestartingRef.current) return;
@@ -208,17 +210,15 @@ export function useSpeechRecognition(manualMode: boolean = false): UseSpeechReco
           commitCurrent();
         }
         if (!manualModeRef.current) {
-          // Auto mode: restart mic
           nativeRestart();
         } else {
-          // Manual mode: mark as not listening so user has to tap again
           sessionActiveRef.current = false;
           setIsListening(false);
         }
       }
     }, 1500);
     return () => clearInterval(interval);
-  }, [nativeRestart, commitCurrent]);
+  }, [isListening, nativeRestart, commitCurrent]);
 
   const startWebRecognition = useCallback(() => {
     const w = window as any;
@@ -301,7 +301,6 @@ export function useSpeechRecognition(manualMode: boolean = false): UseSpeechReco
   }, [startWebRecognition]);
 
   const stopListening = useCallback(() => {
-    // Commit whatever we have before stopping
     commitCurrent();
     sessionActiveRef.current = false;
     shouldRestartRef.current = false;

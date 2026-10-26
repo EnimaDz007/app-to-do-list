@@ -550,3 +550,26 @@ html.perf-mid .backdrop-blur-xl {
   border-color: #A78BFA;
   color: #C4B5FD;
 }
+
+/* 🚀 FORCE GPU ACCELERATION FOR HEAVY ANIMATIONS */
+.orbit-wrapper,
+.orbit-counter,
+.animate-spin,
+[style*="blobFloat1"],
+[style*="blobFloat2"],
+.binder-cover,
+.bt-book,
+.bt-cover {
+  will-change: transform, opacity;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+/* 🚨 PERFORMANCE FIX: Instantly swap colors during theme change */
+.theme-switching *,
+.theme-switching *::before,
+.theme-switching *::after {
+  /* Only disable transitions! Do NOT disable animations, or the orbit rings will snap. */
+  transition: none !important;
+}

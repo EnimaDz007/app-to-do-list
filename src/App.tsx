@@ -1,21 +1,15 @@
 // ─────────────────────────────────────────────────────────────
 //  FILE: src/App.tsx
-//  Full file — with Clerk-authenticated API calls
+//  Full file — with React Performance Fixes (useTransition + Lazy Load)
 // ─────────────────────────────────────────────────────────────
 
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { useUser, useAuth } from '@clerk/clerk-react';
+import { useState, useEffect, useRef, useMemo, useCallback, useTransition, lazy, Suspense } from 'react';
+import { useUser, useAuth } from 'capacitor-clerk';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { PushNotifications } from '@capacitor/push-notifications';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { useDevicePerformance } from './hooks/useDevicePerformance';
 import { Task, TabView, DeviceFrameMode, QuadrantId, Habit, HabitCheckIn, Milestone, DelegateStatus, Subtask, Template, Project } from './types';
-import { INITIAL_TASKS } from './data/initialTasks';
 import { getDefaultTemplates, localizeClonedTasks } from './data/defaultTemplates';
 import { loadTemplates, saveTemplates, makeTemplateFromTask } from './utils/templateHelpers';
 import { Header } from './components/Header';
@@ -50,9 +44,7 @@ import { TaskSummarySheet } from './components/TaskSummarySheet';
 import { VoiceTaskModal } from './components/VoiceTaskModal';
 import { PWAInstallModal } from './components/PWAInstallModal';
 import { OfflineIndicator } from './components/OfflineIndicator';
-import { MobileDeviceFrame } from './components/MobileDeviceFrame';
 import { FocusTimerWidget } from './components/FocusTimerWidget';
-import { SettingsModal } from './components/SettingsModal';
 import { HabitModal } from './components/HabitModal';
 import { HabitView } from './components/HabitView';
 import { CommandPalette, CommandItem } from './components/CommandPalette';
@@ -66,8 +58,6 @@ import { useTheme } from './context/ThemeContext';
 import { useLanguage } from './context/LanguageContext';
 import {
   playAudioChime,
-  getDueTasks,
-  sendBrowserNotification,
   registerNotificationActions,
   snoozeTaskReminder,
   TASK_ACTION_TYPE,
@@ -98,10 +88,12 @@ import {
 } from './utils/sync';
 import { scheduleTaskReminders, cancelTaskReminders, recomputeReminder } from './utils/reminderScheduler';
 import { FullBackup } from './utils/fullBackup';
-import { Mic } from 'lucide-react';
 import { triggerHaptic } from './utils/haptics';
 import { makeAuthedFetch } from './utils/authFetch';
 import { useSyncScheduler } from './hooks/useSyncScheduler';
+
+// 🚨 PERFORMANCE FIX: Lazy load the heavy settings modal so it doesn't block initial load
+const SettingsModal = lazy(() => import('./components/SettingsModal').then(module => ({ default: module.SettingsModal })));
 
 const STORAGE_KEY = 'taskflow_tasks_list';
 const HABITS_STORAGE_KEY = 'taskflow_habits_list';
@@ -198,6 +190,9 @@ export default function App() {
   const { toggleTheme } = useTheme();
   const { language } = useLanguage();
 
+  // 🚨 PERFORMANCE FIX: useTransition for heavy modal opening
+  const [isPending, startTransition] = useTransition();
+
   const { user } = useUser();
   const { getToken } = useAuth();
   const userId = user?.id ?? '';
@@ -242,7 +237,10 @@ export default function App() {
   const [tasks, setTasks] = useState<Task[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return Array.isArray(parsed) ? parsed : [];
+      }
     } catch {}
     return [];
   });
@@ -250,7 +248,10 @@ export default function App() {
   const [habits, setHabits] = useState<Habit[]>(() => {
     try {
       const saved = localStorage.getItem(HABITS_STORAGE_KEY);
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return Array.isArray(parsed) ? parsed : [];
+      }
     } catch {}
     return [];
   });
@@ -258,7 +259,10 @@ export default function App() {
   const [checkIns, setCheckIns] = useState<HabitCheckIn[]>(() => {
     try {
       const saved = localStorage.getItem(CHECKINS_STORAGE_KEY);
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return Array.isArray(parsed) ? parsed : [];
+      }
     } catch {}
     return [];
   });
@@ -266,7 +270,10 @@ export default function App() {
   const [milestones, setMilestones] = useState<Milestone[]>(() => {
     try {
       const saved = localStorage.getItem(MILESTONES_STORAGE_KEY);
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return Array.isArray(parsed) ? parsed : [];
+      }
     } catch {}
     return [];
   });
@@ -274,7 +281,10 @@ export default function App() {
   const [projects, setProjects] = useState<Project[]>(() => {
     try {
       const saved = localStorage.getItem(PROJECTS_STORAGE_KEY);
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return Array.isArray(parsed) ? parsed : [];
+      }
     } catch {}
     return [];
   });
@@ -309,7 +319,11 @@ export default function App() {
   });
 
   const allTemplates = useMemo<Template[]>(
-    () => [...getDefaultTemplates(language as 'en' | 'fr' | 'ar'), ...customTemplates],
+    () => {
+      const defaults = getDefaultTemplates(language as 'en' | 'fr' | 'ar');
+      const customs = Array.isArray(customTemplates) ? customTemplates : [];
+      return [...(Array.isArray(defaults) ? defaults : []), ...customs];
+    },
     [customTemplates, language]
   );
 
@@ -329,14 +343,18 @@ export default function App() {
     // eslint-disable-next-line
   }, [language]);
 
-  const visibleTasks = useMemo(() => tasks.filter((t) => !t.deletedAt), [tasks]);
-  const activeTasks = visibleTasks.filter((t) => !t.archivedAt);
-  const archivedTasks = visibleTasks.filter((t) => t.archivedAt);
+  const visibleTasks = useMemo(() => (Array.isArray(tasks) ? tasks : []).filter((t) => !t.deletedAt), [tasks]);
+  
+  // 🚨 PERFORMANCE FIX: Memoize activeTasks so it doesn't filter on every render
+  const activeTasks = useMemo(
+    () => visibleTasks.filter((t) => !t.archivedAt && t.status !== 'completed'),
+    [visibleTasks]
+  );
 
-  const visibleHabits = useMemo(() => habits.filter((h) => !h.deletedAt), [habits]);
-  const visibleCheckIns = useMemo(() => checkIns.filter((ci) => !ci.deletedAt), [checkIns]);
-  const visibleMilestones = useMemo(() => milestones.filter((m) => !m.deletedAt), [milestones]);
-  const visibleProjects = useMemo(() => projects.filter((p) => !p.deletedAt), [projects]);
+  const visibleHabits = useMemo(() => (Array.isArray(habits) ? habits : []).filter((h) => !h.deletedAt), [habits]);
+  const visibleCheckIns = useMemo(() => (Array.isArray(checkIns) ? checkIns : []).filter((ci) => !ci.deletedAt), [checkIns]);
+  const visibleMilestones = useMemo(() => (Array.isArray(milestones) ? milestones : []).filter((m) => !m.deletedAt), [milestones]);
+  const visibleProjects = useMemo(() => (Array.isArray(projects) ? projects : []).filter((p) => !p.deletedAt), [projects]);
 
   const streakData = useStreak(visibleTasks);
   const karma = useKarma(visibleTasks, visibleHabits, visibleCheckIns, visibleMilestones, streakData.currentStreak);
@@ -373,64 +391,72 @@ export default function App() {
       );
       if (!result) return;
 
-      const serverTs = new Date(result.serverTime).getTime();
-
       setTasks((prev) => {
         const merged = new Map<string, Task>();
-        for (const t of result.tasks) merged.set(t.id, t);
+        const remoteTasks = Array.isArray(result.tasks) ? result.tasks : [];
+        for (const r of remoteTasks) merged.set(r.id, r);
         for (const local of prev) {
           const existing = merged.get(local.id);
           if (!existing) { merged.set(local.id, local); continue; }
-          const localTs = new Date(local.updatedAt || 0).getTime();
-          if (localTs > serverTs) merged.set(local.id, local);
+          const lt = new Date(local.updatedAt || 0).getTime();
+          const rt = new Date(existing.updatedAt || 0).getTime();
+          if (lt > rt) merged.set(local.id, local);
         }
         return Array.from(merged.values());
       });
 
       setHabits((prev) => {
         const merged = new Map<string, Habit>();
-        for (const h of result.habits) merged.set(h.id, h);
+        const remoteHabits = Array.isArray(result.habits) ? result.habits : [];
+        for (const r of remoteHabits) merged.set(r.id, r);
         for (const local of prev) {
           const existing = merged.get(local.id);
           if (!existing) { merged.set(local.id, local); continue; }
-          const localTs = new Date(local.updatedAt || 0).getTime();
-          if (localTs > serverTs) merged.set(local.id, local);
+          const lt = new Date(local.updatedAt || 0).getTime();
+          const rt = new Date(existing.updatedAt || 0).getTime();
+          if (lt > rt) merged.set(local.id, local);
         }
         return Array.from(merged.values());
       });
 
       setCheckIns((prev) => {
         const merged = new Map<string, HabitCheckIn>();
-        for (const ci of result.checkIns) merged.set(ci.id, ci);
+        const remoteCheckIns = Array.isArray(result.checkIns) ? result.checkIns : [];
+        for (const r of remoteCheckIns) merged.set(r.id, r);
         for (const local of prev) {
           const existing = merged.get(local.id);
           if (!existing) { merged.set(local.id, local); continue; }
-          const localTs = new Date(local.updatedAt || 0).getTime();
-          if (localTs > serverTs) merged.set(local.id, local);
+          const lt = new Date(local.updatedAt || 0).getTime();
+          const rt = new Date(existing.updatedAt || 0).getTime();
+          if (lt > rt) merged.set(local.id, local);
         }
         return Array.from(merged.values());
       });
 
       setMilestones((prev) => {
         const merged = new Map<string, Milestone>();
-        for (const m of result.milestones) merged.set(m.id, m);
+        const remoteMilestones = Array.isArray(result.milestones) ? result.milestones : [];
+        for (const r of remoteMilestones) merged.set(r.id, r);
         for (const local of prev) {
           const existing = merged.get(local.id);
           if (!existing) { merged.set(local.id, local); continue; }
-          const localTs = new Date(local.updatedAt || 0).getTime();
-          if (localTs > serverTs) merged.set(local.id, local);
+          const lt = new Date(local.updatedAt || 0).getTime();
+          const rt = new Date(existing.updatedAt || 0).getTime();
+          if (lt > rt) merged.set(local.id, local);
         }
         return Array.from(merged.values());
       });
 
       setProjects((prev) => {
         const merged = new Map<string, Project>();
-        for (const p of result.projects) merged.set(p.id, p);
+        const remoteProjects = Array.isArray(result.projects) ? result.projects : [];
+        for (const r of remoteProjects) merged.set(r.id, r);
         for (const local of prev) {
           const existing = merged.get(local.id);
           if (!existing) { merged.set(local.id, local); continue; }
-          const localTs = new Date(local.updatedAt || 0).getTime();
-          if (localTs > serverTs) merged.set(local.id, local);
+          const lt = new Date(local.updatedAt || 0).getTime();
+          const rt = new Date(existing.updatedAt || 0).getTime();
+          if (lt > rt) merged.set(local.id, local);
         }
         return Array.from(merged.values());
       });
@@ -831,7 +857,12 @@ export default function App() {
   useEffect(() => {
     const handleTasksUpdated = () => {
       const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) { try { setTasks(JSON.parse(saved)); } catch {} }
+      if (saved) { 
+        try { 
+          const parsed = JSON.parse(saved);
+          setTasks(Array.isArray(parsed) ? parsed : []); 
+        } catch {} 
+      }
     };
     window.addEventListener('tasks-updated', handleTasksUpdated);
     return () => window.removeEventListener('tasks-updated', handleTasksUpdated);
@@ -1075,7 +1106,8 @@ export default function App() {
     // eslint-disable-next-line
   }, []);
 
-  const handleToggleStatus = async (taskId: string) => {
+  // 🚨 PERFORMANCE FIX: Wrap in useCallback
+  const handleToggleStatus = useCallback(async (taskId: string) => {
     cancelTaskReminder(taskId);
     void cancelTaskReminders(taskId);
     const task = tasks.find((t) => t.id === taskId);
@@ -1139,7 +1171,7 @@ export default function App() {
         }
       }
     }
-  };
+  }, [tasks, userId, scheduleSync]);
 
   useEffect(() => {
     tasksRef.current = tasks;
@@ -1263,22 +1295,24 @@ export default function App() {
     scheduleSync();
   };
 
-  const handleDeleteTask = (taskId: string) => {
+  // 🚨 PERFORMANCE FIX: Wrap in useCallback
+  const handleDeleteTask = useCallback((taskId: string) => {
     cancelTaskReminder(taskId);
     void cancelTaskReminders(taskId);
     const now = new Date().toISOString();
     setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, deletedAt: now, updatedAt: now } : t)));
     playAudioChime('beep');
     scheduleSync();
-  };
+  }, [scheduleSync]);
 
-  const handleUpdateSubtasks = (taskId: string, nextSubtasks: Subtask[]) => {
+  // 🚨 PERFORMANCE FIX: Wrap in useCallback
+  const handleUpdateSubtasks = useCallback((taskId: string, nextSubtasks: Subtask[]) => {
     const now = new Date().toISOString();
     setTasks((prev) =>
       prev.map((t) => (t.id === taskId ? { ...t, subtasks: nextSubtasks, updatedAt: now } : t))
     );
     scheduleSync();
-  };
+  }, [scheduleSync]);
 
   const handleSaveAsTemplate = (task: Task) => {
     const defaultName = task.title;
@@ -1554,11 +1588,11 @@ export default function App() {
   const handleRestoreFullBackup = (backup: FullBackup) => {
     const now = new Date().toISOString();
 
-    const stampedTasks = backup.data.tasks.map((t) => ({ ...t, updatedAt: now }));
-    const stampedHabits = backup.data.habits.map((h) => ({ ...h, updatedAt: now }));
-    const stampedCheckIns = backup.data.checkIns.map((ci) => ({ ...ci, updatedAt: now }));
-    const stampedMilestones = backup.data.milestones.map((m) => ({ ...m, updatedAt: now }));
-    const stampedProjects = backup.data.projects.map((p) => ({ ...p, updatedAt: now }));
+    const stampedTasks = (Array.isArray(backup.data.tasks) ? backup.data.tasks : []).map((t) => ({ ...t, updatedAt: now }));
+    const stampedHabits = (Array.isArray(backup.data.habits) ? backup.data.habits : []).map((h) => ({ ...h, updatedAt: now }));
+    const stampedCheckIns = (Array.isArray(backup.data.checkIns) ? backup.data.checkIns : []).map((ci) => ({ ...ci, updatedAt: now }));
+    const stampedMilestones = (Array.isArray(backup.data.milestones) ? backup.data.milestones : []).map((m) => ({ ...m, updatedAt: now }));
+    const stampedProjects = (Array.isArray(backup.data.projects) ? backup.data.projects : []).map((p) => ({ ...p, updatedAt: now }));
 
     tasksRef.current = stampedTasks;
     habitsRef.current = stampedHabits;
@@ -1571,7 +1605,7 @@ export default function App() {
     setCheckIns(stampedCheckIns);
     setMilestones(stampedMilestones);
     setProjects(stampedProjects);
-    setCustomTemplates(backup.data.customTemplates || []);
+    setCustomTemplates(Array.isArray(backup.data.customTemplates) ? backup.data.customTemplates : []);
     setDailyDigest(backup.data.dailyDigest || DEFAULT_DIGEST_CONFIG);
     setEscalation(backup.data.escalation || DEFAULT_ESCALATION_CONFIG);
 
@@ -1800,7 +1834,7 @@ export default function App() {
       onSelect: () => { handleNewProject(); setIsCmdkOpen(false); },
     });
 
-    visibleTasks
+    (Array.isArray(visibleTasks) ? visibleTasks : [])
       .filter((t) => t.status !== 'completed' && !t.archivedAt)
       .slice(0, 50)
       .forEach((t) => {
@@ -1808,7 +1842,7 @@ export default function App() {
           t.quadrant === 'do_first' ? '🔥' :
           t.quadrant === 'schedule' ? '📅' :
           t.quadrant === 'delegate' ? '👥' : '🗑️';
-        const contextKeywords = (t.contexts || []).join(' ');
+        const contextKeywords = Array.isArray(t.contexts) ? t.contexts.join(' ') : '';
         list.push({
           id: `task-${t.id}`,
           label: t.title,
@@ -1824,7 +1858,7 @@ export default function App() {
         });
       });
 
-    visibleHabits
+    (Array.isArray(visibleHabits) ? visibleHabits : [])
       .filter((h) => !h.archivedAt)
       .forEach((h) => list.push({
         id: `habit-${h.id}`,
@@ -1844,6 +1878,16 @@ export default function App() {
     // eslint-disable-next-line
   }, [visibleTasks, visibleHabits, defaultQuadrant]);
 
+  // 🚨 PERFORMANCE FIX: Memoize header callbacks
+  const handleOpenNewTaskHeader = useCallback(() => handleOpenNewTask('do_first'), []);
+  const handleOpenVoiceTaskHeader = useCallback(() => setIsVoiceModalOpen(true), []);
+  const handleOpenSettingsHeader = useCallback(() => {
+    startTransition(() => setIsSettingsOpen(true));
+  }, []);
+  const handleOpenFocusTimerHeader = useCallback(() => { setFocusTask(null); setIsFocusTimerOpen(true); }, []);
+  const handleOpenMilestonesHeader = useCallback(() => setIsMilestoneModalOpen(true), []);
+  const handleOpenKarmaHeader = useCallback(() => setIsKarmaOpen(true), []);
+
   return (
     <div className="min-h-screen bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col transition-colors duration-200 overflow-x-hidden w-full">
       <OnboardingScreen
@@ -1862,17 +1906,17 @@ export default function App() {
             karmaEmoji={karma.level.emoji}
             deviceMode={deviceMode}
             onSetDeviceMode={setDeviceMode}
-            onOpenNewTask={() => handleOpenNewTask('do_first')}
-            onOpenVoiceTask={() => setIsVoiceModalOpen(true)}
-            onOpenSettings={() => setIsSettingsOpen(true)}
-            onOpenFocusTimer={() => { setFocusTask(null); setIsFocusTimerOpen(true); }}
-            onOpenMilestones={() => setIsMilestoneModalOpen(true)}
-            onOpenKarma={() => setIsKarmaOpen(true)}
+            onOpenNewTask={handleOpenNewTaskHeader}
+            onOpenVoiceTask={handleOpenVoiceTaskHeader}
+            onOpenSettings={handleOpenSettingsHeader}
+            onOpenFocusTimer={handleOpenFocusTimerHeader}
+            onOpenMilestones={handleOpenMilestonesHeader}
+            onOpenKarma={handleOpenKarmaHeader}
           />
 
           <MilestoneBanner
             milestones={visibleMilestones}
-            onOpen={() => setIsMilestoneModalOpen(true)}
+            onOpen={handleOpenMilestonesHeader}
           />
 
           {showQuickAdd && (
@@ -1881,22 +1925,9 @@ export default function App() {
             </div>
           )}
 
-          <main className="flex-1 flex flex-col px-4 py-3.5 pb-24 overflow-y-auto">
+          <main className={`flex-1 flex flex-col overflow-y-auto ${activeTab === 'matrix' ? 'pb-0' : 'px-4 py-3.5 pb-32'}`}>
             {activeTab === 'matrix' && (
-              activeTasks.length === 0 ? (
-                <div className="flex flex-col items-center justify-center p-8 text-center mt-10 animate-in fade-in zoom-in-95">
-                  <div className="w-16 h-16 rounded-2xl bg-indigo-100 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center mb-4 shadow-sm">
-                     <span className="text-2xl">🎯</span>
-                  </div>
-                  <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-1">No tasks yet</h3>
-                  <p className="text-sm text-slate-500 dark:text-slate-400 mb-6 max-w-xs">
-                    Add a task to see your {uiDesign} layout in action.
-                  </p>
-                  <button onClick={() => handleOpenNewTask('do_first')} className="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm shadow-md shadow-indigo-600/20 transition cursor-pointer">
-                    Create Task
-                  </button>
-                </div>
-              ) : uiDesign === 'binder' ? (
+              uiDesign === 'binder' ? (
                 <BinderView
                   tasks={activeTasks}
                   onToggleStatus={handleToggleStatus}
@@ -2134,33 +2165,36 @@ export default function App() {
       <PWAInstallModal isOpen={isInstallModalOpen} onClose={() => setIsInstallModalOpen(false)} />
       <FocusTimerWidget isOpen={isFocusTimerOpen} onClose={() => setIsFocusTimerOpen(false)} activeTask={focusTask} onCompleteTask={(taskId) => { handleToggleStatus(taskId); setIsFocusTimerOpen(false); }} />
 
-      <SettingsModal
-        isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
-        tasks={visibleTasks}
-        onImportTasks={handleImportTasks}
-        onOpenInstallModal={() => setIsInstallModalOpen(true)}
-        dailyDigest={dailyDigest}
-        onChangeDailyDigest={setDailyDigest}
-        escalation={escalation}
-        onChangeEscalation={setEscalation}
-        onSyncNow={() => runSync()}
-        isSyncing={isSyncing}
-        lastSyncedAt={lastSyncedAt}
-        syncError={syncError}
-        fullBackupData={{
-          tasks,
-          habits,
-          checkIns,
-          milestones,
-          projects,
-          customTemplates,
-          dailyDigest,
-          escalation,
-        }}
-        onRestoreFullBackup={handleRestoreFullBackup}
-        onResetEverything={handleResetEverything}
-      />
+      {/* 🚨 PERFORMANCE FIX: Wrap lazy loaded modal in Suspense */}
+      <Suspense fallback={null}>
+        <SettingsModal
+          isOpen={isSettingsOpen}
+          onClose={() => setIsSettingsOpen(false)}
+          tasks={visibleTasks}
+          onImportTasks={handleImportTasks}
+          onOpenInstallModal={() => setIsInstallModalOpen(true)}
+          dailyDigest={dailyDigest}
+          onChangeDailyDigest={setDailyDigest}
+          escalation={escalation}
+          onChangeEscalation={setEscalation}
+          onSyncNow={() => runSync()}
+          isSyncing={isSyncing}
+          lastSyncedAt={lastSyncedAt}
+          syncError={syncError}
+          fullBackupData={{
+            tasks,
+            habits,
+            checkIns,
+            milestones,
+            projects,
+            customTemplates,
+            dailyDigest,
+            escalation,
+          }}
+          onRestoreFullBackup={handleRestoreFullBackup}
+          onResetEverything={handleResetEverything}
+        />
+      </Suspense>
 
       <CommandPalette
         isOpen={isCmdkOpen}

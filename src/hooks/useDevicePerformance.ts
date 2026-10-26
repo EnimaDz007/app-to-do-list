@@ -33,50 +33,25 @@ export function detectDeviceTier(): DeviceTier {
   return 'low';
 }
 
-// 🚀 Real FPS measurement
-function measureFPS(duration = 800): Promise<number> {
-  return new Promise((resolve) => {
-    let frames = 0;
-    const start = performance.now();
-    function tick() {
-      frames++;
-      const elapsed = performance.now() - start;
-      if (elapsed < duration) {
-        requestAnimationFrame(tick);
-      } else {
-        resolve((frames * 1000) / elapsed);
-      }
-    }
-    requestAnimationFrame(tick);
-  });
-}
-
 export function useDevicePerformance() {
   useEffect(() => {
-    // Step 1: Quick tier guess from hardware
     let tier = detectDeviceTier();
+    
+    // 🚨 FIX: Never allow budget phones to fall into the 'low' tier. 
+    // 'low' completely disables all CSS animations globally in your app.
+    // By forcing 'mid', we guarantee the orbit spins and theme transitions play.
+    if (tier === 'low') {
+      tier = 'mid';
+    }
+
     const root = document.documentElement;
     root.classList.remove('perf-low', 'perf-mid', 'perf-high');
     root.classList.add(`perf-${tier}`);
-    console.log('⚡ Initial tier (hardware guess):', tier);
+    
+    console.log(`⚡ Animations locked ON. Device tier set to: ${tier}`);
 
-    // Step 2: Measure actual FPS after app loads
-    setTimeout(async () => {
-      const fps = await measureFPS(1000);
-      console.log('⚡ Measured FPS:', Math.round(fps));
+    // 🚨 FIX: We removed the FPS measurement loop entirely.
+    // Your phone will now stay in 'mid' mode, which is smooth and allows animations.
 
-      // If FPS is low, downgrade the tier
-      if (fps < 30 && tier !== 'low') {
-        tier = 'low';
-        root.classList.remove('perf-mid', 'perf-high');
-        root.classList.add('perf-low');
-        console.log('⚡ FPS too low — downgraded to: low');
-      } else if (fps < 45 && tier === 'high') {
-        tier = 'mid';
-        root.classList.remove('perf-high');
-        root.classList.add('perf-mid');
-        console.log('⚡ FPS moderate — downgraded to: mid');
-      }
-    }, 1500);
   }, []);
 }

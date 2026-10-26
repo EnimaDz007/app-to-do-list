@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useMemo, useRef, useState, useEffect } from 'react';
 import { Sparkles, Mic, CornerDownLeft, X } from 'lucide-react';
 import { Task, TaskCategory, QuadrantId, PriorityLevel, CONTEXT_DEFINITIONS } from '../types';
 import { parseSpokenTask } from '../utils/voiceParser';
@@ -35,6 +35,9 @@ export const NLPQuickAdd: React.FC<NLPQuickAddProps> = ({
   const [value, setValue] = useState('');
   const [focused, setFocused] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  
+  // FIX: State for debounced preview instead of calculating on every render
+  const [preview, setPreview] = useState<ReturnType<typeof parseSpokenTask> | null>(null);
 
   const speechLangMap: Record<string, string> = { en: 'en-US', fr: 'fr-FR', ar: 'ar-SA' };
   const {
@@ -45,14 +48,28 @@ export const NLPQuickAdd: React.FC<NLPQuickAddProps> = ({
     resetTranscript,
   } = useSpeechRecognition(true);
 
-  React.useEffect(() => {
+  // FIX: Kill the mic when navigating away from this component
+  useEffect(() => {
+    return () => {
+      stopListening();
+    };
+  }, [stopListening]);
+
+  useEffect(() => {
     if (interimTranscript) setValue(interimTranscript);
   }, [interimTranscript]);
 
-  const preview = useMemo(() => {
+  // FIX: Debounce the heavy parser so it doesn't block the main thread on every keystroke
+  useEffect(() => {
     const trimmed = value.trim();
-    if (!trimmed) return null;
-    return parseSpokenTask(trimmed);
+    if (!trimmed) {
+      setPreview(null);
+      return;
+    }
+    const timer = setTimeout(() => {
+      setPreview(parseSpokenTask(trimmed));
+    }, 200);
+    return () => clearTimeout(timer);
   }, [value]);
 
   const formatDue = (iso: string): string => {
@@ -103,6 +120,8 @@ export const NLPQuickAdd: React.FC<NLPQuickAddProps> = ({
       contexts: parsed.contexts.length > 0 ? parsed.contexts : undefined,
     });
 
+    // FIX: Explicitly kill the mic when a task is created so it doesn't stay in the background
+    stopListening();
     setValue('');
     resetTranscript();
     inputRef.current?.focus();
@@ -114,6 +133,7 @@ export const NLPQuickAdd: React.FC<NLPQuickAddProps> = ({
       handleCreate();
     }
     if (e.key === 'Escape') {
+      stopListening(); // FIX: Stop mic on escape
       setValue('');
       resetTranscript();
       inputRef.current?.blur();

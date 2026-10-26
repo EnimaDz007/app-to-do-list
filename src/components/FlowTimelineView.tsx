@@ -28,8 +28,9 @@ const RULER_HEIGHT = 32;
 const TOTAL_WIDTH = 24 * HOUR_WIDTH;
 const MIN_BAR_WIDTH = 64;
 
-const LONG_PRESS_MS = 180;
-const MOVE_CANCEL_PX = 6;
+// 🚨 Increased for better touch sensitivity
+const LONG_PRESS_MS = 250;
+const MOVE_CANCEL_PX = 10;
 const SNAP_MINUTES = 15;
 
 const COPY: Record<LocalLang, {
@@ -173,6 +174,14 @@ export const FlowTimelineView: React.FC<FlowTimelineViewProps> = ({
   const rafRef = useRef<number | null>(null);
   const pendingMoveRef = useRef<{ clientX: number; clientY: number } | null>(null);
 
+  // Cleanup timer on unmount
+  useEffect(() => {
+    return () => {
+      if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
+  }, []);
+
   const weekStart = useMemo(() => {
     const d = new Date(today);
     d.setDate(d.getDate() - d.getDay() + weekOffset * 7);
@@ -219,6 +228,7 @@ export const FlowTimelineView: React.FC<FlowTimelineViewProps> = ({
     return weekTasks.reduce((sum, t) => sum + (t.estimatedMinutes || 30), 0);
   }, [weekTasks]);
 
+  // 🚨 FIXED: Removed weekTasks from dependency array to prevent the view from jumping when a task is dropped
   useEffect(() => {
     const container = scrollRef.current;
     if (!container) return;
@@ -234,7 +244,8 @@ export const FlowTimelineView: React.FC<FlowTimelineViewProps> = ({
     } else {
       container.scrollTo({ left: 8 * HOUR_WIDTH, behavior: 'smooth' });
     }
-  }, [weekOffset, weekTasks]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [weekOffset]);
 
   const nowLine = useMemo(() => {
     const now = new Date();
@@ -571,6 +582,7 @@ export const FlowTimelineView: React.FC<FlowTimelineViewProps> = ({
                             onClick={() => handleBarClick(task)}
                             draggable={false}
                             onDragStart={(e) => e.preventDefault()}
+                            onContextMenu={(e) => e.preventDefault()}
                             title={`${task.title} · ${timeLabel} · ${duration} min`}
                             className="absolute top-1.5 rounded-lg text-left rtl:text-right transition-all hover:z-10 hover:scale-[1.01] active:scale-[0.99] cursor-pointer select-none overflow-hidden"
                             style={{
@@ -580,7 +592,7 @@ export const FlowTimelineView: React.FC<FlowTimelineViewProps> = ({
                               backgroundColor: meta.color,
                               opacity: isBeingDragged ? 0.2 : (isDone ? 0.5 : 1),
                               boxShadow: isBeingDragged ? 'none' : `0 2px 8px ${meta.color}55`,
-                              touchAction: 'manipulation',
+                              touchAction: 'pan-y',
                             }}
                           >
                             <div className="h-full w-full flex flex-col justify-center px-2 overflow-hidden pointer-events-none">

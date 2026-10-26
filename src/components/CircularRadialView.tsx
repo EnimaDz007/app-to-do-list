@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X } from 'lucide-react';
 import { Task, QuadrantId, Subtask } from '../types';
@@ -40,7 +40,7 @@ const LOCAL_COPY: Record<LocalLang, { chip: string; orbitA: string; orbitB: stri
 const LIGHT_BG_GRADIENT =
   'linear-gradient(180deg, #FAF7FF 0%, #F3EEFF 45%, #FDF5FF 100%)';
 
-export const CircularRadialView: React.FC<CircularRadialViewProps> = ({
+export const CircularRadialView: React.FC<CircularRadialViewProps> = React.memo(({
   tasks,
   onToggleStatus,
   onDeleteTask,
@@ -54,13 +54,28 @@ export const CircularRadialView: React.FC<CircularRadialViewProps> = ({
 
   const [openQuadrant, setOpenQuadrant] = useState<QuadrantId | null>(null);
 
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [containerSize, setContainerSize] = useState(340);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const newSize = entry.contentRect.width;
+        if (newSize > 0) setContainerSize(newSize);
+      }
+    });
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, []);
+
   const isLow =
     typeof document !== 'undefined' &&
     document.documentElement.classList.contains('perf-low');
 
   const BG = isDark ? '#0F172A' : LIGHT_BG_GRADIENT;
-  const TEXT = isDark ? '#F1F5F9' : '#1E1B4B';                 // deep indigo instead of pure black
-  const TEXT_MUT = isDark ? '#94A3B8' : '#6D6A8A';             // muted indigo-grey
+  const TEXT = isDark ? '#F1F5F9' : '#1E1B4B';
+  const TEXT_MUT = isDark ? '#94A3B8' : '#6D6A8A';
   const RING = isDark ? 'rgba(167, 139, 250, 0.2)' : 'rgba(139, 92, 246, 0.45)';
   const RING_INNER = isDark ? 'rgba(139, 92, 246, 0.15)' : 'rgba(139, 92, 246, 0.3)';
 
@@ -68,8 +83,8 @@ export const CircularRadialView: React.FC<CircularRadialViewProps> = ({
   const completed = tasks.filter((t) => t.status === 'completed').length;
   const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
 
-  const tasksFor = (q: QuadrantId) => tasks.filter((t) => t.quadrant === q);
-  const countFor = (q: QuadrantId) => tasksFor(q).length;
+  const tasksFor = (q: QuadrantId) => tasks.filter((t) => t.quadrant === q && t.status !== 'completed');
+  const countFor = (q: QuadrantId) => tasks.filter((t) => t.quadrant === q).length;
 
   const handleOpen = (q: QuadrantId) => {
     setOpenQuadrant(q);
@@ -79,9 +94,12 @@ export const CircularRadialView: React.FC<CircularRadialViewProps> = ({
   const currentTasks = openQuadrant ? tasksFor(openQuadrant) : [];
   const currentQuad = openQuadrant ? QUADS.find((q) => q.id === openQuadrant) : null;
 
-  const SIZE = 340;
+  const SIZE = containerSize;
   const CENTER = SIZE / 2;
-  const ORBIT_RADIUS = 130;
+  const ORBIT_RADIUS = SIZE * (130 / 340);
+  const BUTTON_SIZE = Math.max(64, SIZE * (84 / 340)); 
+  const CENTER_SIZE = SIZE * (116 / 340);
+  const CENTER_OFFSET = CENTER_SIZE / 2;
   const orbitDuration = isLow ? '60s' : '40s';
 
   return (
@@ -141,7 +159,6 @@ export const CircularRadialView: React.FC<CircularRadialViewProps> = ({
         }
       `}</style>
 
-      {/* Light-mode decorative blobs — soft pastel clouds */}
       {!isDark && !isLow && (
         <div aria-hidden="true" style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 0, overflow: 'hidden' }}>
           <div
@@ -155,6 +172,7 @@ export const CircularRadialView: React.FC<CircularRadialViewProps> = ({
               background: 'radial-gradient(circle, rgba(196,181,253,0.55) 0%, rgba(196,181,253,0) 70%)',
               filter: 'blur(40px)',
               animation: 'blobFloat1 14s ease-in-out infinite',
+              willChange: 'transform',
             }}
           />
           <div
@@ -168,6 +186,7 @@ export const CircularRadialView: React.FC<CircularRadialViewProps> = ({
               background: 'radial-gradient(circle, rgba(249,168,212,0.5) 0%, rgba(249,168,212,0) 70%)',
               filter: 'blur(45px)',
               animation: 'blobFloat2 16s ease-in-out infinite',
+              willChange: 'transform',
             }}
           />
           <div
@@ -181,6 +200,7 @@ export const CircularRadialView: React.FC<CircularRadialViewProps> = ({
               background: 'radial-gradient(circle, rgba(186,230,253,0.5) 0%, rgba(186,230,253,0) 70%)',
               filter: 'blur(40px)',
               animation: 'blobFloat1 18s ease-in-out infinite reverse',
+              willChange: 'transform',
             }}
           />
         </div>
@@ -207,9 +227,8 @@ export const CircularRadialView: React.FC<CircularRadialViewProps> = ({
       </div>
 
       <div className="flex justify-center items-center w-full">
-        <div style={{ position: 'relative', width: SIZE, height: SIZE, maxWidth: '100%' }}>
+        <div ref={containerRef} style={{ position: 'relative', width: '100%', maxWidth: '340px', aspectRatio: '1/1' }}>
 
-          {/* Light-mode halo behind the rings */}
           {!isDark && (
             <div
               aria-hidden="true"
@@ -225,6 +244,7 @@ export const CircularRadialView: React.FC<CircularRadialViewProps> = ({
                 pointerEvents: 'none',
                 zIndex: 0,
                 animation: isLow ? 'none' : 'lightHalo 6s ease-in-out infinite',
+                transform: 'translate(-50%, -50%)',
               }}
             />
           )}
@@ -281,8 +301,8 @@ export const CircularRadialView: React.FC<CircularRadialViewProps> = ({
                     <button
                       onClick={() => handleOpen(q.id)}
                       style={{
-                        width: 84,
-                        height: 84,
+                        width: BUTTON_SIZE,
+                        height: BUTTON_SIZE,
                         borderRadius: '50%',
                         display: 'flex',
                         flexDirection: 'column',
@@ -301,16 +321,20 @@ export const CircularRadialView: React.FC<CircularRadialViewProps> = ({
                         transition: 'transform 0.15s ease',
                       }}
                     >
-                      <span style={{ fontSize: 22, lineHeight: 1 }}>{q.emoji}</span>
+                      <span style={{ fontSize: Math.max(18, BUTTON_SIZE * 0.26), lineHeight: 1 }}>{q.emoji}</span>
                       <span
                         style={{
-                          fontSize: 9,
+                          fontSize: Math.max(8, BUTTON_SIZE * 0.11),
                           fontWeight: 800,
                           color: q.color,
                           marginTop: 3,
                           letterSpacing: -0.2,
                           textAlign: 'center',
                           lineHeight: 1.1,
+                          maxWidth: '90%',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
                         }}
                       >
                         {label}
@@ -320,15 +344,16 @@ export const CircularRadialView: React.FC<CircularRadialViewProps> = ({
                         className={!isLow ? 'badge-premium' : ''}
                         style={{
                           position: 'absolute',
-                          top: -4,
-                          right: -4,
-                          minWidth: 24,
-                          height: 24,
-                          padding: '0 6px',
+                          top: -6,
+                          right: -6,
+                          zIndex: 50,
+                          minWidth: Math.max(22, BUTTON_SIZE * 0.28),
+                          height: Math.max(22, BUTTON_SIZE * 0.28),
+                          padding: '0 4px',
                           borderRadius: '50%',
                           background: q.color,
                           color: 'white',
-                          fontSize: 11,
+                          fontSize: Math.max(10, BUTTON_SIZE * 0.13),
                           fontWeight: 900,
                           display: 'flex',
                           alignItems: 'center',
@@ -353,10 +378,10 @@ export const CircularRadialView: React.FC<CircularRadialViewProps> = ({
               position: 'absolute',
               left: '50%',
               top: '50%',
-              width: 116,
-              height: 116,
-              marginLeft: -58,
-              marginTop: -58,
+              width: CENTER_SIZE,
+              height: CENTER_SIZE,
+              marginLeft: -CENTER_OFFSET,
+              marginTop: -CENTER_OFFSET,
               borderRadius: '50%',
               display: 'flex',
               flexDirection: 'column',
@@ -375,7 +400,7 @@ export const CircularRadialView: React.FC<CircularRadialViewProps> = ({
           >
             <span
               style={{
-                fontSize: 9,
+                fontSize: Math.max(7, CENTER_SIZE * 0.08),
                 fontWeight: 800,
                 letterSpacing: 2,
                 color: 'rgba(255,255,255,0.85)',
@@ -384,10 +409,10 @@ export const CircularRadialView: React.FC<CircularRadialViewProps> = ({
             >
               {t('total')}
             </span>
-            <span style={{ fontSize: 38, fontWeight: 900, lineHeight: 1, color: 'white', letterSpacing: -2 }}>
+            <span style={{ fontSize: Math.max(24, CENTER_SIZE * 0.33), fontWeight: 900, lineHeight: 1, color: 'white', letterSpacing: -2 }}>
               {total}
             </span>
-            <span style={{ fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.7)', marginTop: 2 }}>
+            <span style={{ fontSize: Math.max(8, CENTER_SIZE * 0.09), fontWeight: 700, color: 'rgba(255,255,255,0.7)', marginTop: 2 }}>
               {pct}% {t('done_btn')}
             </span>
           </div>
@@ -402,7 +427,7 @@ export const CircularRadialView: React.FC<CircularRadialViewProps> = ({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-40 flex items-center justify-center p-4"
+            className="fixed inset-0 z-[100] flex items-center justify-center p-4"
             style={{ background: 'rgba(15, 23, 42, 0.6)', backdropFilter: 'blur(4px)' }}
             onClick={() => setOpenQuadrant(null)}
           >
@@ -496,7 +521,9 @@ export const CircularRadialView: React.FC<CircularRadialViewProps> = ({
       </AnimatePresence>
     </div>
   );
-};
+});
+
+CircularRadialView.displayName = 'CircularRadialView';
 
 /* ─────────────────────────────────────────────────────────────
    SparklesBackground — handles both dark and light themes.
@@ -504,27 +531,23 @@ export const CircularRadialView: React.FC<CircularRadialViewProps> = ({
 
 const LightPalette = ['#C4B5FD', '#DDD6FE', '#F9A8D4', '#FBCFE8', '#BAE6FD', '#BFDBFE'];
 
-const SparklesBackground: React.FC<{ isDark: boolean; isLow: boolean }> = ({ isDark, isLow }) => {
+const SparklesBackground: React.FC<{ isDark: boolean; isLow: boolean }> = React.memo(({ isDark, isLow }) => {
   const starCount  = isLow ? (isDark ? 10 : 14) : (isDark ? 60 : 70);
   const sparkCount = isLow ? 0 : 6;
 
+  // 🚨 FIX: Remove `isDark` from the dependency array so stars keep their positions
   const stars = useMemo(() => {
     return Array.from({ length: starCount }, (_, i) => ({
       id: i,
       top: Math.random() * 100,
       left: Math.random() * 100,
-      size: isDark
-        ? Math.random() * 2 + 0.8
-        : Math.random() * 2.4 + 1.2,
+      // Store base random values, we will apply theme colors in the render
+      baseSize: Math.random(),
       delay: Math.random() * 4,
       duration: Math.random() * 2.5 + 1.5,
-      baseOpacity: isDark
-        ? Math.random() * 0.5 + 0.4
-        : Math.random() * 0.3 + 0.4,
-      color: isDark ? '#FFFFFF' : LightPalette[i % LightPalette.length],
+      baseOpacity: Math.random(),
     }));
-    // eslint-disable-next-line
-  }, [starCount, isDark]);
+  }, [starCount]);
 
   const sparkles = useMemo(() => {
     return Array.from({ length: sparkCount }, (_, i) => ({
@@ -536,30 +559,36 @@ const SparklesBackground: React.FC<{ isDark: boolean; isLow: boolean }> = ({ isD
       duration: Math.random() * 2 + 2,
       color: ['#A78BFA', '#F9A8D4', '#BAE6FD'][i % 3],
     }));
-    // eslint-disable-next-line
   }, [sparkCount]);
 
   return (
     <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 0, overflow: 'hidden' }}>
-      {stars.map((star) => (
-        <div
-          key={star.id}
-          style={{
-            position: 'absolute',
-            top: `${star.top}%`,
-            left: `${star.left}%`,
-            width: star.size,
-            height: star.size,
-            borderRadius: '50%',
-            background: star.color,
-            opacity: star.baseOpacity,
-            animation: isDark
-              ? `twinkle ${star.duration}s ease-in-out infinite`
-              : `twinkleSoft ${star.duration}s ease-in-out infinite, driftSlow ${star.duration + 3}s ease-in-out infinite`,
-            animationDelay: `${star.delay}s`,
-          }}
-        />
-      ))}
+      {stars.map((star) => {
+        // 🚨 Apply theme-specific styles here during render
+        const size = isDark ? star.baseSize * 2 + 0.8 : star.baseSize * 2.4 + 1.2;
+        const baseOpacity = isDark ? star.baseOpacity * 0.5 + 0.4 : star.baseOpacity * 0.3 + 0.4;
+        const color = isDark ? '#FFFFFF' : LightPalette[star.id % LightPalette.length];
+
+        return (
+          <div
+            key={star.id}
+            style={{
+              position: 'absolute',
+              top: `${star.top}%`,
+              left: `${star.left}%`,
+              width: size,
+              height: size,
+              borderRadius: '50%',
+              background: color,
+              opacity: baseOpacity,
+              animation: isDark
+                ? `twinkle ${star.duration}s ease-in-out infinite`
+                : `twinkleSoft ${star.duration}s ease-in-out infinite, driftSlow ${star.duration + 3}s ease-in-out infinite`,
+              animationDelay: `${star.delay}s`,
+            }}
+          />
+        );
+      })}
 
       {sparkles.map((s) => (
         <div
@@ -583,4 +612,6 @@ const SparklesBackground: React.FC<{ isDark: boolean; isLow: boolean }> = ({ isD
       ))}
     </div>
   );
-};
+});
+
+SparklesBackground.displayName = 'SparklesBackground';

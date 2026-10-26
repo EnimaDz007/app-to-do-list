@@ -26,11 +26,14 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   });
 
   useEffect(() => {
-    try {
-      localStorage.setItem('taskflow_theme', theme);
-    } catch {
-      // ignore
-    }
+    // 🚨 PERFORMANCE FIX: Delay localStorage write so it doesn't block the animation
+    const timer = setTimeout(() => {
+      try {
+        localStorage.setItem('taskflow_theme', theme);
+      } catch {
+        // ignore
+      }
+    }, 100);
 
     const root = document.documentElement;
     if (theme === 'dark') {
@@ -46,14 +49,29 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (metaThemeColor) {
       metaThemeColor.setAttribute('content', theme === 'dark' ? '#0f172a' : '#f8fafc');
     }
+
+    return () => clearTimeout(timer);
   }, [theme]);
 
+  const applyThemeChange = (newTheme: Theme) => {
+    const root = document.documentElement;
+    root.classList.add('theme-switching');
+    
+    setThemeState(newTheme);
+    
+    setTimeout(() => {
+      root.classList.remove('theme-switching');
+    }, 50);
+  };
+
   const toggleTheme = () => {
-    setThemeState((prev) => (prev === 'dark' ? 'light' : 'dark'));
+    applyThemeChange(theme === 'dark' ? 'light' : 'dark');
   };
 
   const setTheme = (newTheme: Theme) => {
-    setThemeState(newTheme);
+    if (newTheme !== theme) {
+      applyThemeChange(newTheme);
+    }
   };
 
   return (

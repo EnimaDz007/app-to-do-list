@@ -140,7 +140,6 @@ export const BinderView: React.FC<Props> = ({ tasks, onToggleStatus, onQuadrantS
   const [flip, setFlip] = useState<{ from: QuadrantId; to: QuadrantId; dir: 'fwd' | 'back' } | null>(null);
   const [busy, setBusy] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  // { taskId, parentSubId } | null — parentSubId === null → add to task root
   const [addingTo, setAddingTo] = useState<{ taskId: string; parentSubId: string | null } | null>(null);
   const [draft, setDraft] = useState('');
   const [hoveredSub, setHoveredSub] = useState<string | null>(null);
@@ -155,7 +154,6 @@ export const BinderView: React.FC<Props> = ({ tasks, onToggleStatus, onQuadrantS
   const clearTimer = () => { if (timer.current !== null) { window.clearTimeout(timer.current); timer.current = null; } };
   const toggleExp = (id: string) => setExpanded((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
 
-  // Recursive all-done check
   const allDone = (l: Subtask[]): boolean => l.every((st) => st.done && (!st.subtasks?.length || allDone(st.subtasks)));
 
   const toggleSub = (taskId: string, subId: string) => {
@@ -183,7 +181,6 @@ export const BinderView: React.FC<Props> = ({ tasks, onToggleStatus, onQuadrantS
     triggerHaptic('medium');
   };
 
-  // parentSubId === null → add at task root; else add as child of that subtask
   const addSubTo = (taskId: string, parentSubId: string | null) => {
     const title = draft.trim();
     if (!title || !onUpdateSubtasks) { setAddingTo(null); setDraft(''); return; }
@@ -234,33 +231,29 @@ export const BinderView: React.FC<Props> = ({ tasks, onToggleStatus, onQuadrantS
   const g4 = isDark ? '#a8853f' : '#8b6f3a';
   const stitchC = isDark ? 'rgba(240,210,140,0.85)' : 'rgba(212,175,90,0.7)';
 
-  // ─── Subtask list ───
-  // depth=0 → level-1 subtasks (get a ＋ to add sub-subtasks)
-  // depth=1 → level-2 sub-subtasks (no ＋, only checkbox/title/×)
   const subList = (list: Subtask[], depth: number, color: string, tid: string): React.ReactNode => {
     const canAddChildren = depth === 0;
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 1, width: '100%' }}>
         {list.map((st) => {
           const isHovered = hoveredSub === st.id;
           const isAddingHere = addingTo?.taskId === tid && addingTo?.parentSubId === st.id;
           const childCount = st.subtasks?.length ?? 0;
           const childDone = st.subtasks?.filter((s) => s.done).length ?? 0;
           return (
-            <div key={st.id}>
+            <div key={st.id} style={{ width: '100%' }}>
               <div
                 onMouseEnter={() => setHoveredSub(st.id)}
                 onMouseLeave={() => { if (hoveredSub === st.id) setHoveredSub(null); }}
                 style={{
                   display: 'flex', alignItems: 'flex-start', gap: 6,
-                  paddingLeft: 8 + depth * 18, paddingRight: 4,
+                  paddingLeft: 8 + depth * 16, paddingRight: 4,
                   paddingTop: 6, paddingBottom: 6,
-                  borderRadius: 6,
+                  borderRadius: 6, width: '100%', boxSizing: 'border-box',
                   transition: 'background 0.15s',
                   background: isHovered ? 'rgba(120,100,60,0.06)' : 'transparent',
                 }}
               >
-                {/* Checkbox */}
                 <button
                   onClick={(e) => { e.stopPropagation(); toggleSub(tid, st.id); }}
                   aria-label="Toggle done"
@@ -276,10 +269,9 @@ export const BinderView: React.FC<Props> = ({ tasks, onToggleStatus, onQuadrantS
                   {st.done && <span style={{ color: '#fff', fontSize: 9, fontWeight: 700, lineHeight: 1 }}>✓</span>}
                 </button>
 
-                {/* Title */}
                 <div
                   onClick={() => toggleSub(tid, st.id)}
-                  style={{ flex: 1, minWidth: 0, cursor: 'pointer' }}
+                  style={{ flex: 1, minWidth: 0, cursor: 'pointer', width: '100%' }}
                 >
                   <span
                     dir="auto"
@@ -288,7 +280,7 @@ export const BinderView: React.FC<Props> = ({ tasks, onToggleStatus, onQuadrantS
                       fontSize: 13, lineHeight: 1.4, display: 'block',
                       color: st.done ? 'rgba(42,26,8,0.4)' : '#3a2a18',
                       textDecoration: st.done ? 'line-through' : 'none',
-                      wordBreak: 'break-word',
+                      whiteSpace: 'normal', overflowWrap: 'break-word', wordBreak: 'normal'
                     }}
                   >
                     {st.title}
@@ -300,7 +292,6 @@ export const BinderView: React.FC<Props> = ({ tasks, onToggleStatus, onQuadrantS
                   )}
                 </div>
 
-                {/* ＋ Add sub-subtask — only on level-1 subtasks */}
                 {canAddChildren && (
                   <button
                     onClick={(e) => {
@@ -326,7 +317,6 @@ export const BinderView: React.FC<Props> = ({ tasks, onToggleStatus, onQuadrantS
                   </button>
                 )}
 
-                {/* × Delete subtask */}
                 <button
                   onClick={(e) => { e.stopPropagation(); deleteSub(tid, st.id); }}
                   aria-label={ui.deleteSub}
@@ -346,12 +336,10 @@ export const BinderView: React.FC<Props> = ({ tasks, onToggleStatus, onQuadrantS
                 </button>
               </div>
 
-              {/* Nested children — recursive, but depth+1 means no ＋ inside */}
               {st.subtasks?.length ? subList(st.subtasks, depth + 1, color, tid) : null}
 
-              {/* Inline add input for this subtask's children */}
               {isAddingHere && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingLeft: 8 + (depth + 1) * 18, paddingRight: 4, paddingTop: 4, paddingBottom: 4 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingLeft: 8 + (depth + 1) * 16, paddingRight: 4, paddingTop: 4, paddingBottom: 4, width: '100%', boxSizing: 'border-box' }}>
                   <div style={{ width: 15, height: 15, borderRadius: 3, flexShrink: 0, border: `1.5px dashed ${color}80`, marginTop: 1 }} />
                   <input
                     ref={inputRef}
@@ -375,7 +363,6 @@ export const BinderView: React.FC<Props> = ({ tasks, onToggleStatus, onQuadrantS
     );
   };
 
-  // ─── Page body ───
   const pageBody = (q: Q, list: Task[]): React.ReactNode => {
     const done = list.filter((t) => t.status === 'completed').length;
     const pct = list.length > 0 ? (done / list.length) * 100 : 0;
@@ -384,7 +371,7 @@ export const BinderView: React.FC<Props> = ({ tasks, onToggleStatus, onQuadrantS
         <div style={{ position: 'absolute', inset: 0, backgroundImage: 'repeating-linear-gradient(0deg, transparent 0 30px, rgba(120,140,180,0.13) 30px 31px)', backgroundPosition: '0 62px', pointerEvents: 'none' }} />
         <div style={{ position: 'absolute', top: 0, bottom: 0, left: 46, width: 1, background: 'rgba(200,90,90,0.3)', pointerEvents: 'none' }} />
 
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', padding: '42px 68px 14px 60px' }}>
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', padding: '42px 46px 14px 56px' }}>
           <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', paddingBottom: 8, marginBottom: 12, borderBottom: '1.5px solid #2a1a08', position: 'relative', flexShrink: 0, gap: 10 }}>
             <div dir="auto" style={{ fontFamily: "'Cormorant Garamond',Georgia,serif", fontSize: 22, fontWeight: 500, fontStyle: 'italic', lineHeight: 1.05, color: q.color, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, flex: 1 }}>
               {q.label}
@@ -410,8 +397,8 @@ export const BinderView: React.FC<Props> = ({ tasks, onToggleStatus, onQuadrantS
               const isExp = expanded.has(task.id);
               const isAddingHere = addingTo?.taskId === task.id && addingTo?.parentSubId === null;
               return (
-                <div key={task.id} style={{ borderBottom: '1px solid rgba(120,100,60,0.14)' }}>
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 4px 10px 2px', position: 'relative' }}>
+                <div key={task.id} style={{ borderBottom: '1px solid rgba(120,100,60,0.14)', width: '100%' }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 4px 10px 2px', position: 'relative', width: '100%', boxSizing: 'border-box' }}>
                     {hasSub ? (
                       <button
                         onClick={(e) => { e.stopPropagation(); toggleExp(task.id); }}
@@ -434,9 +421,9 @@ export const BinderView: React.FC<Props> = ({ tasks, onToggleStatus, onQuadrantS
 
                     <div
                       onClick={() => { if (hasSub) toggleExp(task.id); else onToggleStatus(task.id); }}
-                      style={{ flex: 1, minWidth: 0, cursor: 'pointer', paddingTop: 2 }}
+                      style={{ flex: 1, minWidth: 0, cursor: 'pointer', paddingTop: 2, width: '100%' }}
                     >
-                      <div dir="auto" style={{ fontFamily: "'Kalam','Comic Sans MS',cursive", fontSize: 15, lineHeight: 1.35, color: isDone ? 'rgba(42,26,8,0.4)' : '#2a1a08', textDecoration: isDone ? 'line-through' : 'none', wordBreak: 'break-word' }}>
+                      <div dir="auto" style={{ fontFamily: "'Kalam','Comic Sans MS',cursive", fontSize: 15, lineHeight: 1.35, color: isDone ? 'rgba(42,26,8,0.4)' : '#2a1a08', textDecoration: isDone ? 'line-through' : 'none', whiteSpace: 'normal', overflowWrap: 'break-word', wordBreak: 'normal' }}>
                         {task.title}
                       </div>
                       {hasSub && (
@@ -448,14 +435,12 @@ export const BinderView: React.FC<Props> = ({ tasks, onToggleStatus, onQuadrantS
                     </div>
                   </div>
 
-                  {/* Subtask tree — level 1 (with ＋) and level 2 (no ＋) */}
                   {hasSub && isExp && (
                     <div style={{ paddingTop: 4, paddingBottom: 4, borderLeft: `2px solid ${q.color}33`, marginLeft: 12, marginBottom: 4 }}>
                       {subList(task.subtasks!, 0, q.color, task.id)}
                     </div>
                   )}
 
-                  {/* Root-level "+ subtask" trigger */}
                   {(!hasSub || isExp) && !isAddingHere && (
                     <div
                       onClick={(e) => {
@@ -476,7 +461,6 @@ export const BinderView: React.FC<Props> = ({ tasks, onToggleStatus, onQuadrantS
                     </div>
                   )}
 
-                  {/* Root-level add input */}
                   {isAddingHere && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingLeft: 34, paddingRight: 4, paddingTop: 2, paddingBottom: 8 }}>
                       <div style={{ width: 15, height: 15, borderRadius: 3, flexShrink: 0, border: `1.5px dashed ${q.color}80`, marginTop: 1 }} />
@@ -548,7 +532,7 @@ export const BinderView: React.FC<Props> = ({ tasks, onToggleStatus, onQuadrantS
             <div style={{ position: 'absolute', top: 40, bottom: 40, left: 20, width: 2, backgroundImage: `repeating-linear-gradient(0deg, ${stitchC} 0 8px, transparent 8px 16px)`, filter: 'drop-shadow(0 0 3px rgba(212,175,90,0.45))', zIndex: 3, pointerEvents: 'none' }} />
             <div style={{ position: 'absolute', inset: 0, backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='320'%3E%3Cfilter id='g'%3E%3CfeTurbulence baseFrequency='0.7' numOctaves='3' seed='9'/%3E%3CfeColorMatrix values='0 0 0 0 0.15 0 0 0 0 0.04 0 0 0 0 0.03 0 0 0 0.55 0'/%3E%3C/filter%3E%3Crect width='320' height='320' filter='url(%23g)'/%3E%3C/svg%3E")`, mixBlendMode: 'multiply', opacity: 0.7, pointerEvents: 'none' }} />
 
-            <div style={{ position: 'absolute', top: 38, bottom: 38, left: 0, right: 34, perspective: 1800, perspectiveOrigin: '0% 50%', transformStyle: 'preserve-3d', zIndex: 5 }}>
+            <div style={{ position: 'absolute', top: 38, bottom: 38, left: 0, right: 28, perspective: 1800, perspectiveOrigin: '0% 50%', transformStyle: 'preserve-3d', zIndex: 5 }}>
               <div style={{ position: 'absolute', inset: 0, background: PAPER_BG, boxShadow: PAPER_SHADOW, borderRadius: 3, overflow: 'hidden' }}>
                 {destDef ? pageBody(destDef, tasksFor(destDef.id)) : (
                   <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, textAlign: 'center', padding: '0 40px' }}>
@@ -620,7 +604,7 @@ export const BinderView: React.FC<Props> = ({ tasks, onToggleStatus, onQuadrantS
             </div>
           </div>
 
-          <div style={{ position: 'absolute', top: 38, bottom: 38, left: 0, right: 34, perspective: 1800, perspectiveOrigin: '0% 50%', transformStyle: 'preserve-3d', transform: 'translateZ(30px)', zIndex: 25, pointerEvents: 'none' }}>
+          <div style={{ position: 'absolute', top: 38, bottom: 38, left: 0, right: 28, perspective: 1800, perspectiveOrigin: '0% 50%', transformStyle: 'preserve-3d', transform: 'translateZ(30px)', zIndex: 25, pointerEvents: 'none' }}>
             {pdef && !flip && (
               <div style={{ position: 'absolute', inset: 0, transformOrigin: 'left center', transform: 'rotateY(-180deg)', transformStyle: 'preserve-3d' }}>
                 {leafFaces(pdef)}

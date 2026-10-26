@@ -66,7 +66,10 @@ export const PriorityMatrixView: React.FC<PriorityMatrixViewProps> = ({
   onUpdateSubtasks,
 }) => {
   const { t } = useLanguage();
-  const completedTasks = tasks.filter((t) => t.status === 'completed').length;
+  
+  const completedTasksArray = tasks.filter((t) => t.status === 'completed');
+  const completedTasksCount = completedTasksArray.length;
+
   const [tier, setTier] = useState<'low' | 'mid' | 'high'>('mid');
   useEffect(() => {
     const root = document.documentElement;
@@ -82,8 +85,10 @@ export const PriorityMatrixView: React.FC<PriorityMatrixViewProps> = ({
   const isLow = tier === 'low';
   const [deletedTask, setDeletedTask] = useState<Task | null>(null);
   const [deletedTaskIndex, setDeletedTaskIndex] = useState<number>(-1);
-  const streakData = useStreak(completedTasks);
-  const { newlyUnlocked } = useAchievements(completedTasks, streakData.currentStreak);
+  
+  const streakData = useStreak(completedTasksArray);
+  const { newlyUnlocked } = useAchievements(completedTasksCount, streakData.currentStreak);
+  
   const [openQuadrant, setOpenQuadrant] = useState<QuadrantId | null>(null);
   const [highlightedTaskId, setHighlightedTaskId] = useState<string | null>(null);
   const [pulseQuadrant, setPulseQuadrant] = useState<QuadrantId | null>(null);
@@ -95,7 +100,7 @@ export const PriorityMatrixView: React.FC<PriorityMatrixViewProps> = ({
   const victoryMsgRef = useRef<HTMLDivElement>(null);
 
   const totalTasks = tasks.length;
-  const completionPct = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+  const completionPct = totalTasks > 0 ? Math.round((completedTasksCount / totalTasks) * 100) : 0;
 
   const quadrantTasks = (qId: QuadrantId) => tasks.filter((t) => t.quadrant === qId);
   const quadrantCount = (qId: QuadrantId) => quadrantTasks(qId).length;
@@ -158,7 +163,8 @@ export const PriorityMatrixView: React.FC<PriorityMatrixViewProps> = ({
 
   const fireConfetti = (x: number, y: number, cfg: CategoryConfig) => {
     const colors = [cfg.color, cfg.colorLight, cfg.colorPale, '#FBBF24', '#FFFFFF'];
-    for (let i = 0; i < particleCount(30, tier); i++) {
+    // 🚨 OPTIMIZED: Capped at 15 for mid-tier to prevent lag
+    for (let i = 0; i < Math.min(30, particleCount(15, tier)); i++) {
       const c = document.createElement('div');
       c.style.position = 'absolute';
       c.style.left = x + 'px'; c.style.top = y + 'px';
@@ -208,7 +214,8 @@ export const PriorityMatrixView: React.FC<PriorityMatrixViewProps> = ({
 
   const fireParticles = (x: number, y: number, cfg: CategoryConfig) => {
     const colors = [cfg.color, cfg.colorLight, '#FFFFFF'];
-    for (let i = 0; i < particleCount(24, tier); i++) {
+    // 🚨 OPTIMIZED: Capped at 12 for mid-tier
+    for (let i = 0; i < Math.min(24, particleCount(12, tier)); i++) {
       const p = document.createElement('div');
       p.style.position = 'absolute';
       p.style.left = x + 'px'; p.style.top = y + 'px';
@@ -346,7 +353,8 @@ export const PriorityMatrixView: React.FC<PriorityMatrixViewProps> = ({
   };
 
   const fireEmojiRain = (cfg: CategoryConfig) => {
-    for (let i = 0; i < particleCount(20, tier); i++) {
+    // 🚨 OPTIMIZED: Capped at 10
+    for (let i = 0; i < Math.min(20, particleCount(10, tier)); i++) {
       setTimeout(() => {
         const e = document.createElement('div');
         e.textContent = Math.random() > 0.5 ? cfg.emoji : cfg.secondaryEmoji;
@@ -398,7 +406,8 @@ export const PriorityMatrixView: React.FC<PriorityMatrixViewProps> = ({
 
   const fireMegaVictory = () => {
     const rainbow = ['#E11D48', '#6366F1', '#10B981', '#FBBF24', '#EC4899', '#A855F7'];
-    for (let i = 0; i < particleCount(120, tier); i++) {
+    // 🚨 OPTIMIZED: Capped at 50
+    for (let i = 0; i < Math.min(120, particleCount(50, tier)); i++) {
       setTimeout(() => {
         const c = document.createElement('div');
         c.style.position = 'absolute';
@@ -513,9 +522,10 @@ export const PriorityMatrixView: React.FC<PriorityMatrixViewProps> = ({
   const currentCfg = openQuadrant ? QUADRANT_CONFIGS[openQuadrant] : null;
 
   return (
-    <div className="relative w-full flex flex-col overflow-hidden" style={{ minHeight: 'calc(100dvh - 130px)' }}>
+    // 🚨 FIXED: Removed fixed height, added flex-1 to fill the screen and remove the gap
+    <div className="relative w-full flex-1 flex flex-col">
 
-      <div className="absolute inset-0 pointer-events-none z-0 overflow-hidden" aria-hidden="true">
+      <div className="absolute inset-0 pointer-events-none z-0 overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-b from-[#FDFBFF] via-[#F5F3FF] to-[#FDFBFF] dark:from-[#0F172A] dark:via-[#1E1B4B] dark:to-[#0F172A]" />
         <div className="absolute left-[-50%] w-[200%] h-[60px] opacity-35 blur-[8px]"
           style={{ top: '5%', background: 'linear-gradient(90deg, transparent, #8B5CF6, #6366F1, transparent)', transform: 'rotate(-12deg)', animation: 'prismFloat1 6s ease-in-out infinite' }} />
@@ -553,8 +563,8 @@ export const PriorityMatrixView: React.FC<PriorityMatrixViewProps> = ({
           <QuoteBanner />
         </div>
 
-        <div className="flex-1 min-h-0 flex items-center justify-center px-3 py-2">
-          <div className="relative w-full aspect-square mx-auto" style={{ maxWidth: 'min(100%, 72dvh)', maxHeight: '100%' }}>
+        <div className="flex-1 min-h-0 flex items-center justify-center p-0">
+          <div className="relative w-full aspect-square mx-auto" style={{ maxWidth: 'min(100%, 85dvh)', maxHeight: '100%' }}>
             <div className="absolute inset-[6%] rounded-full border border-dashed border-violet-400/40" style={{ animation: 'ringRotate 60s linear infinite' }} />
             <div className="absolute inset-[18%] rounded-full border border-indigo-300/30" />
             <div className="absolute inset-[28%] rounded-full border border-dotted border-violet-400/40" style={{ animation: 'ringRotate 40s linear infinite reverse' }} />
@@ -578,14 +588,14 @@ export const PriorityMatrixView: React.FC<PriorityMatrixViewProps> = ({
             </div>
             <div className="absolute left-1/2 bottom-[8%] -translate-x-1/2 inline-flex items-center gap-1 rounded-full border border-violet-300/40 dark:border-violet-500/40 bg-white/90 dark:bg-slate-800/90 backdrop-blur-md px-2.5 py-1 z-10 whitespace-nowrap">
               <span className="w-1 h-1 rounded-full bg-emerald-500" />
-              <span className="text-[8px] font-extrabold text-violet-600 dark:text-violet-300 tracking-wider">{completedTasks} {t('done_today')}</span>
+              <span className="text-[8px] font-extrabold text-violet-600 dark:text-violet-300 tracking-wider">{completedTasksCount} {t('done_today')}</span>
             </div>
 
             <motion.div
               key={totalTasks}
               initial={isLow ? false : { scale: 0.95 }}
               animate={{ scale: 1 }}
-              transition={isLow ? { duration: 0 } : { type: 'spring', stiffness: 300, damping: 20 }}
+              transition={isLow ? { duration: 0 } : { type: 'tween', ease: 'easeOut', duration: 0.3 }}
               className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full flex flex-col items-center justify-center z-10 bg-white/95 dark:bg-slate-800/95 backdrop-blur-xl"
               style={{ width: '40%', aspectRatio: '1', boxShadow: '0 12px 32px rgba(15,23,42,0.08), 0 0 0 1px rgba(255,255,255,0.8)' }}
             >
@@ -594,7 +604,7 @@ export const PriorityMatrixView: React.FC<PriorityMatrixViewProps> = ({
                 key={totalTasks}
                 initial={isLow ? false : { scale: 1.4, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
-                transition={isLow ? { duration: 0 } : { type: 'spring', stiffness: 500, damping: 15 }}
+                transition={isLow ? { duration: 0 } : { type: 'tween', ease: 'easeOut', duration: 0.3 }}
                 className="text-4xl font-extrabold text-slate-900 dark:text-white "
               >
                 {totalTasks}
@@ -632,7 +642,7 @@ export const PriorityMatrixView: React.FC<PriorityMatrixViewProps> = ({
                   whileHover={isLow ? undefined : { scale: 1.03 }}
                   whileTap={isLow ? undefined : { scale: 0.97 }}
                   animate={isLow ? { scale: 1 } : (isPulsing ? { scale: [1, 1.12, 1] } : { scale: 1 })}
-                  transition={isLow ? { duration: 0 } : (isPulsing ? { duration: 0.7, ease: 'easeInOut' } : { type: 'spring', stiffness: 400, damping: 25 })}
+                  transition={isLow ? { duration: 0 } : (isPulsing ? { duration: 0.7, ease: 'easeInOut' } : { type: 'tween', ease: 'easeOut', duration: 0.3 })}
                   className={`absolute ${positions[quadrantId]} z-[8] text-left rtl:text-right rounded-2xl bg-white/95 dark:bg-slate-800/95 backdrop-blur-xl p-2.5`}
                   style={{
                     width: '30%', maxWidth: '130px',
@@ -653,7 +663,7 @@ export const PriorityMatrixView: React.FC<PriorityMatrixViewProps> = ({
                       key={count}
                       initial={isLow ? false : { scale: 1.6, opacity: 0 }}
                       animate={{ scale: 1, opacity: 1 }}
-                      transition={isLow ? { duration: 0 } : { type: 'spring', stiffness: 500, damping: 15 }}
+                      transition={isLow ? { duration: 0 } : { type: 'tween', ease: 'easeOut', duration: 0.3 }}
                       className="text-[18px] font-black tracking-tighter leading-none"
                       style={{ color: config.color }}
                     >
@@ -677,7 +687,8 @@ export const PriorityMatrixView: React.FC<PriorityMatrixViewProps> = ({
           </div>
         </div>
 
-        <div className="flex-shrink-0" style={{ height: 'calc(80px + env(safe-area-inset-bottom))' }} />
+        {/* 🚨 FIXED: Increased spacer to 90px so it perfectly clears the tab bar */}
+        <div className="flex-shrink-0" style={{ height: 'calc(90px + env(safe-area-inset-bottom))' }} />
       </div>
 
       <AnimatePresence>
@@ -694,7 +705,7 @@ export const PriorityMatrixView: React.FC<PriorityMatrixViewProps> = ({
               initial={isLow ? false : { opacity: 0, scale: 0.9, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={isLow ? undefined : { opacity: 0, scale: 0.9, y: 20 }}
-              transition={isLow ? { duration: 0 } : { type: 'spring', stiffness: 400, damping: 30 }}
+              transition={isLow ? { duration: 0 } : { type: 'tween', ease: 'easeOut', duration: 0.3 }}
               className="fixed top-1/2 left-1/2 z-50 w-[92%] max-w-md max-h-[80vh] -translate-x-1/2 -translate-y-1/2 rounded-[28px] bg-white shadow-[0_30px_80px_rgba(15,23,42,0.4)] flex flex-col overflow-hidden"
             >
               <div className="flex items-center justify-between p-6 pb-4 shrink-0" style={{ borderBottom: `1px solid ${currentCfg.colorPale}` }}>

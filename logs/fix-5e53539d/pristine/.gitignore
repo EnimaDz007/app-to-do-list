@@ -1,0 +1,31 @@
+node_modules/
+build/
+dist/
+dev-dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+firebase-service-account.json
+data.json
+
+# Signing keys — DO NOT COMMIT
+*.keystore
+*.jks
+*.p12
+*.mobileprovision
+*.pem
+*.key
+
+# IDE / editors
+.idea/
+.vscode/
+*.swp
+
+# Capacitor / native build artifacts
+ios/App/Pods/
+ios/App/build/
+android/.gradle/
+android/app/build/
+android/build/

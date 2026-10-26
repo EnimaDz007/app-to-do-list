@@ -1,0 +1,552 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+}
+
+html, body {
+  overflow-x: hidden;
+  max-width: 100%;
+  width: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html {
+  font-size: 16px;
+  scroll-behavior: smooth;
+}
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
+/* 🚀 Performance: GPU acceleration for blur effects */
+.backdrop-blur-sm,
+.backdrop-blur-md,
+.backdrop-blur-lg,
+.backdrop-blur-xl {
+  will-change: backdrop-filter;
+  transform: translateZ(0);
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+}
+
+/* Reduce heavy transitions */
+.transition-all {
+  transition-property: background-color, border-color, color, fill, stroke, opacity, box-shadow, transform !important;
+}
+
+/* Disable expensive hover animations on small screens */
+@media (max-width: 480px) {
+  .hover\:scale-105:hover,
+  .hover\:scale-110:hover {
+    transform: none !important;
+  }
+}
+
+/* ⚡ Smart Adaptive Performance */
+
+html.perf-low #app-header,
+html.perf-low nav#bottom-tab-bar {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  background-color: #ffffff !important;
+}
+
+html.perf-low.dark #app-header,
+html.perf-low.dark nav#bottom-tab-bar {
+  background-color: #0f172a !important;
+}
+
+html.perf-low .backdrop-blur-xl,
+html.perf-low .backdrop-blur-lg,
+html.perf-low .backdrop-blur-md,
+html.perf-low .backdrop-blur-sm {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+html.perf-low .animate-pulse,
+html.perf-low .animate-ping,
+html.perf-low .animate-bounce,
+html.perf-low .animate-spin {
+  animation: none !important;
+}
+
+html.perf-low .transition-all,
+html.perf-low .transition-colors,
+html.perf-low .transition-transform {
+  transition-duration: 0.05s !important;
+}
+
+html.perf-low .shadow-2xl,
+html.perf-low .shadow-xl,
+html.perf-low .shadow-lg {
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08) !important;
+}
+
+/* ⚡ AGGRESSIVE: kill ALL motion on low-tier */
+html.perf-low *,
+html.perf-low *::before,
+html.perf-low *::after {
+  animation-duration: 0s !important;
+  animation-delay: 0s !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0s !important;
+  transition-delay: 0s !important;
+}
+
+/* ⚡ Remove gradient backgrounds (very expensive) */
+html.perf-low body,
+html.perf-low .min-h-screen {
+  background-image: none !important;
+  background-color: #f8fafc !important;
+}
+
+html.perf-low.dark body,
+html.perf-low.dark .min-h-screen {
+  background-color: #0f172a !important;
+}
+
+/* Mid-tier: moderate optimizations */
+html.perf-mid .backdrop-blur-xl {
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+}
+
+/* 🎨 UI THEME SYSTEM — user-selectable design themes */
+
+:root,
+[data-ui-theme="default"] {
+  --ui-accent: #7C3AED;
+  --ui-accent-light: #A78BFA;
+  --ui-accent-dark: #5B21B6;
+  --ui-accent-soft: rgba(124, 58, 237, 0.12);
+  --ui-bg: #FFFFFF;
+  --ui-card-bg: #FFFFFF;
+  --ui-card-border: #E2E8F0;
+  --ui-text: #0F172A;
+  --ui-text-muted: #94A3B8;
+  --ui-nav-bg: #FFFFFF;
+}
+
+[data-ui-theme="gold"] {
+  --ui-accent: #F59E0B;
+  --ui-accent-light: #FBBF24;
+  --ui-accent-dark: #B45309;
+  --ui-accent-soft: rgba(245, 158, 11, 0.12);
+  --ui-bg: #FFFFFF;
+  --ui-card-bg: #FFFFFF;
+  --ui-card-border: #E2E8F0;
+  --ui-text: #0F172A;
+  --ui-text-muted: #94A3B8;
+  --ui-nav-bg: #FFFFFF;
+}
+
+[data-ui-theme="orange"] {
+  --ui-accent: #EA580C;
+  --ui-accent-light: #FB923C;
+  --ui-accent-dark: #C2410C;
+  --ui-accent-soft: rgba(234, 88, 12, 0.12);
+  --ui-bg: #FBF8F3;
+  --ui-card-bg: #FFFFFF;
+  --ui-card-border: #F0E8DC;
+  --ui-text: #292524;
+  --ui-text-muted: #A8A29E;
+  --ui-nav-bg: #FBF8F3;
+}
+
+[data-ui-theme="emerald"] {
+  --ui-accent: #059669;
+  --ui-accent-light: #34D399;
+  --ui-accent-dark: #047857;
+  --ui-accent-soft: rgba(5, 150, 105, 0.12);
+  --ui-bg: #F0FDF9;
+  --ui-card-bg: #FFFFFF;
+  --ui-card-border: #D1FAE5;
+  --ui-text: #064E3B;
+  --ui-text-muted: #6EE7B7;
+  --ui-nav-bg: #F0FDF9;
+}
+
+[data-ui-theme="sky"] {
+  --ui-accent: #0284C7;
+  --ui-accent-light: #38BDF8;
+  --ui-accent-dark: #075985;
+  --ui-accent-soft: rgba(2, 132, 199, 0.12);
+  --ui-bg: #F0F9FF;
+  --ui-card-bg: #FFFFFF;
+  --ui-card-border: #BAE6FD;
+  --ui-text: #0C4A6E;
+  --ui-text-muted: #7DD3FC;
+  --ui-nav-bg: #F0F9FF;
+}
+
+[data-ui-theme="rose"] {
+  --ui-accent: #E11D48;
+  --ui-accent-light: #FB7185;
+  --ui-accent-dark: #9F1239;
+  --ui-accent-soft: rgba(225, 29, 72, 0.12);
+  --ui-bg: #FFF1F2;
+  --ui-card-bg: #FFFFFF;
+  --ui-card-border: #FECDD3;
+  --ui-text: #881337;
+  --ui-text-muted: #FDA4AF;
+  --ui-nav-bg: #FFF1F2;
+}
+
+.dark[data-ui-theme="default"],
+.dark[data-ui-theme="gold"],
+.dark[data-ui-theme="orange"],
+.dark[data-ui-theme="emerald"],
+.dark[data-ui-theme="sky"],
+.dark[data-ui-theme="rose"] {
+  --ui-bg: #0F172A;
+  --ui-card-bg: #1E293B;
+  --ui-card-border: #334155;
+  --ui-text: #F1F5F9;
+  --ui-text-muted: #94A3B8;
+  --ui-nav-bg: #0F172A;
+}
+
+/* 🐝 Bee animations for Honeycomb Hive */
+@keyframes beeFly1 {
+  0%   { transform: translate(0, 0) rotate(0deg); }
+  25%  { transform: translate(120px, -40px) rotate(8deg); }
+  50%  { transform: translate(240px, 30px) rotate(-6deg); }
+  75%  { transform: translate(140px, 90px) rotate(5deg); }
+  100% { transform: translate(0, 0) rotate(0deg); }
+}
+@keyframes beeFly2 {
+  0%   { transform: translate(0, 0) rotate(-5deg); }
+  25%  { transform: translate(80px, 60px) rotate(6deg); }
+  50%  { transform: translate(180px, -20px) rotate(-8deg); }
+  75%  { transform: translate(100px, -80px) rotate(4deg); }
+  100% { transform: translate(0, 0) rotate(-5deg); }
+}
+@keyframes beeFly3 {
+  0%   { transform: translate(0, 0) rotate(0deg) scaleX(-1); }
+  33%  { transform: translate(-180px, 40px) rotate(-10deg) scaleX(-1); }
+  66%  { transform: translate(-100px, -60px) rotate(8deg) scaleX(-1); }
+  100% { transform: translate(0, 0) rotate(0deg) scaleX(-1); }
+}
+
+/* ============ DETECTIVE BOARD ANIMATIONS ============ */
+@keyframes detScanLine {
+  0%   { top: -5%; opacity: 0; }
+  5%   { opacity: 1; }
+  95%  { opacity: 1; }
+  100% { top: 105%; opacity: 0; }
+}
+@keyframes detVignettePulse {
+  0%, 100% { opacity: 0.4; }
+  50%      { opacity: 1; }
+}
+@keyframes detFlashBang {
+  0%, 43%, 100% { opacity: 0; }
+  44%           { opacity: 0.2; }
+  45%           { opacity: 0; }
+  47%           { opacity: 0.1; }
+  48%           { opacity: 0; }
+}
+@keyframes detSuspenseFlicker {
+  0%, 100% { opacity: 0.4; }
+  50%      { opacity: 1; text-shadow: 0 0 20px #FCD34D; }
+}
+@keyframes detRecBlink {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.15; }
+}
+@keyframes detStringPulse {
+  0%, 100% { opacity: 0.9; }
+  50%      { opacity: 0.6; }
+}
+
+/* ═══════════════════════════════════════════
+   NESTED SUBTASKS — robust dark-mode support
+   ═══════════════════════════════════════════ */
+
+.subtask-block {
+  margin-top: 10px;
+  padding-left: 4px;
+  border-left: 2px solid #E2E8F0;
+}
+.dark .subtask-block {
+  border-left-color: rgba(148, 163, 184, 0.25);
+}
+
+.subtask-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0 6px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #94A3B8;
+}
+.dark .subtask-header {
+  color: #64748B;
+}
+
+.subtask-header-count {
+  background: rgba(99, 102, 241, 0.12);
+  color: #6366F1;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 700;
+}
+.dark .subtask-header-count {
+  background: rgba(167, 139, 250, 0.18);
+  color: #C4B5FD;
+}
+
+.subtask-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.subtask-item {
+  position: relative;
+}
+
+.subtask-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 0;
+  padding-left: calc(var(--depth, 0) * 22px);
+  border-radius: 6px;
+  transition: background 0.15s ease;
+}
+
+.subtask-row:hover {
+  background: rgba(99, 102, 241, 0.06);
+}
+.dark .subtask-row:hover {
+  background: rgba(167, 139, 250, 0.10);
+}
+
+.subtask-chevron,
+.subtask-chevron-spacer {
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 16px;
+}
+
+.subtask-chevron {
+  background: none;
+  border: none;
+  color: #94A3B8;
+  cursor: pointer;
+  font-size: 10px;
+  line-height: 1;
+  padding: 0;
+}
+.dark .subtask-chevron {
+  color: #64748B;
+}
+
+.subtask-check {
+  width: 14px;
+  height: 14px;
+  accent-color: #6366F1;
+  cursor: pointer;
+  flex: 0 0 14px;
+}
+.dark .subtask-check {
+  accent-color: #A78BFA;
+}
+
+.subtask-title {
+  flex: 1;
+  font-family: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: #0F172A;
+  line-height: 1.4;
+  cursor: text;
+  user-select: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dark .subtask-title {
+  color: #F1F5F9;
+}
+
+.subtask-item:has(> .subtask-list) > .subtask-row > .subtask-title {
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+.dark .subtask-item:has(> .subtask-list) > .subtask-row > .subtask-title {
+  color: #FFFFFF;
+}
+.subtask-title.is-done {
+  text-decoration: line-through;
+  color: #64748B;
+  opacity: 0.75;
+}
+.dark .subtask-title.is-done {
+  color: #94A3B8;
+}
+
+.subtask-edit-input {
+  flex: 1;
+  background: #F8FAFC;
+  border: 1px solid #6366F1;
+  border-radius: 6px;
+  padding: 3px 7px;
+  color: #0F172A;
+  font-size: 13px;
+  outline: none;
+}
+.dark .subtask-edit-input {
+  background: #0F172A;
+  color: #F1F5F9;
+  border-color: #A78BFA;
+}
+
+.subtask-pill {
+  font-size: 10px;
+  font-weight: 700;
+  background: rgba(99, 102, 241, 0.12);
+  color: #6366F1;
+  padding: 1px 7px;
+  border-radius: 8px;
+  flex: 0 0 auto;
+}
+.dark .subtask-pill {
+  background: rgba(167, 139, 250, 0.18);
+  color: #C4B5FD;
+}
+
+.subtask-action {
+  background: none;
+  border: 1px solid transparent;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  color: #94A3B8;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.dark .subtask-action {
+  color: #64748B;
+}
+
+.subtask-row:hover .subtask-action {
+  opacity: 1;
+}
+
+.subtask-action:hover {
+  color: #6366F1;
+  border-color: #CBD5E1;
+}
+.dark .subtask-action:hover {
+  color: #C4B5FD;
+  border-color: #475569;
+}
+
+.subtask-delete:hover {
+  color: #F43F5E;
+  border-color: #F43F5E;
+}
+
+.subtask-add-form {
+  display: flex;
+  gap: 6px;
+  padding: 4px 0 6px 28px;
+  align-items: center;
+}
+
+.subtask-add-form input {
+  flex: 1;
+  background: #F8FAFC;
+  border: 1px solid #CBD5E1;
+  border-radius: 6px;
+  padding: 5px 9px;
+  color: #0F172A;
+  font-size: 13px;
+  outline: none;
+}
+.dark .subtask-add-form input {
+  background: #0F172A;
+  border-color: #334155;
+  color: #F1F5F9;
+}
+
+.subtask-add-form input:focus {
+  border-color: #6366F1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+}
+
+.subtask-add-form button {
+  background: rgba(99, 102, 241, 0.12);
+  border: none;
+  border-radius: 6px;
+  padding: 5px 10px;
+  color: #6366F1;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.dark .subtask-add-form button {
+  background: rgba(167, 139, 250, 0.18);
+  color: #C4B5FD;
+}
+
+.subtask-add-form button:hover {
+  background: #6366F1;
+  color: #FFFFFF;
+}
+
+.subtask-add-btn {
+  background: none;
+  border: 1px dashed #CBD5E1;
+  border-radius: 6px;
+  padding: 5px 10px;
+  color: #64748B;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-top: 6px;
+  margin-left: 6px;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+.dark .subtask-add-btn {
+  border-color: #334155;
+  color: #94A3B8;
+}
+
+.subtask-add-btn:hover {
+  border-color: #6366F1;
+  color: #6366F1;
+}
+.dark .subtask-add-btn:hover {
+  border-color: #A78BFA;
+  color: #C4B5FD;
+}

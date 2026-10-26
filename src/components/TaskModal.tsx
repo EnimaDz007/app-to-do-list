@@ -358,8 +358,12 @@ export const TaskModal: React.FC<TaskModalProps> = ({
     }
   }, [title]);
 
+  // FIX: Ensure the mic is stopped when the modal closes or the component unmounts
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      stopListening();
+      return;
+    }
     userEditedTitleRef.current = false;
     setAppliedTemplateName(null);
     setIsTemplatePickerOpen(false);
@@ -411,6 +415,13 @@ export const TaskModal: React.FC<TaskModalProps> = ({
     // eslint-disable-next-line
   }, [isOpen, editingTask, defaultQuadrant, defaultDueDate]);
 
+  // FIX: Guarantee unmount cleanup
+  useEffect(() => {
+    return () => {
+      stopListening();
+    };
+  }, [stopListening]);
+
   // Auto-recompute reminder fireAt when the due date changes
   useEffect(() => {
     if (!dueDate) return;
@@ -422,25 +433,30 @@ export const TaskModal: React.FC<TaskModalProps> = ({
     // eslint-disable-next-line
   }, [dueDate]);
 
+  // FIX: Debounce the transcript parsing so it doesn't freeze the UI on every spoken word
   useEffect(() => {
     if (!transcript) return;
     if (userEditedTitleRef.current) return;
 
-    const relativeTime = extractRelativeTime(transcript);
-    const cleanedTranscript = relativeTime ? stripRelativeTime(transcript) : transcript;
-    const parsed = parseSpokenTask(cleanedTranscript);
+    const timer = setTimeout(() => {
+      const relativeTime = extractRelativeTime(transcript);
+      const cleanedTranscript = relativeTime ? stripRelativeTime(transcript) : transcript;
+      const parsed = parseSpokenTask(cleanedTranscript);
 
-    setTitle(parsed.title || cleanedTranscript || transcript);
-    if (parsed.description) setDescription(parsed.description);
-    setCategory(parsed.category);
-    setQuadrant(parsed.quadrant);
-    if (parsed.estimatedMinutes) setEstimatedMinutes(parsed.estimatedMinutes);
-    if (parsed.contexts && parsed.contexts.length > 0) {
-      setContexts(parsed.contexts);
-    }
+      setTitle(parsed.title || cleanedTranscript || transcript);
+      if (parsed.description) setDescription(parsed.description);
+      setCategory(parsed.category);
+      setQuadrant(parsed.quadrant);
+      if (parsed.estimatedMinutes) setEstimatedMinutes(parsed.estimatedMinutes);
+      if (parsed.contexts && parsed.contexts.length > 0) {
+        setContexts(parsed.contexts);
+      }
 
-    if (relativeTime) setDueDate(dateToLocalInputString(relativeTime));
-    else if (parsed.dueDate) setDueDate(parsed.dueDate);
+      if (relativeTime) setDueDate(dateToLocalInputString(relativeTime));
+      else if (parsed.dueDate) setDueDate(parsed.dueDate);
+    }, 400); // 400ms debounce
+
+    return () => clearTimeout(timer);
   }, [transcript]);
 
   if (!isOpen) return null;

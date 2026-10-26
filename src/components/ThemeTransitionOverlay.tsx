@@ -28,13 +28,13 @@ export const ThemeTransitionOverlay: React.FC<ThemeTransitionOverlayProps> = ({ 
       className="fixed inset-0 z-[200] pointer-events-none overflow-hidden select-none"
       aria-hidden="true"
     >
-      {/* Blur layer */}
+      {/* 🚀 PERFORMANCE FIX: Static blur, animated opacity */}
       <div
         className="absolute inset-0 tt-blur-layer"
         style={{
           animationDuration: `${total}ms`,
-          WebkitBackdropFilter: 'blur(0px)',
-          backdropFilter: 'blur(0px)',
+          WebkitBackdropFilter: 'blur(20px)',
+          backdropFilter: 'blur(20px)',
         }}
       />
 
@@ -63,12 +63,13 @@ export const ThemeTransitionOverlay: React.FC<ThemeTransitionOverlayProps> = ({ 
       </div>
 
       <style>{`
-        .tt-blur-layer { animation-name: ttBlurRamp; animation-timing-function: ease-in-out; animation-fill-mode: forwards; }
-        @keyframes ttBlurRamp {
-          0%   { backdrop-filter: blur(0px);  -webkit-backdrop-filter: blur(0px); }
-          18%  { backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
-          72%  { backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
-          100% { backdrop-filter: blur(0px);  -webkit-backdrop-filter: blur(0px); }
+        /* 🚀 PERFORMANCE FIX: Animate opacity instead of backdrop-filter */
+        .tt-blur-layer { animation-name: ttBlurOpacity; animation-timing-function: ease-in-out; animation-fill-mode: forwards; will-change: opacity; opacity: 0; }
+        @keyframes ttBlurOpacity {
+          0%   { opacity: 0; }
+          18%  { opacity: 1; }
+          72%  { opacity: 1; }
+          100% { opacity: 0; }
         }
 
         .tt-vignette {
@@ -77,7 +78,7 @@ export const ThemeTransitionOverlay: React.FC<ThemeTransitionOverlayProps> = ({ 
         }
         @keyframes ttVignetteRamp { 0% { opacity: 0; } 18% { opacity: 1; } 72% { opacity: 1; } 100% { opacity: 0; } }
 
-        .tt-rune-sweep { animation-name: ttRuneSweep; animation-timing-function: cubic-bezier(0.15,0.6,0.4,1); animation-fill-mode: forwards; }
+        .tt-rune-sweep { animation-name: ttRuneSweep; animation-timing-function: cubic-bezier(0.15,0.6,0.4,1); animation-fill-mode: forwards; will-change: transform, opacity; }
         @keyframes ttRuneSweep {
           0%   { transform: translateX(0) skewX(-14deg); opacity: 0; }
           25%  { opacity: 1; }
@@ -90,7 +91,7 @@ export const ThemeTransitionOverlay: React.FC<ThemeTransitionOverlayProps> = ({ 
         .bt-veil { position: absolute; inset: 0; background: radial-gradient(ellipse 62% 52% at 50% 46%, rgba(120,58,14,0.42) 0%, rgba(24,8,3,0.72) 58%, rgba(0,0,0,0.86) 100%); animation: btVeil 2200ms ease-out forwards; }
         @keyframes btVeil { 0% { opacity: 0; } 12% { opacity: 1; } 84% { opacity: 1; } 100% { opacity: 0; } }
 
-        .bt-halo { position: absolute; top: 50%; left: 50%; width: 62vmin; height: 62vmin; border-radius: 50%; background: radial-gradient(circle, rgba(255,225,150,0.85) 0%, rgba(224,166,74,0.35) 32%, transparent 68%); filter: blur(8px); opacity: 0; animation: btHalo 2200ms cubic-bezier(0.3,0.6,0.3,1) forwards; }
+        .bt-halo { position: absolute; top: 50%; left: 50%; width: 62vmin; height: 62vmin; border-radius: 50%; background: radial-gradient(circle, rgba(255,225,150,0.85) 0%, rgba(224,166,74,0.35) 32%, transparent 68%); filter: blur(8px); opacity: 0; animation: btHalo 2200ms cubic-bezier(0.3,0.6,0.3,1) forwards; will-change: transform, opacity; }
         @keyframes btHalo {
           0%   { opacity: 0;   transform: translate(-50%,-50%) scale(0.35); }
           26%  { opacity: 0.45;transform: translate(-50%,-50%) scale(0.6); }
@@ -98,7 +99,7 @@ export const ThemeTransitionOverlay: React.FC<ThemeTransitionOverlayProps> = ({ 
           100% { opacity: 0;   transform: translate(-50%,-50%) scale(1.5); }
         }
 
-        .bt-book { position: absolute; top: 50%; left: 50%; width: min(46vmin, 280px); aspect-ratio: 5 / 6.6; perspective: 1500px; perspective-origin: 0% 50%; transform-style: preserve-3d; animation: btBookIn 2200ms cubic-bezier(0.35,0.05,0.25,1) forwards; }
+        .bt-book { position: absolute; top: 50%; left: 50%; width: min(46vmin, 280px); aspect-ratio: 5 / 6.6; perspective: 1500px; perspective-origin: 0% 50%; transform-style: preserve-3d; animation: btBookIn 2200ms cubic-bezier(0.35,0.05,0.25,1) forwards; will-change: transform, opacity; }
         @keyframes btBookIn {
           0%   { opacity: 0; transform: translate(-50%,-44%) scale(0.8) rotateX(20deg) rotateZ(-5deg); }
           20%  { opacity: 1; transform: translate(-50%,-47%) scale(0.92) rotateX(9deg) rotateZ(-2deg); }
@@ -123,7 +124,7 @@ export const ThemeTransitionOverlay: React.FC<ThemeTransitionOverlayProps> = ({ 
         .bt-rule { width: 46%; height: 1px; opacity: 0; background: linear-gradient(90deg, transparent, rgba(200,162,92,0.9), transparent); animation: btFade 680ms ease-out 1440ms forwards; }
         @keyframes btFade { to { opacity: 1; } }
 
-        .bt-cover { position: absolute; inset: 0; transform-origin: left center; transform-style: preserve-3d; transform: rotateY(0deg); animation: btCover 2200ms cubic-bezier(0.5,0.05,0.28,1) forwards; }
+        .bt-cover { position: absolute; inset: 0; transform-origin: left center; transform-style: preserve-3d; transform: rotateY(0deg); animation: btCover 2200ms cubic-bezier(0.5,0.05,0.28,1) forwards; will-change: transform; }
         @keyframes btCover { 0%, 40% { transform: rotateY(0deg); } 50% { transform: rotateY(-16deg); } 55% { transform: rotateY(-7deg); } 76% { transform: rotateY(-166deg); } 100% { transform: rotateY(-172deg); } }
 
         .bt-face { position: absolute; inset: 0; border-radius: 3px 9px 9px 3px; overflow: hidden; backface-visibility: hidden; -webkit-backface-visibility: hidden; background: linear-gradient(152deg, #b6404a 0%, #8e1d29 22%, #661320 52%, #3c0810 82%, #230409 100%); box-shadow: inset 0 3px 10px rgba(255,205,205,0.26), inset 0 -14px 34px rgba(0,0,0,0.7), inset 0 0 110px rgba(0,0,0,0.5), 0 26px 60px rgba(0,0,0,0.85), 0 0 0 1px rgba(0,0,0,0.9); }
@@ -137,19 +138,19 @@ export const ThemeTransitionOverlay: React.FC<ThemeTransitionOverlayProps> = ({ 
         .bt-emblem { position: absolute; top: 50%; left: 50%; width: 44%; transform: translate(-50%,-62%); opacity: 0.92; }
         .bt-lining { position: absolute; inset: 0; border-radius: 3px 9px 9px 3px; background: linear-gradient(152deg, #33161b 0%, #200a0c 58%, #0d0203 100%); transform: rotateY(180deg); backface-visibility: hidden; -webkit-backface-visibility: hidden; box-shadow: inset 0 0 54px rgba(0,0,0,0.9), inset 0 0 0 2px rgba(214,178,94,0.42); }
 
-        .bt-flash { position: absolute; top: 50%; left: 50%; width: 20vmin; height: 20vmin; border-radius: 50%; background: radial-gradient(circle, rgba(255,246,214,0.95) 0%, rgba(240,190,100,0.4) 42%, transparent 72%); opacity: 0; animation: btFlash 2200ms cubic-bezier(0.2,0.7,0.3,1) forwards; }
+        .bt-flash { position: absolute; top: 50%; left: 50%; width: 20vmin; height: 20vmin; border-radius: 50%; background: radial-gradient(circle, rgba(255,246,214,0.95) 0%, rgba(240,190,100,0.4) 42%, transparent 72%); opacity: 0; animation: btFlash 2200ms cubic-bezier(0.2,0.7,0.3,1) forwards; will-change: transform, opacity; }
         @keyframes btFlash { 0%, 44% { opacity: 0; transform: translate(-50%,-50%) scale(0.2); } 56% { opacity: 1; transform: translate(-50%,-50%) scale(1.4); } 100% { opacity: 0; transform: translate(-50%,-50%) scale(8); } }
 
-        .bt-spark { position: absolute; top: 50%; left: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%; background: radial-gradient(circle, #fffbe0 0%, #f2d79a 42%, rgba(220,180,100,0.35) 72%, transparent 100%); box-shadow: 0 0 10px #e8cb8e, 0 0 22px rgba(232,203,142,0.65); opacity: 0; animation: btSpark 1200ms cubic-bezier(0.14,0.62,0.4,1) forwards; }
+        .bt-spark { position: absolute; top: 50%; left: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%; background: radial-gradient(circle, #fffbe0 0%, #f2d79a 42%, rgba(220,180,100,0.35) 72%, transparent 100%); box-shadow: 0 0 10px #e8cb8e, 0 0 22px rgba(232,203,142,0.65); opacity: 0; animation: btSpark 1200ms cubic-bezier(0.14,0.62,0.4,1) forwards; will-change: transform, opacity; }
         @keyframes btSpark { 0% { opacity: 0; transform: translate(0,0) scale(0.25); } 18% { opacity: 1; transform: translate(calc(var(--x) * 0.14), calc(var(--y) * 0.14)) scale(1.25); } 100% { opacity: 0; transform: translate(var(--x), var(--y)) scale(0.35); } }
 
-        .bt-mote { position: absolute; width: 3px; height: 3px; border-radius: 50%; background: radial-gradient(circle, #fffbe0 0%, rgba(226,190,116,0.5) 62%, transparent 100%); box-shadow: 0 0 8px rgba(232,203,142,0.9); opacity: 0; animation: btMote 1450ms ease-out forwards; }
+        .bt-mote { position: absolute; width: 3px; height: 3px; border-radius: 50%; background: radial-gradient(circle, #fffbe0 0%, rgba(226,190,116,0.5) 62%, transparent 100%); box-shadow: 0 0 8px rgba(232,203,142,0.9); opacity: 0; animation: btMote 1450ms ease-out forwards; will-change: transform, opacity; }
         @keyframes btMote { 0% { opacity: 0; transform: translateY(0) scale(0.55); } 28% { opacity: 0.9; transform: translateY(-3vmin) scale(0.9); } 100% { opacity: 0; transform: translateY(-20vmin) scale(0.25); } }
 
         /* ═══════════════════ CLASSIC ═══════════════════ */
-        .tt-grid-line-v { animation: ttGridV 1800ms ease-out forwards; transform-origin: center; }
+        .tt-grid-line-v { animation: ttGridV 1800ms ease-out forwards; transform-origin: center; will-change: transform, opacity; }
         @keyframes ttGridV { 0% { transform: scaleY(0); opacity: 0; } 30% { transform: scaleY(1); opacity: 1; } 70% { transform: scaleY(1); opacity: 1; } 100% { transform: scaleY(1); opacity: 0; } }
-        .tt-grid-line-h { animation: ttGridH 1800ms ease-out forwards; transform-origin: center; }
+        .tt-grid-line-h { animation: ttGridH 1800ms ease-out forwards; transform-origin: center; will-change: transform, opacity; }
         @keyframes ttGridH { 0% { transform: scaleX(0); opacity: 0; } 30% { transform: scaleX(1); opacity: 1; } 70% { transform: scaleX(1); opacity: 1; } 100% { transform: scaleX(1); opacity: 0; } }
 
         /* ═══════════════════ NEUMORPHIC ═══════════════════ */
@@ -191,7 +192,7 @@ export const ThemeTransitionOverlay: React.FC<ThemeTransitionOverlayProps> = ({ 
         }
 
         /* ═══════════════════ STACKED ═══════════════════ */
-        .tt-fall-card { position: absolute; animation: ttFallCard 1800ms cubic-bezier(0.4,0,0.2,1) forwards; }
+        .tt-fall-card { position: absolute; animation: ttFallCard 1800ms cubic-bezier(0.4,0,0.2,1) forwards; will-change: transform, opacity; }
         @keyframes ttFallCard {
           0%   { transform: translate(-50%,-110vh) rotate(-8deg); opacity: 0; }
           50%  { transform: translate(-50%,0) rotate(0deg); opacity: 1; }
@@ -200,14 +201,14 @@ export const ThemeTransitionOverlay: React.FC<ThemeTransitionOverlayProps> = ({ 
         }
 
         /* ═══════════════════ RADIAL ═══════════════════ */
-        .tt-ring-expand { position: absolute; left: 50%; top: 50%; animation: ttRingExpand 1800ms cubic-bezier(0.2,0.8,0.4,1) forwards; }
+        .tt-ring-expand { position: absolute; left: 50%; top: 50%; animation: ttRingExpand 1800ms cubic-bezier(0.2,0.8,0.4,1) forwards; will-change: transform, opacity; }
         @keyframes ttRingExpand {
           0%   { transform: translate(-50%,-50%) scale(0.15); opacity: 0; }
           45%  { transform: translate(-50%,-50%) scale(1); opacity: 0.9; }
           80%  { transform: translate(-50%,-50%) scale(2); opacity: 0.6; }
           100% { transform: translate(-50%,-50%) scale(2.8); opacity: 0; }
         }
-        .tt-dot-fly { position: absolute; left: 50%; top: 50%; animation: ttDotFly 1800ms cubic-bezier(0.2,0.8,0.4,1) forwards; }
+        .tt-dot-fly { position: absolute; left: 50%; top: 50%; animation: ttDotFly 1800ms cubic-bezier(0.2,0.8,0.4,1) forwards; will-change: transform, opacity; }
         @keyframes ttDotFly {
           0%   { transform: translate(-50%,-50%) scale(0.2); opacity: 0; }
           25%  { opacity: 1; }
@@ -216,7 +217,7 @@ export const ThemeTransitionOverlay: React.FC<ThemeTransitionOverlayProps> = ({ 
         }
 
         /* ═══════════════════ TAROT ═══════════════════ */
-        .tt-tarot-card { position: absolute; left: 50%; top: 50%; animation: ttTarotCard 1900ms cubic-bezier(0.34,1.56,0.64,1) forwards; }
+        .tt-tarot-card { position: absolute; left: 50%; top: 50%; animation: ttTarotCard 1900ms cubic-bezier(0.34,1.56,0.64,1) forwards; will-change: transform, opacity; }
         @keyframes ttTarotCard {
           0%   { transform: translate(-50%, calc(-50% + 40vh)) rotate(0deg) scale(0.3); opacity: 0; }
           35%  { transform: translate(calc(-50% + var(--tx)), calc(-50% + var(--ty))) rotate(var(--rot)) scale(1); opacity: 1; }
@@ -225,7 +226,7 @@ export const ThemeTransitionOverlay: React.FC<ThemeTransitionOverlayProps> = ({ 
         }
 
         /* ═══════════════════ VENDING ═══════════════════ */
-        .tt-coin { position: absolute; left: 50%; font-size: clamp(22px, 5vmin, 32px); animation: ttCoin 1900ms cubic-bezier(0.6,0,0.4,1) forwards; }
+        .tt-coin { position: absolute; left: 50%; font-size: clamp(22px, 5vmin, 32px); animation: ttCoin 1900ms cubic-bezier(0.6,0,0.4,1) forwards; will-change: transform, opacity; }
         @keyframes ttCoin {
           0%   { transform: translate(-50%,-80vh) rotate(0deg); opacity: 0; }
           15%  { opacity: 1; }
@@ -259,14 +260,14 @@ export const ThemeTransitionOverlay: React.FC<ThemeTransitionOverlayProps> = ({ 
         }
 
         /* ═══════════════════ KANBAN ═══════════════════ */
-        .tt-col-slide { position: absolute; animation: ttColSlide 1800ms cubic-bezier(0.34,1.56,0.64,1) forwards; }
+        .tt-col-slide { position: absolute; animation: ttColSlide 1800ms cubic-bezier(0.34,1.56,0.64,1) forwards; will-change: transform, opacity; }
         @keyframes ttColSlide {
           0%   { transform: translate(calc(-50% + var(--from)), -50%) scale(0.7); opacity: 0; }
           50%  { transform: translate(-50%,-50%) scale(1); opacity: 1; }
           80%  { transform: translate(-50%,-50%) scale(1); opacity: 1; }
           100% { transform: translate(-50%,-50%) scale(0.9); opacity: 0; }
         }
-        .tt-kcard { position: absolute; animation: ttKCard 1800ms cubic-bezier(0.34,1.56,0.64,1) forwards; }
+        .tt-kcard { position: absolute; animation: ttKCard 1800ms cubic-bezier(0.34,1.56,0.64,1) forwards; will-change: transform, opacity; }
         @keyframes ttKCard {
           0%   { transform: translate(-50%,-45vh) scale(0.6); opacity: 0; }
           55%  { transform: translate(-50%,0) scale(1.05); opacity: 1; }

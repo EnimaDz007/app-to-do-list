@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useTransition } from 'react';
 import { Plus, Smartphone, Tablet, Monitor, Flame, Settings, Timer, Mic, Sun, Moon, Palette, Target, Sparkles } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { DeviceFrameMode } from '../types';
@@ -84,7 +84,7 @@ const COPY: Record<LocalLang, {
   },
 };
 
-export const Header: React.FC<HeaderProps> = ({
+export const Header: React.FC<HeaderProps> = React.memo(({
   completedCount,
   totalCount,
   streakCount,
@@ -102,23 +102,23 @@ export const Header: React.FC<HeaderProps> = ({
   const { language, t, isRTL } = useLanguage();
   const { isDark, toggleTheme } = useTheme();
   const [isLayoutPickerOpen, setIsLayoutPickerOpen] = useState(false);
+  
+  // 🚨 PERFORMANCE FIX: Prevent the theme toggle from freezing the UI
+  const [isPending, startTransition] = useTransition();
 
   const lang = (language as LocalLang) || 'en';
   const copy = COPY[lang] ?? COPY.en;
 
   const percent = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
 
-  const localeMap: Record<Language, string> = {
-    en: 'en-US',
-    fr: 'fr-FR',
-    ar: 'ar-EG',
-  };
-
-  const todayStr = new Intl.DateTimeFormat(localeMap[language] || 'en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-  }).format(new Date());
+  const todayStr = useMemo(() => {
+    const localeMap: Record<Language, string> = { en: 'en-US', fr: 'fr-FR', ar: 'ar-EG' };
+    return new Intl.DateTimeFormat(localeMap[language] || 'en-US', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+    }).format(new Date());
+  }, [language]);
 
   return (
     <>
@@ -128,10 +128,10 @@ export const Header: React.FC<HeaderProps> = ({
       >
         <div className="flex items-center justify-between gap-1.5 sm:gap-2">
           <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
-            <div className="shrink-0">
+            <div className="shrink-0 pointer-events-none">
               <AppLogo size={44} />
             </div>
-            <div className="min-w-0">
+            <div className="min-w-0 pointer-events-none">
               <div className="flex items-center gap-1.5 flex-nowrap">
                 <h1 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white tracking-tight leading-tight whitespace-nowrap">
                   {t('app_title')}
@@ -161,8 +161,8 @@ export const Header: React.FC<HeaderProps> = ({
                                           : 'hover:text-slate-900 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-700/50'
                 }`}
               >
-                <Smartphone className="w-3 h-3" />
-                <span>{t('device_iphone')}</span>
+                <Smartphone className="w-3 h-3 pointer-events-none" />
+                <span className="pointer-events-none">{t('device_iphone')}</span>
               </button>
               <button
                 id="btn-mode-android"
@@ -173,8 +173,8 @@ export const Header: React.FC<HeaderProps> = ({
                                            : 'hover:text-slate-900 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-700/50'
                 }`}
               >
-                <Tablet className="w-3 h-3" />
-                <span>{t('device_android')}</span>
+                <Tablet className="w-3 h-3 pointer-events-none" />
+                <span className="pointer-events-none">{t('device_android')}</span>
               </button>
               <button
                 id="btn-mode-responsive"
@@ -185,8 +185,8 @@ export const Header: React.FC<HeaderProps> = ({
                                               : 'hover:text-slate-900 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-700/50'
                 }`}
               >
-                <Monitor className="w-3 h-3" />
-                <span>{t('device_full')}</span>
+                <Monitor className="w-3 h-3 pointer-events-none" />
+                <span className="pointer-events-none">{t('device_full')}</span>
               </button>
             </div>
 
@@ -197,7 +197,7 @@ export const Header: React.FC<HeaderProps> = ({
               title={copy.milestones}
               aria-label={copy.milestones}
             >
-              <Target className="w-4 h-4 text-rose-500" />
+              <Target className="w-4 h-4 text-rose-500 pointer-events-none" />
             </button>
 
             <button
@@ -207,17 +207,23 @@ export const Header: React.FC<HeaderProps> = ({
               title={copy.changeLayout}
               aria-label={copy.changeLayout}
             >
-              <Palette className="w-4 h-4 text-purple-500" />
+              <Palette className="w-4 h-4 text-purple-500 pointer-events-none" />
             </button>
 
             <button
               id="btn-toggle-theme"
-              onClick={() => { triggerHaptic('light'); toggleTheme(); }}
+              onClick={() => { 
+                triggerHaptic('light'); 
+                // 🚨 PERFORMANCE FIX: Render the theme change in the background
+                startTransition(() => {
+                  toggleTheme(); 
+                });
+              }}
               className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200/80 dark:border-slate-700/60 transition cursor-pointer shrink-0"
               title={isDark ? copy.switchLight : copy.switchDark}
               aria-label={copy.toggleTheme}
             >
-              {isDark ? <Sun className="w-4 h-4 text-amber-500" /> : <Moon className="w-4 h-4 text-indigo-500" />}
+              {isDark ? <Sun className="w-4 h-4 text-amber-500 pointer-events-none" /> : <Moon className="w-4 h-4 text-indigo-500 pointer-events-none" />}
             </button>
 
             <button
@@ -227,8 +233,8 @@ export const Header: React.FC<HeaderProps> = ({
               title={copy.startFocus}
               aria-label={copy.focusTimer}
             >
-              <Timer className="w-4 h-4" />
-              <span className="hidden sm:inline">{copy.focus}</span>
+              <Timer className="w-4 h-4 pointer-events-none" />
+              <span className="hidden sm:inline pointer-events-none">{copy.focus}</span>
             </button>
 
             <button
@@ -238,16 +244,16 @@ export const Header: React.FC<HeaderProps> = ({
               title={t('settings_btn')}
               aria-label={t('settings_btn')}
             >
-              <Settings className="w-4 h-4 text-slate-600 dark:text-slate-300" />
+              <Settings className="w-4 h-4 text-slate-600 dark:text-slate-300 pointer-events-none" />
             </button>
           </div>
         </div>
 
         <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-800/60 flex items-center justify-between text-xs gap-2">
           <div className="flex items-center gap-1.5 shrink-0">
-            <div className="inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-amber-400 to-orange-500 px-2.5 py-1 text-[10px] font-bold text-white shadow-sm shadow-orange-500/30 transition-transform hover:scale-105">
-              <Flame className="w-3 h-3 fill-white/30 text-white" />
-              <span className="font-extrabold">
+            <div className="inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-amber-400 to-orange-500 px-2.5 py-1 text-[10px] font-bold text-white shadow-sm shadow-orange-500/30 transition-transform hover:scale-105 pointer-events-none">
+              <Flame className="w-3 h-3 fill-white/30 text-white pointer-events-none" />
+              <span className="font-extrabold pointer-events-none">
                 {streakCount} {copy.streakSuffix}
               </span>
             </div>
@@ -257,12 +263,12 @@ export const Header: React.FC<HeaderProps> = ({
               className="inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-violet-500 to-fuchsia-500 px-2.5 py-1 text-[10px] font-bold text-white shadow-sm shadow-violet-500/30 transition-transform hover:scale-105 active:scale-95 cursor-pointer"
               title={copy.karmaTooltip}
             >
-              <Sparkles className="w-3 h-3" />
-              <span className="font-extrabold">{karmaTotal}</span>
+              <Sparkles className="w-3 h-3 pointer-events-none" />
+              <span className="font-extrabold pointer-events-none">{karmaTotal}</span>
             </button>
           </div>
 
-          <div className="flex items-center gap-2 min-w-0">
+          <div className="flex items-center gap-2 min-w-0 pointer-events-none">
             <span className="text-slate-500 dark:text-slate-400 text-[10px] whitespace-nowrap">
               {copy.doneLabel}{' '}
               <strong className="text-slate-800 dark:text-white font-medium">{completedCount}</strong>/{totalCount}
@@ -284,4 +290,6 @@ export const Header: React.FC<HeaderProps> = ({
       />
     </>
   );
-};
+});
+
+Header.displayName = 'Header';

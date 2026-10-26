@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useTransition } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Check, ChevronLeft, ChevronRight, X,
@@ -105,18 +105,24 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
   const isRtl = lang === 'ar';
 
   const [current, setCurrent] = useState(0);
+  const [isPending, startTransition] = useTransition();
+  
   const slide = SLIDES[current];
   const isLast = current === SLIDES.length - 1;
 
   const handleNext = () => {
     triggerHaptic('medium');
     if (isLast) onComplete();
-    else setCurrent((i) => Math.min(i + 1, SLIDES.length - 1));
+    else startTransition(() => {
+      setCurrent((i) => Math.min(i + 1, SLIDES.length - 1));
+    });
   };
 
   const handleBack = () => {
     triggerHaptic('light');
-    setCurrent((i) => Math.max(i - 1, 0));
+    startTransition(() => {
+      setCurrent((i) => Math.max(i - 1, 0));
+    });
   };
 
   const handleSkip = () => {
@@ -126,7 +132,9 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
 
   const handleDotClick = (index: number) => {
     triggerHaptic('light');
-    setCurrent(index);
+    startTransition(() => {
+      setCurrent(index);
+    });
   };
 
   const NextIcon = isRtl ? ChevronLeft : ChevronRight;
@@ -143,32 +151,32 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
           transition={{ duration: 0.2 }}
           className="fixed inset-0 z-[100] bg-slate-950 flex flex-col"
         >
-          <div className="flex justify-end p-4 pt-6 shrink-0">
+          <div className="flex justify-end p-4 pt-6 shrink-0 z-10 relative">
             {!isLast && (
               <button
                 onClick={handleSkip}
                 className="flex items-center gap-1 px-3 py-1.5 rounded-full text-[11px] font-bold text-white/70 hover:text-white hover:bg-white/10 transition cursor-pointer"
               >
-                <span>{t('onboard_skip' as TranslationKey)}</span>
-                <X className="w-3 h-3" />
+                <span className="pointer-events-none">{t('onboard_skip' as TranslationKey)}</span>
+                <X className="w-3 h-3 pointer-events-none" />
               </button>
             )}
           </div>
 
-          <div className="flex-1 min-h-0 flex flex-col px-6">
-            <AnimatePresence mode="wait">
+          <div className="flex-1 min-h-0 flex flex-col px-6 overflow-y-auto">
+            <AnimatePresence>
               <motion.div
                 key={slide.id}
-                initial={{ opacity: 0, x: isRtl ? -30 : 30, scale: 0.95 }}
-                animate={{ opacity: 1, x: 0, scale: 1 }}
-                exit={{ opacity: 0, x: isRtl ? 30 : -30, scale: 0.95 }}
-                transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-                className="flex-1 flex flex-col items-center justify-center text-center"
+                initial={{ opacity: 0, x: isRtl ? -30 : 30 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: isRtl ? 30 : -30 }}
+                transition={{ type: 'tween', ease: 'easeOut', duration: 0.25 }}
+                className="my-auto flex flex-col items-center justify-center text-center w-full py-6"
               >
                 <motion.div
-                  initial={{ scale: 0.5, rotate: -10 }}
+                  initial={{ scale: 0.8, rotate: -5 }}
                   animate={{ scale: 1, rotate: 0 }}
-                  transition={{ type: 'spring', stiffness: 400, damping: 18, delay: 0.1 }}
+                  transition={{ type: 'tween', ease: 'easeOut', duration: 0.3, delay: 0.05 }}
                   className={`w-28 h-28 rounded-[32px] bg-gradient-to-br ${slide.gradient} flex items-center justify-center shadow-2xl shadow-black/40 mb-8`}
                   style={{ boxShadow: `0 20px 60px ${slide.accent}55` }}
                 >
@@ -178,7 +186,7 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
                 <motion.h2
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.2 }}
+                  transition={{ type: 'tween', ease: 'easeOut', duration: 0.3, delay: 0.1 }}
                   className="text-[28px] font-black text-white tracking-tight leading-tight mb-3 max-w-sm"
                 >
                   {t(slide.titleKey)}
@@ -187,7 +195,7 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
                 <motion.p
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.3 }}
+                  transition={{ type: 'tween', ease: 'easeOut', duration: 0.3, delay: 0.15 }}
                   className="text-[14px] text-white/70 font-medium leading-relaxed mb-8 max-w-xs"
                 >
                   {t(slide.subtitleKey)}
@@ -196,7 +204,7 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
                 <motion.ul
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.4 }}
+                  transition={{ type: 'tween', ease: 'easeOut', duration: 0.3, delay: 0.2 }}
                   className="space-y-3 max-w-sm w-full"
                 >
                   {slide.bullets.map((bullet, idx) => (
@@ -204,8 +212,8 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
                       key={idx}
                       initial={{ opacity: 0, x: isRtl ? 10 : -10 }}
                       animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: 0.45 + idx * 0.08 }}
-                      className="flex items-center gap-3 px-4 py-3 rounded-2xl bg-white/5 border border-white/10 backdrop-blur-sm text-start"
+                      transition={{ type: 'tween', ease: 'easeOut', duration: 0.2, delay: 0.25 + idx * 0.05 }}
+                      className="flex items-center gap-3 px-4 py-3 rounded-2xl bg-white/5 border border-white/10 text-start"
                     >
                       <div
                         className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0 text-base"
@@ -233,7 +241,7 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
                   aria-label={t('onboard_slide_aria' as TranslationKey, { n: idx + 1 })}
                 >
                   <span
-                    className={`block rounded-full transition-all duration-300 ${
+                    className={`block rounded-full transition-all duration-300 pointer-events-none ${
                       idx === current
                         ? 'w-7 h-2 bg-white'
                         : idx < current
@@ -252,7 +260,7 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
                   className="flex items-center justify-center w-12 h-12 rounded-2xl bg-white/10 border border-white/20 text-white hover:bg-white/20 transition cursor-pointer shrink-0"
                   aria-label={t('onboard_prev' as TranslationKey)}
                 >
-                  <BackIcon className="w-5 h-5" />
+                  <BackIcon className="w-5 h-5 pointer-events-none" />
                 </button>
               )}
 
@@ -263,13 +271,13 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
               >
                 {isLast ? (
                   <>
-                    <Check className="w-5 h-5 text-white" strokeWidth={3} />
-                    <span className="text-white">{t('onboard_start' as TranslationKey)}</span>
+                    <Check className="w-5 h-5 text-white pointer-events-none" strokeWidth={3} />
+                    <span className="text-white pointer-events-none">{t('onboard_start' as TranslationKey)}</span>
                   </>
                 ) : (
                   <>
-                    <span className="text-white">{t('onboard_continue' as TranslationKey)}</span>
-                    <NextIcon className="w-5 h-5 text-white" strokeWidth={3} />
+                    <span className="text-white pointer-events-none">{t('onboard_continue' as TranslationKey)}</span>
+                    <NextIcon className="w-5 h-5 text-white pointer-events-none" strokeWidth={3} />
                   </>
                 )}
               </button>

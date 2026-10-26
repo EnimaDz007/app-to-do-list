@@ -1,83 +1,101 @@
-import React, { useState } from 'react';
-import type { Subtask } from '../types';
-import { TaskItem } from './TaskItem';
-import { insertSubtask, countSubtasks, makeId } from '../utils/subtaskHelpers';
-import { useLanguage } from '../context/LanguageContext';
+import React from 'react';
+import { Subtask } from '../types';
+import { Check, X, Plus } from 'lucide-react';
 
-type Props = {
+interface SubtaskListProps {
   subtasks: Subtask[];
   onChange: (next: Subtask[]) => void;
-};
+}
 
-export const SubtaskList: React.FC<Props> = ({ subtasks, onChange }) => {
-  const { t } = useLanguage();
-  const [adding, setAdding] = useState(false);
-  const [draft, setDraft] = useState('');
-
-  const { done, total } = countSubtasks(subtasks);
-
-  const handleAddTop = () => {
-    const title = draft.trim();
-    if (!title) return;
-    const child: Subtask = { id: makeId(), title, done: false };
-    onChange(insertSubtask(subtasks, null, child));
-    setDraft('');
-    setAdding(false);
+export const SubtaskList: React.FC<SubtaskListProps> = ({ subtasks, onChange }) => {
+  const handleToggle = (id: string) => {
+    const toggleRecursive = (nodes: Subtask[]): Subtask[] =>
+      nodes.map((node) => {
+        if (node.id === id) return { ...node, done: !node.done };
+        if (node.subtasks) return { ...node, subtasks: toggleRecursive(node.subtasks) };
+        return node;
+      });
+    onChange(toggleRecursive(subtasks));
   };
 
-  return (
-    <div className="subtask-block">
-      {total > 0 && (
-        <div className="subtask-header">
-          <span className="subtask-header-title">{t('subtask_header_label')}</span>
-          <span className="subtask-header-count">{done}/{total}</span>
-        </div>
-      )}
+  const handleRemove = (id: string) => {
+    const removeRecursive = (nodes: Subtask[]): Subtask[] =>
+      nodes
+        .filter((node) => node.id !== id)
+        .map((node) => {
+          if (node.subtasks) return { ...node, subtasks: removeRecursive(node.subtasks) };
+          return node;
+        });
+    onChange(removeRecursive(subtasks));
+  };
 
-      {subtasks.length > 0 && (
-        <ul className="subtask-list">
-          {subtasks.map(child => (
-            <TaskItem
-              key={child.id}
-              subtask={child}
-              depth={0}
-              siblings={subtasks}
-              onChange={onChange}
-            />
-          ))}
-        </ul>
-      )}
+  const handleChangeText = (id: string, text: string) => {
+    const changeRecursive = (nodes: Subtask[]): Subtask[] =>
+      nodes.map((node) => {
+        if (node.id === id) return { ...node, title: text };
+        if (node.subtasks) return { ...node, subtasks: changeRecursive(node.subtasks) };
+        return node;
+      });
+    onChange(changeRecursive(subtasks));
+  };
 
-      {adding ? (
-        <div className="subtask-add-form">
-          <input
-            autoFocus
-            value={draft}
-            onChange={e => setDraft(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === 'Enter') handleAddTop();
-              if (e.key === 'Escape') {
-                setAdding(false);
-                setDraft('');
-              }
-            }}
-            placeholder={t('subtask_placeholder')}
-          />
-          <button onClick={handleAddTop}>{t('subtask_btn_add')}</button>
-          <button
-            onClick={() => {
-              setAdding(false);
-              setDraft('');
-            }}
-          >
-            {t('subtask_btn_cancel')}
-          </button>
-        </div>
-      ) : (
-        <button className="subtask-add-btn" onClick={() => setAdding(true)}>
-          {t('subtask_add')}
+  const handleAdd = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && e.currentTarget.value.trim()) {
+      e.preventDefault();
+      const newSub: Subtask = {
+        id: `st_${Date.now()}`,
+        title: e.currentTarget.value.trim(),
+        done: false,
+      };
+      onChange([...subtasks, newSub]);
+      e.currentTarget.value = '';
+    }
+  };
+
+  const renderNode = (node: Subtask, depth = 0) => (
+    <div key={node.id} className="flex flex-col gap-1 w-full">
+      <div className="flex items-start gap-2 group w-full" style={{ paddingLeft: depth * 16 }}>
+        <button 
+          onClick={() => handleToggle(node.id)} 
+          className={`mt-0.5 w-4 h-4 shrink-0 rounded-md border flex items-center justify-center transition-colors ${node.done ? 'bg-indigo-500 border-indigo-500' : 'border-slate-300 hover:border-indigo-400'}`}
+        >
+          {node.done && <Check size={12} className="text-white" />}
         </button>
-      )}
+        
+        {/* 🚨 FIX: Changed to textarea to prevent truncation and allow text wrapping */}
+        <textarea
+          defaultValue={node.title}
+          onBlur={(e) => handleChangeText(node.id, e.target.value)}
+          rows={1}
+          className={`flex-1 w-full min-w-0 bg-transparent text-sm outline-none resize-none overflow-hidden whitespace-normal break-words ${node.done ? 'text-slate-400 line-through' : 'text-slate-700 dark:text-slate-200'}`}
+          style={{ height: 'auto', minHeight: '1.5rem' }}
+          onInput={(e) => {
+            const target = e.target as HTMLTextAreaElement;
+            target.style.height = 'auto';
+            target.style.height = `${target.scrollHeight}px`;
+          }}
+        />
+        
+        <button onClick={() => handleRemove(node.id)} className="mt-0.5 opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-rose-500 transition-all shrink-0">
+          <X size={14} />
+        </button>
+      </div>
+      {node.subtasks?.map((sub) => renderNode(sub, depth + 1))}
+    </div>
+  );
+
+  return (
+    <div className="flex flex-col gap-2 w-full">
+      {subtasks.map((sub) => renderNode(sub))}
+      <div className="flex items-center gap-2 mt-1 w-full">
+        <Plus size={14} className="text-slate-400 shrink-0" />
+        <input 
+          type="text" 
+          placeholder="Add subtask and press Enter" 
+          onKeyDown={handleAdd} 
+          className="flex-1 w-full bg-transparent text-sm outline-none placeholder:text-slate-400" 
+        />
+      </div>
     </div>
   );
 };

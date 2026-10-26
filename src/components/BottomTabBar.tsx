@@ -1,13 +1,13 @@
 // ─────────────────────────────────────────────────────────────
 //  FILE: src/components/BottomTabBar.tsx
-//  RTL-aware — every bar's pill follows the flipped tab order
+//  RTL-aware — optimized for 60fps (removed heavy backdrop-blur)
 // ─────────────────────────────────────────────────────────────
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { LayoutGrid, List, CalendarDays, Target, MoreHorizontal } from 'lucide-react';
 import { TabView } from '../types';
 import { useLanguage } from '../context/LanguageContext';
-import { useUIDesign, UIDesign } from '../hooks/useUIDesign';
+import { useUIDesign } from '../hooks/useUIDesign';
 import { useTheme } from '../context/ThemeContext';
 import { triggerHaptic } from '../utils/haptics';
 
@@ -21,10 +21,10 @@ const COPY: Record<LocalLang, { matrix: string; tasks: string; calendar: string;
   ar: { matrix: 'المصفوفة', tasks: 'المهام', calendar: 'التقويم', habits: 'العادات', more: 'المزيد' },
 };
 interface TabDef { id: string; label: string; onClick: () => void; badge?: number; }
+// 🚨 FIXED: Explicitly declared isRTL here
 interface BarProps { tabs: TabDef[]; activeIndex: number; urgentCount: number; isRTL: boolean; isDark: boolean; }
 const ICONS = [LayoutGrid, List, CalendarDays, Target, MoreHorizontal];
 
-/* pill transform helper — LTR moves right, RTL moves left */
 const pillX = (idx: number, rtl: boolean) => `translateX(${(rtl ? -1 : 1) * idx * 100}%)`;
 
 export const BottomTabBar: React.FC<BottomTabBarProps> = ({ activeTab, onChangeTab, onOpenMore, urgentCount = 0 }) => {
@@ -44,8 +44,12 @@ export const BottomTabBar: React.FC<BottomTabBarProps> = ({ activeTab, onChangeT
   const activeIndex = activeTab === 'matrix' ? 0 : activeTab === 'list' ? 1 : isCalendarActive ? 2 : activeTab === 'habits' ? 3 : isMoreActive ? 4 : 0;
   const theme = uiDesign;
   const barProps: BarProps = { tabs, activeIndex, urgentCount, isRTL, isDark };
+  
   return (
-    <div dir={isRTL ? 'rtl' : 'ltr'} className="fixed z-40 left-3 right-3 bottom-3 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 sm:w-full sm:max-w-lg pointer-events-none" style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
+    <div 
+      dir={isRTL ? 'rtl' : 'ltr'} 
+      className="fixed z-40 left-3 right-3 bottom-[calc(12px+env(safe-area-inset-bottom,0px))] sm:left-1/2 sm:right-auto sm:-translate-x-1/2 sm:w-full sm:max-w-lg pointer-events-none"
+    >
       <div className="pointer-events-auto">
         {theme === 'binder' && <BinderBar {...barProps} />}
         {theme === 'classic' && <ClassicBar {...barProps} />}
@@ -65,18 +69,18 @@ export const BottomTabBar: React.FC<BottomTabBarProps> = ({ activeTab, onChangeT
 
 interface TabRowProps { tabs: TabDef[]; activeIndex: number; iconColor: (i: number) => string; labelColor: (i: number) => string; onTabClick: (i: number, e: React.MouseEvent<HTMLButtonElement>) => void; }
 const TabRow: React.FC<TabRowProps> = ({ tabs, activeIndex, iconColor, labelColor, onTabClick }) => (
-  <div className="relative flex items-center justify-between h-full px-2 z-[3]">
+  <div className="relative grid grid-cols-5 h-full w-full z-[3]">
     {tabs.map((tab, i) => {
       const Icon = ICONS[i];
       const showBadge = i === 0 && (tab.badge || 0) > 0;
       const isActive = i === activeIndex;
       return (
-        <button key={tab.id} onClick={(e) => onTabClick(i, e)} className="flex-1 h-full flex flex-col items-center justify-center gap-[3px] px-1 bg-transparent border-none cursor-pointer active:scale-[0.94] transition-transform" style={{ WebkitTapHighlightColor: 'transparent' }} title={tab.label}>
+        <button key={tab.id} onClick={(e) => onTabClick(i, e)} className="h-full flex flex-col items-center justify-center gap-[4px] bg-transparent border-none cursor-pointer active:scale-[0.94] transition-transform" style={{ WebkitTapHighlightColor: 'transparent' }} title={tab.label}>
           <div className="ic relative">
-            <Icon className="w-[20px] h-[20px] transition-transform duration-500" style={{ color: iconColor(i), strokeWidth: isActive ? 2.4 : 2, transform: isActive ? 'translateY(-0.5px)' : 'none' }} />
+            <Icon className="w-[22px] h-[22px] transition-transform duration-500" style={{ color: iconColor(i), strokeWidth: isActive ? 2.4 : 2, transform: isActive ? 'translateY(-0.5px)' : 'none' }} />
             {showBadge && <span className="absolute -top-1.5 -right-1.5 flex items-center justify-center min-w-[15px] h-[15px] px-1 rounded-full bg-rose-500 text-white text-[9px] font-bold" style={{ animation: 'badgePulse 2.2s ease-in-out infinite' }}>{tab.badge! > 99 ? '99+' : tab.badge}</span>}
           </div>
-          <span className="lb text-[10px] font-semibold leading-none tracking-tight" style={{ color: labelColor(i), opacity: isActive ? 1 : 0.65 }}>{tab.label}</span>
+          <span className="lb text-[11px] font-bold leading-none tracking-tight" style={{ color: labelColor(i), opacity: isActive ? 1 : 0.65 }}>{tab.label}</span>
         </button>
       );
     })}
@@ -101,7 +105,7 @@ const BINDER_COLORS = {
   },
 };
 
-const BinderBar: React.FC<BarProps> = ({ tabs, activeIndex, isDark, isRTL }) => {
+const BinderBar: React.FC<BarProps> = ({ tabs, activeIndex, isDark }) => { // 🚨 Removed unused isRTL
   const barRef = useRef<HTMLDivElement>(null);
   const pillRef = useRef<HTMLDivElement>(null);
   const c = isDark ? BINDER_COLORS.dark : BINDER_COLORS.light;
@@ -121,14 +125,12 @@ const BinderBar: React.FC<BarProps> = ({ tabs, activeIndex, isDark, isRTL }) => 
     }
   };
   return (
-    <div ref={barRef} className="binder-bar relative w-full h-[78px] rounded-[20px] overflow-hidden" style={{ background: c.barBg, boxShadow: c.barShadow, isolation: 'isolate' }}>
+    <div ref={barRef} className="binder-bar relative w-full h-[84px] rounded-[20px] overflow-hidden" style={{ background: c.barBg, boxShadow: c.barShadow, isolation: 'isolate' }}>
       <div className="absolute top-0 left-0 right-0 h-[2px] pointer-events-none z-[6]" style={{ background: `linear-gradient(90deg, transparent 0%, rgba(212,175,90,0.55) 12%, ${c.seam} 50%, rgba(212,175,90,0.55) 88%, transparent 100%)`, filter: 'drop-shadow(0 0 5px rgba(212,175,90,0.7))' }} />
       <div className="absolute bottom-[4px] left-[14px] right-[14px] h-[1px] pointer-events-none z-[6] opacity-75" style={{ backgroundImage: `repeating-linear-gradient(90deg, ${c.stitch} 0 5px, transparent 5px 11px)` }} />
       <div className="absolute top-0 bottom-0 pointer-events-none z-[3]" style={{ left: '-45%', width: '45%', background: 'linear-gradient(105deg, transparent 0%, rgba(255,240,200,0.06) 35%, rgba(255,245,215,0.22) 50%, rgba(255,240,200,0.06) 65%, transparent 100%)', transform: 'skewX(-18deg)', mixBlendMode: 'screen', animation: 'binderShine 8s ease-in-out infinite' }} />
-      <div className="absolute pointer-events-none z-[2]" style={{ top: 9, bottom: 9, left: 8, right: 8 }}>
-        <div ref={pillRef} className="absolute top-0 bottom-0" style={{ width: '20%', insetInlineStart: `${activeIndex * 20}%`, transition: 'inset-inline-start 0.9s cubic-bezier(0.34,1.4,0.64,1)' }}>
-          <div className="absolute inset-[4px] rounded-[14px]" style={{ background: c.pillBg, boxShadow: c.pillShadow, animation: 'binderPillBreathe 3.6s ease-in-out infinite' }} />
-        </div>
+      <div className="absolute top-0 bottom-0 w-[20%] px-1 py-1.5 z-[2] pointer-events-none" style={{ insetInlineStart: `${activeIndex * 20}%`, transition: 'inset-inline-start 0.9s cubic-bezier(0.34,1.4,0.64,1)' }}>
+        <div className="w-full h-full rounded-[14px]" style={{ background: c.pillBg, boxShadow: c.pillShadow, animation: 'binderPillBreathe 3.6s ease-in-out infinite' }} />
       </div>
       <TabRow tabs={tabs} activeIndex={activeIndex} onTabClick={handleTabClick} iconColor={(i) => (i === activeIndex ? c.iconActive : c.iconInactive)} labelColor={(i) => (i === activeIndex ? c.labelActive : c.labelInactive)} />
     </div>
@@ -137,8 +139,20 @@ const BinderBar: React.FC<BarProps> = ({ tabs, activeIndex, isDark, isRTL }) => 
 
 /* ═══════════════ CLASSIC ═══════════════ */
 const CLASSIC_COLORS = {
-  dark: { barBg: 'linear-gradient(180deg, rgba(30,27,55,0.85) 0%, rgba(12,10,26,0.95) 100%), radial-gradient(ellipse at 50% 0%, rgba(139,92,246,0.15), transparent 60%)', barShadow: `inset 0 1px 0 rgba(255,255,255,0.12), inset 0 -1px 0 rgba(0,0,0,0.45), inset 0 0 0 1px rgba(139,92,246,0.14), 0 1px 0 rgba(255,255,255,0.06), 0 24px 60px -20px rgba(0,0,0,0.9), 0 8px 24px -12px rgba(139,92,246,0.35)`, pillBg: 'linear-gradient(180deg, #8B5CF6 0%, #6D28D9 100%)', pillShadow: `inset 0 1px 0 rgba(255,255,255,0.35), inset 0 -2px 6px rgba(0,0,0,0.25), 0 8px 20px -6px rgba(139,92,246,0.75), 0 0 0 1px rgba(139,92,246,0.4)`, iconActive: '#FFFFFF', iconInactive: 'rgba(148,163,184,0.55)', labelActive: '#FFFFFF', labelInactive: 'rgba(148,163,184,0.55)', gridV1: 'rgba(225,29,72,0.35)', gridV2: 'rgba(79,70,229,0.35)', gridV3: 'rgba(5,150,105,0.35)', gridH: 'rgba(148,163,184,0.3)' },
-  light: { barBg: 'linear-gradient(180deg, rgba(255,255,255,0.9) 0%, rgba(243,240,255,0.95) 100%), radial-gradient(ellipse at 50% 0%, rgba(139,92,246,0.08), transparent 60%)', barShadow: `inset 0 1px 0 rgba(255,255,255,1), inset 0 -1px 0 rgba(139,92,246,0.1), inset 0 0 0 1px rgba(139,92,246,0.12), 0 1px 0 rgba(255,255,255,0.8), 0 20px 50px -20px rgba(80,50,150,0.28), 0 8px 24px -12px rgba(139,92,246,0.25)`, pillBg: 'linear-gradient(180deg, #8B5CF6 0%, #6D28D9 100%)', pillShadow: `inset 0 1px 0 rgba(255,255,255,0.5), inset 0 -2px 6px rgba(0,0,0,0.15), 0 8px 20px -6px rgba(139,92,246,0.55), 0 0 0 1px rgba(139,92,246,0.35)`, iconActive: '#FFFFFF', iconInactive: 'rgba(100,116,139,0.75)', labelActive: '#FFFFFF', labelInactive: 'rgba(100,116,139,0.75)', gridV1: 'rgba(225,29,72,0.45)', gridV2: 'rgba(79,70,229,0.45)', gridV3: 'rgba(5,150,105,0.45)', gridH: 'rgba(100,116,139,0.4)' },
+  dark: { 
+    barBg: 'rgba(30, 27, 55, 0.95)', 
+    barShadow: `inset 0 1px 0 rgba(255,255,255,0.12), inset 0 -1px 0 rgba(0,0,0,0.45), 0 8px 20px -10px rgba(0,0,0,0.8)`, 
+    pillBg: 'linear-gradient(180deg, #475569 0%, #1E293B 100%)', 
+    pillShadow: `inset 0 1px 0 rgba(255,255,255,0.2), inset 0 -2px 6px rgba(0,0,0,0.3), 0 8px 20px -6px rgba(71,85,105,0.75), 0 0 0 1px rgba(71,85,105,0.4)`, 
+    iconActive: '#FFFFFF', iconInactive: 'rgba(148,163,184,0.55)', labelActive: '#FFFFFF', labelInactive: 'rgba(148,163,184,0.55)', gridV1: 'rgba(225,29,72,0.35)', gridV2: 'rgba(79,70,229,0.35)', gridV3: 'rgba(5,150,105,0.35)', gridH: 'rgba(148,163,184,0.3)' 
+  },
+  light: { 
+    barBg: 'rgba(255, 255, 255, 0.95)', 
+    barShadow: `inset 0 1px 0 rgba(255,255,255,1), inset 0 -1px 0 rgba(139,92,246,0.1), 0 8px 20px -10px rgba(80,50,150,0.15)`, 
+    pillBg: 'linear-gradient(180deg, #334155 0%, #0F172A 100%)', 
+    pillShadow: `inset 0 1px 0 rgba(255,255,255,0.3), inset 0 -2px 6px rgba(0,0,0,0.2), 0 8px 20px -6px rgba(51,65,85,0.55), 0 0 0 1px rgba(51,65,85,0.35)`, 
+    iconActive: '#FFFFFF', iconInactive: 'rgba(100,116,139,0.75)', labelActive: '#FFFFFF', labelInactive: 'rgba(100,116,139,0.75)', gridV1: 'rgba(225,29,72,0.45)', gridV2: 'rgba(79,70,229,0.45)', gridV3: 'rgba(5,150,105,0.45)', gridH: 'rgba(100,116,139,0.4)' 
+  },
 };
 const ClassicBar: React.FC<BarProps> = ({ tabs, activeIndex, isDark, isRTL }) => {
   const barRef = useRef<HTMLDivElement>(null);
@@ -156,14 +170,16 @@ const ClassicBar: React.FC<BarProps> = ({ tabs, activeIndex, isDark, isRTL }) =>
     bar.appendChild(cross); setTimeout(() => cross.remove(), 900);
   };
   return (
-    <div ref={barRef} className="relative w-full h-[68px] rounded-full group" style={{ background: c.barBg, backdropFilter: 'blur(40px) saturate(160%)', WebkitBackdropFilter: 'blur(40px) saturate(160%)', boxShadow: c.barShadow, transition: 'transform 0.5s cubic-bezier(0.16,1,0.3,1)' }} onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-1px)'; }} onMouseLeave={(e) => { e.currentTarget.style.transform = ''; }}>
+    <div ref={barRef} className="relative w-full h-[74px] rounded-full group" style={{ background: c.barBg, boxShadow: c.barShadow, transition: 'transform 0.5s cubic-bezier(0.16,1,0.3,1)' }} onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-1px)'; }} onMouseLeave={(e) => { e.currentTarget.style.transform = ''; }}>
       <div className="absolute inset-0 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-500 z-[2]">
         <span className="absolute top-3 bottom-3 w-px" style={{ left: '25%', background: c.gridV1 }} />
         <span className="absolute top-3 bottom-3 w-px" style={{ left: '50%', background: c.gridV2 }} />
         <span className="absolute top-3 bottom-3 w-px" style={{ left: '75%', background: c.gridV3 }} />
         <span className="absolute left-3 right-3 h-px" style={{ top: '50%', background: c.gridH }} />
       </div>
-      <div ref={pillRef} className="absolute top-1.5 bottom-1.5 w-[calc(20%-1.6px)] rounded-[26px] z-[2] pointer-events-none" style={{ insetInlineStart: 8, background: c.pillBg, boxShadow: c.pillShadow, transition: 'transform 0.62s cubic-bezier(0.34,1.42,0.64,1), box-shadow 0.4s' }} />
+      <div ref={pillRef} className="absolute top-0 bottom-0 w-[20%] px-1 py-1.5 z-[2] pointer-events-none" style={{ insetInlineStart: 0, transition: 'transform 0.62s cubic-bezier(0.34,1.42,0.64,1), box-shadow 0.4s' }}>
+        <div className="w-full h-full rounded-full" style={{ background: c.pillBg, boxShadow: c.pillShadow }} />
+      </div>
       <TabRow tabs={tabs} activeIndex={activeIndex} onTabClick={handleTabClick} iconColor={(i) => (i === activeIndex ? c.iconActive : c.iconInactive)} labelColor={(i) => (i === activeIndex ? c.labelActive : c.labelInactive)} />
     </div>
   );
@@ -199,11 +215,13 @@ const PearlBar: React.FC<BarProps> = ({ tabs, activeIndex, isDark, isRTL }) => {
     }
   };
   return (
-    <div ref={barRef} onMouseMove={handleMouseMove} className="relative w-full h-[68px] rounded-[34px] overflow-hidden group" style={{ background: c.barBg, boxShadow: c.barShadow }}>
+    <div ref={barRef} onMouseMove={handleMouseMove} className="relative w-full h-[74px] rounded-[34px] overflow-hidden group" style={{ background: c.barBg, boxShadow: c.barShadow }}>
       <div ref={iridRef} className="absolute inset-0 pointer-events-none z-[1] opacity-0 group-hover:opacity-100" style={{ background: c.iridescent, filter: 'blur(20px) saturate(160%)', mixBlendMode: 'overlay', transition: 'opacity 0.7s ease' }} />
       <div className="absolute inset-0 pointer-events-none z-[2] opacity-30" style={{ backgroundImage: `url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' seed='9'/><feColorMatrix values='0 0 0 0 0.5 0 0 0 0 0.5 0 0 0 0 0.5 0 0 0 0.5 0'/></filter><rect width='120' height='120' filter='url(%23g)'/></svg>")`, backgroundSize: '120px 120px', mixBlendMode: 'overlay' }} />
       <div className="absolute top-0 bottom-0 w-[120px] pointer-events-none z-[2]" style={{ background: 'linear-gradient(100deg, transparent 0%, rgba(255,255,255,0) 30%, rgba(255,255,255,0.85) 50%, rgba(255,255,255,0) 70%, transparent 100%)', transform: 'skewX(-18deg)', mixBlendMode: 'overlay', animation: 'pearlSweep 7s cubic-bezier(0.4,0,0.2,1) infinite' }} />
-      <div ref={pillRef} className="absolute top-1.5 bottom-1.5 w-[calc(20%-1.6px)] rounded-[26px] z-[2] pointer-events-none" style={{ insetInlineStart: 8, background: 'linear-gradient(145deg, #FFFFFF 0%, var(--pearl-c1, #E0E7FF) 45%, var(--pearl-c2, #C7D2FE) 100%)', boxShadow: c.pillShadow, transition: 'transform 0.7s cubic-bezier(0.34,1.42,0.64,1), box-shadow 0.5s, background 0.5s' }} />
+      <div ref={pillRef} className="absolute top-0 bottom-0 w-[20%] px-1 py-1.5 z-[2] pointer-events-none" style={{ insetInlineStart: 0, transition: 'transform 0.7s cubic-bezier(0.34,1.42,0.64,1)' }}>
+        <div className="w-full h-full rounded-[26px]" style={{ background: 'linear-gradient(145deg, #FFFFFF 0%, var(--pearl-c1, #E0E7FF) 45%, var(--pearl-c2, #C7D2FE) 100%)', boxShadow: c.pillShadow, transition: 'box-shadow 0.5s, background 0.5s' }} />
+      </div>
       <TabRow tabs={tabs} activeIndex={activeIndex} onTabClick={handleTabClick} iconColor={(i) => (i === activeIndex ? c.iconActive : c.iconInactive)} labelColor={(i) => (i === activeIndex ? c.labelActive : c.labelInactive)} />
     </div>
   );
@@ -233,8 +251,10 @@ const StackedBar: React.FC<BarProps> = ({ tabs, activeIndex, isDark, isRTL }) =>
     <div ref={barRef} className="relative w-full" onMouseEnter={() => { if (deckRef.current) deckRef.current.style.opacity = '1'; }} onMouseLeave={() => { if (deckRef.current) deckRef.current.style.opacity = '0'; }}>
       <div ref={deckRef} className="absolute left-[14%] right-[14%] top-0 h-3 rounded-t-3xl pointer-events-none" style={{ background: c.deckBg, boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.15)', opacity: 0, transition: 'opacity 0.5s ease, transform 0.6s cubic-bezier(0.16,1,0.3,1)', transform: 'translateY(0) scaleX(0.9)', zIndex: 0 }} />
       <div className="absolute left-[20%] right-[20%] -top-2 h-3 rounded-t-3xl pointer-events-none" style={{ background: c.deckBg2, opacity: 0.35, zIndex: -1 }} />
-      <div className="relative w-full h-[68px] rounded-[20px] z-[1]" style={{ background: c.barBg, boxShadow: c.barShadow }}>
-        <div ref={pillRef} className="absolute top-1 bottom-1 w-[calc(20%-1.6px)] rounded-2xl z-[2] pointer-events-none" style={{ insetInlineStart: 8, background: c.pillBg, boxShadow: c.pillShadow, transition: 'transform 0.62s cubic-bezier(0.34,1.42,0.64,1)' }} />
+      <div className="relative w-full h-[74px] rounded-[20px] z-[1]" style={{ background: c.barBg, boxShadow: c.barShadow }}>
+        <div ref={pillRef} className="absolute top-0 bottom-0 w-[20%] px-1 py-1 z-[2] pointer-events-none" style={{ insetInlineStart: 0, transition: 'transform 0.62s cubic-bezier(0.34,1.42,0.64,1)' }}>
+          <div className="w-full h-full rounded-2xl" style={{ background: c.pillBg, boxShadow: c.pillShadow }} />
+        </div>
         <TabRow tabs={tabs} activeIndex={activeIndex} onTabClick={handleTabClick} iconColor={(i) => (i === activeIndex ? c.iconActive : c.iconInactive)} labelColor={(i) => (i === activeIndex ? c.labelActive : c.labelInactive)} />
       </div>
     </div>
@@ -243,8 +263,20 @@ const StackedBar: React.FC<BarProps> = ({ tabs, activeIndex, isDark, isRTL }) =>
 
 /* ═══════════════ RADIAL ═══════════════ */
 const RADIAL_COLORS = {
-  dark: { barBg: 'radial-gradient(ellipse at 50% 120%, rgba(139,92,246,0.35), transparent 60%), linear-gradient(180deg, rgba(15,23,42,0.95) 0%, rgba(15,23,42,0.98) 100%)', barShadow: `inset 0 1px 0 rgba(167,139,250,0.22), inset 0 -1px 0 rgba(0,0,0,0.6), 0 0 0 1px rgba(139,92,246,0.28), 0 30px 70px -18px rgba(0,0,0,0.95), 0 0 80px -20px rgba(139,92,246,0.6)`, pillBg: 'radial-gradient(circle at 50% 30%, #8B5CF6 0%, #4C1D95 70%)', pillShadow: `inset 0 1px 0 rgba(255,255,255,0.35), 0 0 30px -4px rgba(139,92,246,0.9), 0 0 0 1px rgba(167,139,250,0.5)`, iconActive: '#F5F3FF', iconInactive: 'rgba(148,163,184,0.55)', labelActive: '#F5F3FF', labelInactive: 'rgba(148,163,184,0.55)', ringBorder: 'rgba(196,181,253,0.6)' },
-  light: { barBg: 'radial-gradient(ellipse at 50% 120%, rgba(139,92,246,0.28), transparent 60%), linear-gradient(180deg, #FAF7FF 0%, #F3EEFF 45%, #FDF5FF 100%)', barShadow: `inset 0 1px 0 rgba(255,255,255,0.9), inset 0 -1px 0 rgba(139,92,246,0.15), 0 0 0 1px rgba(139,92,246,0.2), 0 24px 60px -18px rgba(90,60,160,0.35), 0 0 60px -20px rgba(139,92,246,0.4)`, pillBg: 'radial-gradient(circle at 50% 30%, #8B5CF6 0%, #6D28D9 70%)', pillShadow: `inset 0 1px 0 rgba(255,255,255,0.5), 0 0 30px -4px rgba(139,92,246,0.65), 0 0 0 1px rgba(139,92,246,0.4)`, iconActive: '#FFFFFF', iconInactive: 'rgba(109,106,138,0.75)', labelActive: '#FFFFFF', labelInactive: 'rgba(109,106,138,0.75)', ringBorder: 'rgba(139,92,246,0.55)' },
+  dark: { 
+    barBg: 'rgba(15, 23, 42, 0.95)', 
+    barShadow: `inset 0 1px 0 rgba(167,139,250,0.22), inset 0 -1px 0 rgba(0,0,0,0.6), 0 8px 20px -10px rgba(0,0,0,0.9)`, 
+    pillBg: 'radial-gradient(circle at 50% 30%, #8B5CF6 0%, #4C1D95 70%)', 
+    pillShadow: `inset 0 1px 0 rgba(255,255,255,0.35), 0 0 30px -4px rgba(139,92,246,0.9), 0 0 0 1px rgba(167,139,250,0.5)`, 
+    iconActive: '#F5F3FF', iconInactive: 'rgba(148,163,184,0.55)', labelActive: '#F5F3FF', labelInactive: 'rgba(148,163,184,0.55)', ringBorder: 'rgba(196,181,253,0.6)' 
+  },
+  light: { 
+    barBg: 'rgba(250, 247, 255, 0.95)', 
+    barShadow: `inset 0 1px 0 rgba(255,255,255,0.9), inset 0 -1px 0 rgba(139,92,246,0.15), 0 8px 20px -10px rgba(90,60,160,0.2)`, 
+    pillBg: 'radial-gradient(circle at 50% 30%, #8B5CF6 0%, #6D28D9 70%)', 
+    pillShadow: `inset 0 1px 0 rgba(255,255,255,0.5), 0 0 30px -4px rgba(139,92,246,0.65), 0 0 0 1px rgba(139,92,246,0.4)`, 
+    iconActive: '#FFFFFF', iconInactive: 'rgba(109,106,138,0.75)', labelActive: '#FFFFFF', labelInactive: 'rgba(109,106,138,0.75)', ringBorder: 'rgba(139,92,246,0.55)' 
+  },
 };
 const RadialBar: React.FC<BarProps> = ({ tabs, activeIndex, isDark, isRTL }) => {
   const barRef = useRef<HTMLDivElement>(null);
@@ -266,14 +298,16 @@ const RadialBar: React.FC<BarProps> = ({ tabs, activeIndex, isDark, isRTL }) => 
     bar.appendChild(comet); setTimeout(() => comet.remove(), 1200);
   };
   return (
-    <div ref={barRef} onMouseMove={handleMouseMove} onMouseLeave={handleMouseLeave} className="relative w-full h-[68px] rounded-[34px] overflow-hidden group" style={{ background: c.barBg, backdropFilter: 'blur(40px)', WebkitBackdropFilter: 'blur(40px)', boxShadow: c.barShadow }}>
+    <div ref={barRef} onMouseMove={handleMouseMove} onMouseLeave={handleMouseLeave} className="relative w-full h-[74px] rounded-[34px] overflow-hidden group" style={{ background: c.barBg, boxShadow: c.barShadow }}>
       <div ref={orbitRef} className="absolute top-1/2 pointer-events-none z-[1] opacity-0 group-hover:opacity-100" style={{ left: '50%', width: 110, height: 110, marginLeft: -55, marginTop: -55, transition: 'left 0.5s cubic-bezier(0.16,1,0.3,1), opacity 0.4s ease' }}>
         <div className="absolute inset-0 rounded-full border border-dashed" style={{ borderColor: c.ringBorder, animation: 'orbitSpin 6s linear infinite' }}>
           <span className="absolute -top-1 left-1/2 -ml-1 w-2 h-2 rounded-full bg-amber-300 shadow-[0_0_12px_#FCD34D,0_0_24px_#FCD34D]" />
           <span className="absolute -bottom-1 left-1/2 -ml-1 w-2 h-2 rounded-full bg-violet-300 shadow-[0_0_12px_#C4B5FD]" />
         </div>
       </div>
-      <div ref={pillRef} className="absolute top-1.5 bottom-1.5 w-[calc(20%-1.6px)] rounded-[26px] z-[2] pointer-events-none" style={{ insetInlineStart: 8, background: c.pillBg, boxShadow: c.pillShadow, transition: 'transform 0.62s cubic-bezier(0.34,1.42,0.64,1)' }} />
+      <div ref={pillRef} className="absolute top-0 bottom-0 w-[20%] px-1 py-1.5 z-[2] pointer-events-none" style={{ insetInlineStart: 0, transition: 'transform 0.62s cubic-bezier(0.34,1.42,0.64,1)' }}>
+        <div className="w-full h-full rounded-[26px]" style={{ background: c.pillBg, boxShadow: c.pillShadow }} />
+      </div>
       <TabRow tabs={tabs} activeIndex={activeIndex} onTabClick={handleTabClick} iconColor={(i) => (i === activeIndex ? c.iconActive : c.iconInactive)} labelColor={(i) => (i === activeIndex ? c.labelActive : c.labelInactive)} />
     </div>
   );
@@ -281,8 +315,20 @@ const RadialBar: React.FC<BarProps> = ({ tabs, activeIndex, isDark, isRTL }) => 
 
 /* ═══════════════ TAROT ═══════════════ */
 const TAROT_COLORS = {
-  dark: { barBg: 'linear-gradient(180deg, rgba(30,27,75,0.95) 0%, rgba(15,23,42,0.98) 100%)', barShadow: `inset 0 1px 0 rgba(252,211,77,0.25), inset 0 -1px 0 rgba(0,0,0,0.5), 0 0 0 1.5px rgba(252,211,77,0.55), 0 0 0 2.5px rgba(49,46,129,0.9), 0 30px 70px -18px rgba(0,0,0,0.95), 0 0 80px -20px rgba(252,211,77,0.4)`, pillBg: 'linear-gradient(180deg, #FCD34D 0%, #B45309 100%)', pillShadow: `inset 0 1px 0 rgba(255,250,220,0.9), inset 0 -2px 8px rgba(60,40,0,0.35), 0 8px 24px -6px rgba(252,211,77,0.85), 0 0 0 1px rgba(252,211,77,0.6)`, iconActive: '#FEF3C7', iconInactive: 'rgba(196,181,253,0.65)', labelActive: '#FEF3C7', labelInactive: 'rgba(196,181,253,0.65)' },
-  light: { barBg: 'linear-gradient(180deg, rgba(250,245,255,0.96) 0%, rgba(237,233,254,0.98) 50%, rgba(221,214,254,0.98) 100%)', barShadow: `inset 0 1px 0 rgba(255,255,255,0.9), inset 0 -1px 0 rgba(124,58,237,0.2), 0 0 0 1.5px rgba(252,211,77,0.75), 0 0 0 2.5px rgba(250,245,255,0.9), 0 24px 60px -18px rgba(124,58,237,0.3), 0 0 60px -20px rgba(252,211,77,0.4)`, pillBg: 'linear-gradient(180deg, #A855F7 0%, #7C3AED 100%)', pillShadow: `inset 0 1px 0 rgba(255,255,255,0.5), inset 0 -2px 8px rgba(60,20,100,0.25), 0 8px 20px -6px rgba(168,85,247,0.65), 0 0 0 1px rgba(252,211,77,0.55)`, iconActive: '#FFFFFF', iconInactive: 'rgba(124,58,237,0.7)', labelActive: '#FFFFFF', labelInactive: 'rgba(124,58,237,0.7)' },
+  dark: { 
+    barBg: 'rgba(30, 27, 75, 0.95)', 
+    barShadow: `inset 0 1px 0 rgba(252,211,77,0.25), inset 0 -1px 0 rgba(0,0,0,0.5), 0 8px 20px -10px rgba(0,0,0,0.9)`, 
+    pillBg: 'linear-gradient(180deg, #FCD34D 0%, #B45309 100%)', 
+    pillShadow: `inset 0 1px 0 rgba(255,250,220,0.9), inset 0 -2px 8px rgba(60,40,0,0.35), 0 8px 24px -6px rgba(252,211,77,0.85), 0 0 0 1px rgba(252,211,77,0.6)`, 
+    iconActive: '#FEF3C7', iconInactive: 'rgba(196,181,253,0.65)', labelActive: '#FEF3C7', labelInactive: 'rgba(196,181,253,0.65)' 
+  },
+  light: { 
+    barBg: 'rgba(250, 245, 255, 0.95)', 
+    barShadow: `inset 0 1px 0 rgba(255,255,255,0.9), inset 0 -1px 0 rgba(124,58,237,0.2), 0 8px 20px -10px rgba(124,58,237,0.2)`, 
+    pillBg: 'linear-gradient(180deg, #A855F7 0%, #7C3AED 100%)', 
+    pillShadow: `inset 0 1px 0 rgba(255,255,255,0.5), inset 0 -2px 8px rgba(60,20,100,0.25), 0 8px 20px -6px rgba(168,85,247,0.65), 0 0 0 1px rgba(252,211,77,0.55)`, 
+    iconActive: '#FFFFFF', iconInactive: 'rgba(124,58,237,0.7)', labelActive: '#FFFFFF', labelInactive: 'rgba(124,58,237,0.7)' 
+  },
 };
 const TarotBar: React.FC<BarProps> = ({ tabs, activeIndex, isDark, isRTL }) => {
   const barRef = useRef<HTMLDivElement>(null);
@@ -309,8 +355,10 @@ const TarotBar: React.FC<BarProps> = ({ tabs, activeIndex, isDark, isRTL }) => {
     }
   };
   return (
-    <div ref={barRef} className="relative w-full h-[68px] rounded-[34px]" style={{ background: c.barBg, backdropFilter: 'blur(40px)', WebkitBackdropFilter: 'blur(40px)', boxShadow: c.barShadow }}>
-      <div ref={pillRef} className="absolute top-1.5 bottom-1.5 w-[calc(20%-1.6px)] rounded-[26px] z-[2] pointer-events-none" style={{ insetInlineStart: 8, background: c.pillBg, boxShadow: c.pillShadow, transition: 'transform 0.62s cubic-bezier(0.34,1.42,0.64,1)' }} />
+    <div ref={barRef} className="relative w-full h-[74px] rounded-[34px]" style={{ background: c.barBg, boxShadow: c.barShadow }}>
+      <div ref={pillRef} className="absolute top-0 bottom-0 w-[20%] px-1 py-1.5 z-[2] pointer-events-none" style={{ insetInlineStart: 0, transition: 'transform 0.62s cubic-bezier(0.34,1.42,0.64,1)' }}>
+        <div className="w-full h-full rounded-[26px]" style={{ background: c.pillBg, boxShadow: c.pillShadow }} />
+      </div>
       <TabRow tabs={tabs} activeIndex={activeIndex} onTabClick={handleTabClick} iconColor={(i) => (i === activeIndex ? c.iconActive : c.iconInactive)} labelColor={(i) => (i === activeIndex ? c.labelActive : c.labelInactive)} />
     </div>
   );
@@ -374,8 +422,10 @@ const HiveBar: React.FC<BarProps> = ({ tabs, activeIndex, isDark, isRTL }) => {
     }
   };
   return (
-    <div ref={barRef} onMouseEnter={handleMouseEnter} onMouseMove={handleMouseMove} onMouseLeave={handleMouseLeave} className="relative w-full h-[68px] rounded-[34px]" style={{ background: c.barBg, boxShadow: c.barShadow }}>
-      <div ref={pillRef} className="absolute top-1.5 bottom-1.5 w-[calc(20%-1.6px)] rounded-[26px] z-[2] pointer-events-none" style={{ insetInlineStart: 8, background: c.pillBg, boxShadow: c.pillShadow, transition: 'transform 0.62s cubic-bezier(0.34,1.42,0.64,1)' }} />
+    <div ref={barRef} onMouseEnter={handleMouseEnter} onMouseMove={handleMouseMove} onMouseLeave={handleMouseLeave} className="relative w-full h-[74px] rounded-[34px]" style={{ background: c.barBg, boxShadow: c.barShadow }}>
+      <div ref={pillRef} className="absolute top-0 bottom-0 w-[20%] px-1 py-1.5 z-[2] pointer-events-none" style={{ insetInlineStart: 0, transition: 'transform 0.62s cubic-bezier(0.34,1.42,0.64,1)' }}>
+        <div className="w-full h-full rounded-[26px]" style={{ background: c.pillBg, boxShadow: c.pillShadow }} />
+      </div>
       <div ref={beeRef} className="absolute top-1/2 left-1/2 pointer-events-none z-[5] opacity-0" style={{ fontSize: 20, transform: 'translate(-50%, -50%)', transition: 'opacity 0.4s ease', filter: 'drop-shadow(0 0 8px rgba(245,158,11,0.9))', willChange: 'transform, left, top' }}><span className="inline-block" style={{ animation: 'beeHover 1.4s ease-in-out infinite' }}>🐝</span></div>
       <TabRow tabs={tabs} activeIndex={activeIndex} onTabClick={handleTabClick} iconColor={(i) => (i === activeIndex ? c.iconActive : c.iconInactive)} labelColor={(i) => (i === activeIndex ? c.labelActive : c.labelInactive)} />
     </div>
@@ -406,7 +456,7 @@ const KanbanBar: React.FC<BarProps> = ({ tabs, activeIndex, isDark, isRTL }) => 
     bar.appendChild(check); setTimeout(() => check.remove(), 1100);
   };
   return (
-    <div ref={barRef} className="relative w-full h-[68px] rounded-[18px] overflow-visible group" style={{ background: c.barBg, boxShadow: c.barShadow }}>
+    <div ref={barRef} className="relative w-full h-[74px] rounded-[18px] overflow-visible group" style={{ background: c.barBg, boxShadow: c.barShadow }}>
       <div className="absolute bottom-0 left-0 right-0 h-[3px] rounded-b-[18px] z-[2]" style={{ background: 'linear-gradient(90deg, #E11D48 0% 20%, #4F46E5 20% 40%, #059669 40% 60%, #64748B 60% 80%, #F59E0B 80% 100%)' }} />
       {[20, 38, 50, 62, 80].map((left, idx) => (
         <div key={idx} className="absolute -top-2.5 w-11 h-5 rounded-[5px] pointer-events-none opacity-0 group-hover:opacity-100 z-[1]" style={{ left: `${left}%`, marginLeft: -22, background: c.cardBg, boxShadow: c.cardShadow, transform: 'translateY(0)', transition: `transform 0.7s cubic-bezier(0.34,1.56,0.64,1) ${idx * 80}ms, opacity 0.5s ease ${idx * 80}ms` }}>
@@ -414,7 +464,9 @@ const KanbanBar: React.FC<BarProps> = ({ tabs, activeIndex, isDark, isRTL }) => 
           <div className="absolute top-2.5 left-1.5 w-1/2 h-0.5 rounded" style={{ background: c.cardLine2 }} />
         </div>
       ))}
-      <div ref={pillRef} className="absolute top-1.5 bottom-1.5 w-[calc(20%-1.6px)] rounded-2xl z-[2] pointer-events-none" style={{ insetInlineStart: 8, background: c.pillBg, boxShadow: c.pillShadow, transition: 'transform 0.62s cubic-bezier(0.34,1.42,0.64,1)' }} />
+      <div ref={pillRef} className="absolute top-0 bottom-0 w-[20%] px-1 py-1.5 z-[2] pointer-events-none" style={{ insetInlineStart: 0, transition: 'transform 0.62s cubic-bezier(0.34,1.42,0.64,1)' }}>
+        <div className="w-full h-full rounded-2xl" style={{ background: c.pillBg, boxShadow: c.pillShadow }} />
+      </div>
       <TabRow tabs={tabs} activeIndex={activeIndex} onTabClick={handleTabClick} iconColor={(i) => (i === activeIndex ? c.iconActive : c.iconInactive)} labelColor={(i) => (i === activeIndex ? c.labelActive : c.labelInactive)} />
     </div>
   );
@@ -431,10 +483,12 @@ const VendingBar: React.FC<BarProps> = ({ tabs, activeIndex, isDark, isRTL }) =>
   useEffect(() => { if (pillRef.current) pillRef.current.style.transform = pillX(activeIndex, isRTL); }, [activeIndex, isRTL]);
   const handleTabClick = (i: number) => { if (pillRef.current) pillRef.current.style.transform = pillX(i, isRTL); triggerHaptic('light'); tabs[i].onClick(); };
   return (
-    <div className="relative w-full h-[68px] rounded-[18px] overflow-hidden" style={{ background: c.barBg, boxShadow: c.barShadow }}>
+    <div className="relative w-full h-[74px] rounded-[18px] overflow-hidden" style={{ background: c.barBg, boxShadow: c.barShadow }}>
       <div className="absolute top-0 left-0 right-0 h-[2px] pointer-events-none" style={{ background: `linear-gradient(90deg, transparent 0%, ${c.ledColor} 50%, transparent 100%)`, opacity: 0.5, boxShadow: `0 0 10px ${c.ledColor}` }} />
       <div className="absolute bottom-0 left-0 right-0 h-[3px] rounded-b-[18px] pointer-events-none" style={{ background: c.cyanLine, boxShadow: '0 0 14px rgba(6,182,212,0.6)' }} />
-      <div ref={pillRef} className="absolute top-1.5 bottom-1.5 w-[calc(20%-1.6px)] rounded-2xl z-[2] pointer-events-none" style={{ insetInlineStart: 8, background: c.pillBg, boxShadow: c.pillShadow, transition: 'transform 0.62s cubic-bezier(0.34,1.42,0.64,1)' }} />
+      <div ref={pillRef} className="absolute top-0 bottom-0 w-[20%] px-1 py-1.5 z-[2] pointer-events-none" style={{ insetInlineStart: 0, transition: 'transform 0.62s cubic-bezier(0.34,1.42,0.64,1)' }}>
+        <div className="w-full h-full rounded-2xl" style={{ background: c.pillBg, boxShadow: c.pillShadow }} />
+      </div>
       <TabRow tabs={tabs} activeIndex={activeIndex} onTabClick={handleTabClick} iconColor={(i) => (i === activeIndex ? c.iconActive : c.iconInactive)} labelColor={(i) => (i === activeIndex ? c.labelActive : c.labelInactive)} />
     </div>
   );
@@ -451,10 +505,12 @@ const DetectiveBar: React.FC<BarProps> = ({ tabs, activeIndex, isDark, isRTL }) 
   useEffect(() => { if (pillRef.current) pillRef.current.style.transform = pillX(activeIndex, isRTL); }, [activeIndex, isRTL]);
   const handleTabClick = (i: number) => { if (pillRef.current) pillRef.current.style.transform = pillX(i, isRTL); triggerHaptic('light'); tabs[i].onClick(); };
   return (
-    <div className="relative w-full h-[68px] rounded-[18px] overflow-hidden" style={{ background: c.barBg, boxShadow: c.barShadow }}>
+    <div className="relative w-full h-[74px] rounded-[18px] overflow-hidden" style={{ background: c.barBg, boxShadow: c.barShadow }}>
       <div className="absolute inset-0 pointer-events-none opacity-25" style={{ backgroundImage: `radial-gradient(circle, ${c.corkDot} 1px, transparent 1.5px)`, backgroundSize: '6px 6px' }} />
       <div className="absolute top-2 left-4 right-4 h-[2px] pointer-events-none" style={{ background: `linear-gradient(90deg, transparent 0%, ${c.stringColor} 20%, ${c.stringColor} 80%, transparent 100%)`, opacity: 0.75, boxShadow: '0 1px 4px rgba(0,0,0,0.5)' }} />
-      <div ref={pillRef} className="absolute top-1.5 bottom-1.5 w-[calc(20%-1.6px)] rounded-2xl z-[2] pointer-events-none" style={{ insetInlineStart: 8, background: c.pillBg, boxShadow: c.pillShadow, transition: 'transform 0.62s cubic-bezier(0.34,1.42,0.64,1)' }} />
+      <div ref={pillRef} className="absolute top-0 bottom-0 w-[20%] px-1 py-1.5 z-[2] pointer-events-none" style={{ insetInlineStart: 0, transition: 'transform 0.62s cubic-bezier(0.34,1.42,0.64,1)' }}>
+        <div className="w-full h-full rounded-2xl" style={{ background: c.pillBg, boxShadow: c.pillShadow }} />
+      </div>
       <TabRow tabs={tabs} activeIndex={activeIndex} onTabClick={handleTabClick} iconColor={(i) => (i === activeIndex ? c.iconActive : c.iconInactive)} labelColor={(i) => (i === activeIndex ? c.labelActive : c.labelInactive)} />
     </div>
   );
